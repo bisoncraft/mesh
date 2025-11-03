@@ -1,0 +1,26 @@
+syntax = "proto3";
+
+package pb;
+
+option go_package = "github.com/martonp/tatanka-mesh/tatanka/pb";
+
+// ClientConnectionMsg is used internally by tatanka nodes to share client connection information.
+message ClientConnectionMsg {
+  bytes id = 1;           // peer.ID serialized as bytes
+  bytes reporter_id = 2;  // peer.ID serialized as bytes
+  repeated bytes addrs = 3; // multiaddrs serialized as bytes
+  bool connected = 4;
+  int64 timestamp = 5;
+}
+
+// PeerInfo contains information about a single peer.
+message PeerInfo {
+  bytes id = 1;            // peer.ID serialized as bytes
+  repeated bytes addrs = 2; // multiaddrs serialized as bytes
+}
+
+// DiscoveryResponse contains a list of peers for discovery.
+message DiscoveryResponse {
+  repeated PeerInfo peers = 1;
+}
+

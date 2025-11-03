@@ -1,0 +1,52 @@
+syntax = "proto3";
+
+package pb;
+
+option go_package = "github.com/martonp/tatanka-mesh/protocols/pb";
+
+// ClientPublishMessage is sent by a client to publish a message to a topic.
+// Used with the ClientPublishProtocol.
+message ClientPublishMessage {
+  string topic = 1;
+  bytes data = 2;
+}
+
+// ClientPushMessage is sent by the server to push a message to a subscribed client.
+// Used with the ClientPushProtocol.
+message ClientPushMessage {
+  string topic = 1;
+  bytes data = 2;
+  bytes sender = 3;
+}
+
+// ClientSubscribeMessage is sent by a client to subscribe or unsubscribe from a topic.
+// Used with the ClientSubscribeProtocol.
+message ClientSubscribeMessage {
+  string topic = 1;
+  bool subscribe = 2;
+}
+
+// ClientSubscriptionsMessage contains the list of topics a client is subscribed to.
+// Used with the ClientSubscriptionsProtocol.
+message ClientSubscriptionsMessage {
+  repeated string topics = 1;
+}
+
+// ClientAddrRequestMessage is sent by a client to request the addresses of another peer.
+// Used with the ClientAddrProtocol.
+message ClientAddrRequestMessage {
+  bytes id = 1; // peer.ID serialized as bytes
+}
+
+// ClientAddrResponseMessage is the response containing the multiaddresses of a peer or an error.
+// Used with the ClientAddrProtocol.
+message ClientAddrResponseMessage {
+  oneof result {
+    Success success = 1;
+    string error = 2;  // Error message, e.g., "peer not found"
+  }
+
+  message Success {
+    repeated bytes addrs = 1;  // multiaddrs serialized as bytes
+  }
+}
