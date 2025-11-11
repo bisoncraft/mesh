@@ -4,6 +4,8 @@ go 1.24.9
 
 require (
 	github.com/decred/slog v1.2.0
+	github.com/jessevdk/go-flags v1.6.1
+	github.com/jrick/logrotate v1.1.2
 	github.com/libp2p/go-libp2p v0.44.0
 	github.com/libp2p/go-libp2p-pubsub v0.15.0
 	github.com/multiformats/go-multiaddr v0.16.0
