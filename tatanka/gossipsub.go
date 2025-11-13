@@ -103,36 +103,13 @@ type gossipSub struct {
 	clientConnectionsTopic *pubsub.Topic
 }
 
-// gossipSubParams returns gossip sub parameters to create a fully connected mesh
-// of the given size. It is expected that the mesh size is greater than 0.
-func gossipSubParams(meshSize int) pubsub.GossipSubParams {
-	gossipParams := pubsub.DefaultGossipSubParams()
-	fullMeshDegree := meshSize - 1
-	gossipParams.D = fullMeshDegree
-	gossipParams.Dlo = fullMeshDegree
-	gossipParams.Dhi = fullMeshDegree
-	gossipParams.Dlazy = 0
-	gossipParams.Dscore = min(4, fullMeshDegree)
-	gossipParams.Dout = 0
-	return gossipParams
-}
-
 func newGossipSub(ctx context.Context, cfg *gossipSubCfg) (*gossipSub, error) {
-	meshSize := len(cfg.getManifestPeers())
-	if meshSize == 0 {
-		return nil, errors.New("number of manifest peers must be greater than 0 for gossipsub")
-	}
-
-	// If the mesh size changes, gossipParams would need to be updated.
-	gossipParams := gossipSubParams(meshSize)
-
 	peerFilter := func(pid peer.ID, topic string) bool {
 		_, ok := cfg.getManifestPeers()[pid]
 		return ok
 	}
 
 	ps, err := pubsub.NewGossipSub(ctx, cfg.node,
-		pubsub.WithGossipSubParams(gossipParams),
 		pubsub.WithPeerFilter(peerFilter),
 		// FloodPublish optimizes for quick delivery at the cost of duplicates.
 		pubsub.WithFloodPublish(true),
