@@ -1,6 +1,7 @@
 package codec
 
 import (
+	"bufio"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -13,15 +14,16 @@ import (
 
 const (
 	MaxMessageSize   = 1024 // 1KB max message size
+	ReadTimeout      = 10 * time.Second
 	lengthPrefixSize = 4
 )
 
 // ReadLengthPrefixedMessage reads a 4-byte big-endian length prefix,
 // then reads that many bytes and unmarshals them into the provided
 // proto.Message. Returns an error if the length exceeds maxMessageSize.
-func ReadLengthPrefixedMessage(s network.Stream, msg proto.Message) error {
+func ReadLengthPrefixedMessage(buf *bufio.Reader, msg proto.Message) error {
 	lengthBuf := make([]byte, lengthPrefixSize)
-	if _, err := io.ReadFull(s, lengthBuf); err != nil {
+	if _, err := io.ReadFull(buf, lengthBuf); err != nil {
 		return fmt.Errorf("failed to read length prefix: %w", err)
 	}
 
@@ -34,7 +36,7 @@ func ReadLengthPrefixedMessage(s network.Stream, msg proto.Message) error {
 	}
 
 	data := make([]byte, msgLen)
-	if _, err := io.ReadFull(s, data); err != nil {
+	if _, err := io.ReadFull(buf, data); err != nil {
 		return fmt.Errorf("failed to read message data: %w", err)
 	}
 

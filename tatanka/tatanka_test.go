@@ -1,6 +1,7 @@
 package tatanka
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -198,8 +199,14 @@ func (tc *testClient) GetPeerAddr(ctx context.Context, id peer.ID) ([]ma.Multiad
 	}
 	stream.CloseWrite()
 
+	if err := codec.SetReadDeadline(codec.ReadTimeout, stream); err != nil {
+		return nil, err
+	}
+
+	buf := bufio.NewReader(stream)
+
 	responseMessage := &protocolsPb.ClientAddrResponseMessage{}
-	if err := codec.ReadLengthPrefixedMessage(stream, responseMessage); err != nil {
+	if err := codec.ReadLengthPrefixedMessage(buf, responseMessage); err != nil {
 		return nil, err
 	}
 
