@@ -140,6 +140,14 @@ func (t *TatankaNode) Run(ctx context.Context) error {
 		}
 	}
 
+	t.log.Infof("Node ID: %s", t.node.ID().String())
+
+	listenAddrs := t.node.Network().ListenAddresses()
+	t.log.Infof("Listening on: ")
+	for _, addr := range listenAddrs {
+		t.log.Infof("  %s", addr.String())
+	}
+
 	var err error
 	t.gossipSub, err = newGossipSub(ctx, &gossipSubCfg{
 		node:                          t.node,
@@ -298,7 +306,7 @@ func (t *TatankaNode) refreshPeersFromBootstrap(ctx context.Context) {
 
 				ctxConnect, cancel := context.WithTimeout(ctx, connectToPeerTimeout)
 				if err := t.node.Connect(ctxConnect, *bootInfo); err != nil {
-					t.log.Errorf("Failed to connect to bootstrap peer %s: %v", bootInfo.ID, err)
+					t.log.Infof("Failed to connect to bootstrap peer %s: %v", bootInfo.ID, err)
 					cancel()
 					return
 				}
