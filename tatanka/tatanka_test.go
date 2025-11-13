@@ -149,7 +149,7 @@ func (tc *testClient) Subscribe(ctx context.Context, topic string) error {
 	if err != nil {
 		return err
 	}
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	subMsg := &protocolsPb.ClientSubscribeMessage{Subscribe: true, Topic: topic}
 	return codec.WriteLengthPrefixedMessage(stream, subMsg)
@@ -161,7 +161,7 @@ func (tc *testClient) Publish(ctx context.Context, topic string, data []byte) er
 	if err != nil {
 		return err
 	}
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	pubMsg := &protocolsPb.ClientPublishMessage{Topic: topic, Data: data}
 	return codec.WriteLengthPrefixedMessage(stream, pubMsg)
@@ -191,13 +191,13 @@ func (tc *testClient) GetPeerAddr(ctx context.Context, id peer.ID) ([]ma.Multiad
 	if err != nil {
 		return nil, err
 	}
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	addrMsg := &protocolsPb.ClientAddrRequestMessage{Id: []byte(id)}
 	if err := codec.WriteLengthPrefixedMessage(stream, addrMsg); err != nil {
 		return nil, err
 	}
-	stream.CloseWrite()
+	_ = stream.CloseWrite()
 
 	if err := codec.SetReadDeadline(codec.ReadTimeout, stream); err != nil {
 		return nil, err

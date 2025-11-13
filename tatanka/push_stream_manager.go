@@ -69,7 +69,7 @@ func (p *pushStreamManager) newPushStream(stream network.Stream) {
 	p.mtx.Unlock()
 
 	if oldWrapper != nil {
-		oldWrapper.stream.Reset()
+		_ = oldWrapper.stream.Reset()
 		close(oldWrapper.writeCh)
 	} else {
 		p.notifyConnected(client, newStreamTimestamp, true)
@@ -87,7 +87,9 @@ func (p *pushStreamManager) newPushStream(stream network.Stream) {
 				p.log.Debugf("Write failed for client %s: %v", client.ShortString(), err)
 			}
 
-			wrapper.stream.SetWriteDeadline(time.Time{})
+			if err := wrapper.stream.SetWriteDeadline(time.Time{}); err != nil {
+				p.log.Debugf("Set write deadline failed for client %s: %v", client.ShortString(), err)
+			}
 		}
 	}()
 

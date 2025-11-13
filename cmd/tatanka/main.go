@@ -76,7 +76,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Failed to initialize log rotator: %v\n", err)
 		os.Exit(1)
 	}
-	defer logRotator.Close()
+	defer func() { _ = logRotator.Close() }()
 
 	// Setup logger to write to both stdout and log file
 	logWriter := io.MultiWriter(os.Stdout, logRotator)

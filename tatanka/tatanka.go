@@ -158,13 +158,16 @@ func (t *TatankaNode) Run(ctx context.Context) error {
 			addrs = t.node.Peerstore().Addrs(client)
 		}
 
-		t.gossipSub.publishClientConnectionMessage(ctx, &clientConnectionUpdate{
+		err := t.gossipSub.publishClientConnectionMessage(ctx, &clientConnectionUpdate{
 			clientID:   client,
 			reporterID: t.node.ID(),
 			addrs:      addrs,
 			timestamp:  timestamp.UnixMilli(),
 			connected:  connected,
 		})
+		if err != nil {
+			t.log.Errorf("Publishing client connection message failed: %v", err)
+		}
 	})
 
 	t.setupStreamHandlers()
@@ -246,7 +249,7 @@ func (t *TatankaNode) discoverPeers(ctx context.Context, peerToQuery *peer.AddrI
 	if err != nil {
 		return nil, err
 	}
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 
 	if err := codec.SetReadDeadline(codec.ReadTimeout, s); err != nil {
 		return nil, err

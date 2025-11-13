@@ -51,7 +51,7 @@ func pbPeerInfoToLibp2p(pbPeer *pb.PeerInfo) (peer.AddrInfo, error) {
 // handleDiscovery handles a discovery request. All tatanka nodes that the node
 // is connected to are shared with the requesting node.
 func (t *TatankaNode) handleDiscovery(s network.Stream) {
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 
 	peerStore := t.node.Network().Peerstore()
 	manifestPeerIDs := t.manifest.allPeerIDs()
@@ -90,7 +90,7 @@ func (t *TatankaNode) handleClientPush(s network.Stream) {
 
 // handleClientSubscribe handles a client subscribe request.
 func (t *TatankaNode) handleClientSubscribe(s network.Stream) {
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 
 	client := s.Conn().RemotePeer()
 	if err := codec.SetReadDeadline(codec.ReadTimeout, s); err != nil {
@@ -117,7 +117,7 @@ func (t *TatankaNode) handleClientSubscribe(s network.Stream) {
 // handleClientPublish handles a request by a client the publish a message to a
 // topic.
 func (t *TatankaNode) handleClientPublish(s network.Stream) {
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 
 	client := s.Conn().RemotePeer()
 
@@ -135,17 +135,20 @@ func (t *TatankaNode) handleClientPublish(s network.Stream) {
 		return
 	}
 
-	t.gossipSub.publishClientMessage(context.Background(), &protocolsPb.ClientPushMessage{
+	err := t.gossipSub.publishClientMessage(context.Background(), &protocolsPb.ClientPushMessage{
 		Topic:  publishMessage.Topic,
 		Data:   publishMessage.Data,
 		Sender: []byte(client),
 	})
+	if err != nil {
+		t.log.Errorf("Failed to publish client message: %w", err)
+	}
 }
 
 // handleClientAddr handles a request by a client to get the addresses of another
 // client. This will allow them to initiate p2p communication with that client.
 func (t *TatankaNode) handleClientAddr(s network.Stream) {
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 
 	client := s.Conn().RemotePeer()
 
@@ -160,7 +163,8 @@ func (t *TatankaNode) handleClientAddr(s network.Stream) {
 				Error: err.Error(),
 			},
 		}
-		codec.WriteLengthPrefixedMessage(s, responseMessage)
+		werr := codec.WriteLengthPrefixedMessage(s, responseMessage)
+		t.log.Errorf("Failed to write length prefixed message: %v.", werr)
 	}
 
 	buf := bufio.NewReader(s)
