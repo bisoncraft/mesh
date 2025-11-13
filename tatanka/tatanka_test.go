@@ -18,6 +18,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	mocknet "github.com/libp2p/go-libp2p/p2p/net/mock"
+	"github.com/martonp/tatanka-mesh/codec"
 	"github.com/martonp/tatanka-mesh/protocols"
 	protocolsPb "github.com/martonp/tatanka-mesh/protocols/pb"
 	ma "github.com/multiformats/go-multiaddr"
@@ -150,7 +151,7 @@ func (tc *testClient) Subscribe(ctx context.Context, topic string) error {
 	defer stream.Close()
 
 	subMsg := &protocolsPb.ClientSubscribeMessage{Subscribe: true, Topic: topic}
-	return writeLengthPrefixedMessage(stream, subMsg)
+	return codec.WriteLengthPrefixedMessage(stream, subMsg)
 }
 
 // Publish publishes a message to a topic.
@@ -162,7 +163,7 @@ func (tc *testClient) Publish(ctx context.Context, topic string, data []byte) er
 	defer stream.Close()
 
 	pubMsg := &protocolsPb.ClientPublishMessage{Topic: topic, Data: data}
-	return writeLengthPrefixedMessage(stream, pubMsg)
+	return codec.WriteLengthPrefixedMessage(stream, pubMsg)
 }
 
 // Next blocks until a message is received for the given topic and returns it.
@@ -192,13 +193,13 @@ func (tc *testClient) GetPeerAddr(ctx context.Context, id peer.ID) ([]ma.Multiad
 	defer stream.Close()
 
 	addrMsg := &protocolsPb.ClientAddrRequestMessage{Id: []byte(id)}
-	if err := writeLengthPrefixedMessage(stream, addrMsg); err != nil {
+	if err := codec.WriteLengthPrefixedMessage(stream, addrMsg); err != nil {
 		return nil, err
 	}
 	stream.CloseWrite()
 
 	responseMessage := &protocolsPb.ClientAddrResponseMessage{}
-	if err := readLengthPrefixedMessage(stream, responseMessage); err != nil {
+	if err := codec.ReadLengthPrefixedMessage(stream, responseMessage); err != nil {
 		return nil, err
 	}
 

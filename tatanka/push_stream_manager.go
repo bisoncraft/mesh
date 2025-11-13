@@ -9,6 +9,7 @@ import (
 	"github.com/decred/slog"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/martonp/tatanka-mesh/codec"
 	protocolsPb "github.com/martonp/tatanka-mesh/protocols/pb"
 )
 
@@ -77,7 +78,7 @@ func (p *pushStreamManager) newPushStream(stream network.Stream) {
 	// Goroutine for writes. This will run until the write channel is closed.
 	go func() {
 		for data := range wrapper.writeCh {
-			if err := wrapper.stream.SetWriteDeadline(time.Now().Add(writeTimeout)); err != nil && !deadlineNotSupportedError(err) {
+			if err := wrapper.stream.SetWriteDeadline(time.Now().Add(writeTimeout)); err != nil && !codec.DeadlineNotSupportedError(err) {
 				p.log.Debugf("Failed to set write deadline for client %s: %v", client.ShortString(), err)
 				continue
 			}
@@ -121,7 +122,7 @@ func (p *pushStreamManager) distribute(clients []peer.ID, msg *protocolsPb.Clien
 		return
 	}
 
-	data, err := marshalProtoWithLengthPrefix(msg)
+	data, err := codec.MarshalProtoWithLengthPrefix(msg)
 	if err != nil {
 		p.log.Errorf("Failed to marshal push message: %v", err)
 		return

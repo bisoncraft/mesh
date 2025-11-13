@@ -14,6 +14,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/martonp/tatanka-mesh/codec"
 	"github.com/martonp/tatanka-mesh/protocols"
 	protocolsPb "github.com/martonp/tatanka-mesh/protocols/pb"
 	pb "github.com/martonp/tatanka-mesh/tatanka/pb"
@@ -247,7 +248,7 @@ func (t *TatankaNode) discoverPeers(ctx context.Context, peerToQuery *peer.AddrI
 	defer s.Close()
 
 	response := &pb.DiscoveryResponse{}
-	if err := readLengthPrefixedMessage(s, response); err != nil {
+	if err := codec.ReadLengthPrefixedMessage(s, response); err != nil {
 		return nil, err
 	}
 

@@ -7,6 +7,7 @@ import (
 
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/martonp/tatanka-mesh/codec"
 	protocolsPb "github.com/martonp/tatanka-mesh/protocols/pb"
 	pb "github.com/martonp/tatanka-mesh/tatanka/pb"
 	ma "github.com/multiformats/go-multiaddr"
@@ -81,7 +82,7 @@ func (t *TatankaNode) handleDiscovery(s network.Stream) {
 		Peers: pbPeers,
 	}
 
-	if err := writeLengthPrefixedMessage(s, response); err != nil {
+	if err := codec.WriteLengthPrefixedMessage(s, response); err != nil {
 		t.log.Errorf("Failed to write discovery response: %v", err)
 		return
 	}
@@ -97,13 +98,13 @@ func (t *TatankaNode) handleClientSubscribe(s network.Stream) {
 	defer s.Close()
 
 	client := s.Conn().RemotePeer()
-	if err := setReadDeadline(readTimeout, s); err != nil {
+	if err := codec.SetReadDeadline(readTimeout, s); err != nil {
 		t.log.Errorf("Failed to set read deadline for client %s: %v.", client.ShortString(), err)
 		return
 	}
 
 	subscribeMessage := &protocolsPb.ClientSubscribeMessage{}
-	if err := readLengthPrefixedMessage(s, subscribeMessage); err != nil {
+	if err := codec.ReadLengthPrefixedMessage(s, subscribeMessage); err != nil {
 		t.log.Debugf("Failed to read/unmarshal subscribe message from client %s: %v.", client.ShortString(), err)
 		// TODO: client sent invalid message, remove client?
 		return
@@ -123,13 +124,13 @@ func (t *TatankaNode) handleClientPublish(s network.Stream) {
 
 	client := s.Conn().RemotePeer()
 
-	if err := setReadDeadline(readTimeout, s); err != nil {
+	if err := codec.SetReadDeadline(readTimeout, s); err != nil {
 		t.log.Errorf("Failed to set read deadline for client %s: %v.", client.ShortString(), err)
 		return
 	}
 
 	publishMessage := &protocolsPb.ClientPublishMessage{}
-	if err := readLengthPrefixedMessage(s, publishMessage); err != nil {
+	if err := codec.ReadLengthPrefixedMessage(s, publishMessage); err != nil {
 		t.log.Debugf("Failed to read/unmarshal publish message from client %s: %v.", client.ShortString(), err)
 		// TODO: remove client?
 		return
@@ -149,7 +150,7 @@ func (t *TatankaNode) handleClientAddr(s network.Stream) {
 
 	client := s.Conn().RemotePeer()
 
-	if err := setReadDeadline(readTimeout, s); err != nil {
+	if err := codec.SetReadDeadline(readTimeout, s); err != nil {
 		t.log.Errorf("Failed to set read deadline for client %s: %v.", client.ShortString(), err)
 		return
 	}
@@ -160,11 +161,11 @@ func (t *TatankaNode) handleClientAddr(s network.Stream) {
 				Error: err.Error(),
 			},
 		}
-		writeLengthPrefixedMessage(s, responseMessage)
+		codec.WriteLengthPrefixedMessage(s, responseMessage)
 	}
 
 	requestMessage := &protocolsPb.ClientAddrRequestMessage{}
-	if err := readLengthPrefixedMessage(s, requestMessage); err != nil {
+	if err := codec.ReadLengthPrefixedMessage(s, requestMessage); err != nil {
 		sendErrorResponse(fmt.Errorf("failed to read/unmarshal addr request message: %w", err))
 		return
 	}
@@ -194,7 +195,7 @@ func (t *TatankaNode) handleClientAddr(s network.Stream) {
 		},
 	}
 
-	if err := writeLengthPrefixedMessage(s, responseMessage); err != nil {
+	if err := codec.WriteLengthPrefixedMessage(s, responseMessage); err != nil {
 		t.log.Errorf("Failed to write addr response message to client %s: %v.", client.ShortString(), err)
 	}
 }
