@@ -3,7 +3,9 @@ package tatanka
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sync"
@@ -173,7 +175,7 @@ func (t *TatankaNode) Run(ctx context.Context) error {
 			timestamp:  timestamp.UnixMilli(),
 			connected:  connected,
 		})
-		if err != nil {
+		if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, context.Canceled) {
 			t.log.Errorf("Publishing client connection message failed: %v", err)
 		}
 	})

@@ -185,8 +185,9 @@ func (t *TatankaNode) handleClientAddr(s network.Stream) {
 				Error: err.Error(),
 			},
 		}
-		werr := codec.WriteLengthPrefixedMessage(s, responseMessage)
-		t.log.Errorf("Failed to write length prefixed message: %v.", werr)
+		if werr := codec.WriteLengthPrefixedMessage(s, responseMessage); werr != nil {
+			t.log.Errorf("Failed to write length prefixed message: %v.", werr)
+		}
 	}
 
 	buf := bufio.NewReader(s)

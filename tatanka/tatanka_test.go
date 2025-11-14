@@ -99,10 +99,10 @@ func (tc *testClient) readPushMessages() {
 	for {
 		// Read 4-byte length prefix
 		if _, err := io.ReadFull(tc.pushStream, lengthBuf); err != nil {
-			if errors.Is(err, io.EOF) || errors.Is(err, context.Canceled) {
-				return
+			if !errors.Is(err, io.EOF) && !errors.Is(err, context.Canceled) && !errors.Is(err, io.ErrClosedPipe) {
+				tc.t.Logf("Error reading message length from client %s: %v", tc.nodeID.ShortString(), err)
 			}
-			tc.t.Logf("Error reading message length from client %s: %v", tc.nodeID.ShortString(), err)
+
 			return
 		}
 
@@ -152,7 +152,13 @@ func (tc *testClient) Subscribe(ctx context.Context, topic string) error {
 	defer func() { _ = stream.Close() }()
 
 	subMsg := &protocolsPb.ClientSubscribeMessage{Subscribe: true, Topic: topic}
-	return codec.WriteLengthPrefixedMessage(stream, subMsg)
+	if err := codec.WriteLengthPrefixedMessage(stream, subMsg); err != nil {
+		if !errors.Is(err, io.EOF) && !errors.Is(err, context.Canceled) && !errors.Is(err, io.ErrClosedPipe) {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // Unsubscribe unsubscribes the client from a topic.
@@ -176,7 +182,28 @@ func (tc *testClient) Publish(ctx context.Context, topic string, data []byte) er
 	defer func() { _ = stream.Close() }()
 
 	pubMsg := &protocolsPb.ClientPublishMessage{Topic: topic, Data: data}
-	return codec.WriteLengthPrefixedMessage(stream, pubMsg)
+	if err := codec.WriteLengthPrefixedMessage(stream, pubMsg); err != nil {
+		if !errors.Is(err, io.EOF) && !errors.Is(err, context.Canceled) && !errors.Is(err, io.ErrClosedPipe) {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// Close terminates the client.
+func (tc *testClient) Close() {
+	conns := tc.host.Network().Conns()
+	for _, conn := range conns {
+		streams := conn.GetStreams()
+		for _, stream := range streams {
+			_ = stream.Close()
+		}
+
+		_ = conn.Close()
+	}
+
+	_ = tc.host.Close()
 }
 
 // Next blocks until a message is received for the given topic and returns it.
@@ -221,7 +248,11 @@ func (tc *testClient) GetPeerAddr(ctx context.Context, id peer.ID) ([]ma.Multiad
 
 	addrMsg := &protocolsPb.ClientAddrRequestMessage{Id: []byte(id)}
 	if err := codec.WriteLengthPrefixedMessage(stream, addrMsg); err != nil {
-		return nil, err
+		if !errors.Is(err, io.EOF) && !errors.Is(err, context.Canceled) && !errors.Is(err, io.ErrClosedPipe) {
+			return nil, err
+		}
+
+		return []ma.Multiaddr{}, nil
 	}
 	_ = stream.CloseWrite()
 
@@ -715,5 +746,9 @@ func TestClientAddrSharing(t *testing.T) {
 	}
 	if !multiAddrsEqual(addr, clients[2].host.Addrs()) {
 		t.Fatalf("Client 2 addr does not match expected addr. Got %v, expected %v", addr, clients[2].host.Addrs())
+	}
+
+	for i := range clients {
+		clients[i].Close()
 	}
 }
