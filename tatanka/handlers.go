@@ -88,6 +88,21 @@ func (t *TatankaNode) handleClientPush(s network.Stream) {
 	t.pushStreamManager.newPushStream(s)
 }
 
+func (t *TatankaNode) publishClientSubscriptionEvent(client peer.ID, topic string, subscribed bool) {
+	messageType := protocolsPb.ClientPushMessage_SUBSCRIBE
+	if !subscribed {
+		messageType = protocolsPb.ClientPushMessage_UNSUBSCRIBE
+	}
+	err := t.gossipSub.publishClientMessage(context.Background(), &protocolsPb.ClientPushMessage{
+		MessageType: messageType,
+		Topic:       topic,
+		Sender:      []byte(client),
+	})
+	if err != nil {
+		t.log.Errorf("Failed to publish subscription event: %v", err)
+	}
+}
+
 // handleClientSubscribe handles a client subscribe request.
 func (t *TatankaNode) handleClientSubscribe(s network.Stream) {
 	defer func() { _ = s.Close() }()
@@ -108,9 +123,15 @@ func (t *TatankaNode) handleClientSubscribe(s network.Stream) {
 	}
 
 	if subscribeMessage.Subscribe {
-		t.subscriptionManager.subscribeClient(client, subscribeMessage.Topic)
+		subscribed := t.subscriptionManager.subscribeClient(client, subscribeMessage.Topic)
+		if subscribed {
+			t.publishClientSubscriptionEvent(client, subscribeMessage.Topic, true)
+		}
 	} else {
-		t.subscriptionManager.unsubscribeClient(client, subscribeMessage.Topic)
+		unsubscribed := t.subscriptionManager.unsubscribeClient(client, subscribeMessage.Topic)
+		if unsubscribed {
+			t.publishClientSubscriptionEvent(client, subscribeMessage.Topic, false)
+		}
 	}
 }
 
@@ -136,9 +157,10 @@ func (t *TatankaNode) handleClientPublish(s network.Stream) {
 	}
 
 	err := t.gossipSub.publishClientMessage(context.Background(), &protocolsPb.ClientPushMessage{
-		Topic:  publishMessage.Topic,
-		Data:   publishMessage.Data,
-		Sender: []byte(client),
+		MessageType: protocolsPb.ClientPushMessage_BROADCAST,
+		Topic:       publishMessage.Topic,
+		Data:        publishMessage.Data,
+		Sender:      []byte(client),
 	})
 	if err != nil {
 		t.log.Errorf("Failed to publish client message: %w", err)

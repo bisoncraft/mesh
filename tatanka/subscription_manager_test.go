@@ -20,9 +20,16 @@ func TestSubscriptionManager(t *testing.T) {
 				client1, _ := peer.Decode("12D3KooW9rDqyS5S8F3kJxdm1EhAeC36jV6Gq3hVyHKn2FSN2d7Z")
 				client2, _ := peer.Decode("12D3KooWQYh9X5fB3jW2Uj4k3eHQ3c5j2b2f5k7m3n9p8r4q6t8")
 
-				sm.subscribeClient(client1, "topic1")
-				sm.subscribeClient(client1, "topic2")
-				sm.subscribeClient(client2, "topic1")
+				// Test subscribe return values
+				if subbed := sm.subscribeClient(client1, "topic1"); !subbed {
+					t.Errorf("subscribeClient(client1, topic1) returned false, expected true for new subscription")
+				}
+				if subbed := sm.subscribeClient(client1, "topic2"); !subbed {
+					t.Errorf("subscribeClient(client1, topic2) returned false, expected true for new subscription")
+				}
+				if subbed := sm.subscribeClient(client2, "topic1"); !subbed {
+					t.Errorf("subscribeClient(client2, topic1) returned false, expected true for new subscription")
+				}
 
 				gotClients := sm.clientsForTopic("topic1")
 				expectedClients := []peer.ID{client1, client2}
@@ -36,7 +43,10 @@ func TestSubscriptionManager(t *testing.T) {
 					t.Errorf("topicsForClient(client1) = %v, want %v", gotTopics, expectedTopics)
 				}
 
-				sm.unsubscribeClient(client1, "topic1")
+				// Test unsubscribe return values
+				if unsubbed := sm.unsubscribeClient(client1, "topic1"); !unsubbed {
+					t.Errorf("unsubscribeClient(client1, topic1) returned false, expected true for existing subscription")
+				}
 				gotClients = sm.clientsForTopic("topic1")
 				expectedClients = []peer.ID{client2}
 				if len(gotClients) != len(expectedClients) || !reflect.DeepEqual(sortPeers(gotClients), sortPeers(expectedClients)) {
@@ -49,7 +59,9 @@ func TestSubscriptionManager(t *testing.T) {
 					t.Errorf("topicsForClient(client1) after unsubscribe = %v, want %v", gotTopics, expectedTopics)
 				}
 
-				sm.unsubscribeClient(client2, "topic1")
+				if unsubbed := sm.unsubscribeClient(client2, "topic1"); !unsubbed {
+					t.Errorf("unsubscribeClient(client2, topic1) returned false, expected true for existing subscription")
+				}
 				gotClients = sm.clientsForTopic("topic1")
 				if len(gotClients) != 0 {
 					t.Errorf("clientsForTopic(topic1) after full unsubscribe = %v, want []", gotClients)
@@ -66,8 +78,14 @@ func TestSubscriptionManager(t *testing.T) {
 			run: func(t *testing.T, sm *subscriptionManager) {
 				client, _ := peer.Decode("12D3KooW9rDqyS5S8F3kJxdm1EhAeC36jV6Gq3hVyHKn2FSN2d7Z")
 
-				sm.subscribeClient(client, "topic")
-				sm.subscribeClient(client, "topic")
+				// First subscribe should return true
+				if subbed := sm.subscribeClient(client, "topic"); !subbed {
+					t.Errorf("first subscribeClient returned false, expected true")
+				}
+				// Second subscribe should return false
+				if subbed := sm.subscribeClient(client, "topic"); subbed {
+					t.Errorf("duplicate subscribeClient returned true, expected false")
+				}
 
 				gotClients := sm.clientsForTopic("topic")
 				expectedClients := []peer.ID{client}
@@ -87,14 +105,23 @@ func TestSubscriptionManager(t *testing.T) {
 			run: func(t *testing.T, sm *subscriptionManager) {
 				client, _ := peer.Decode("12D3KooW9rDqyS5S8F3kJxdm1EhAeC36jV6Gq3hVyHKn2FSN2d7Z")
 
-				sm.unsubscribeClient(client, "nonexistent")
+				// Unsubscribe from a topic that doesn't exist
+				if unsubbed := sm.unsubscribeClient(client, "nonexistent"); unsubbed {
+					t.Errorf("unsubscribeClient(nonexistent topic) returned true, expected false")
+				}
+
+				// Subscribe, then unsubscribe from a different topic
+				sm.subscribeClient(client, "topic1")
+				if unsubbed := sm.unsubscribeClient(client, "topic2"); unsubbed {
+					t.Errorf("unsubscribeClient(different topic) returned true, expected false")
+				}
 
 				if len(sm.clientsForTopic("nonexistent")) != 0 {
 					t.Error("Expected no clients for nonexistent topic")
 				}
 
-				if len(sm.topicsForClient(client)) != 0 {
-					t.Error("Expected no topics for unsubscribed client")
+				if len(sm.topicsForClient(client)) != 1 {
+					t.Error("Expected 1 topic for client")
 				}
 			},
 		},

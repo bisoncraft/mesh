@@ -22,14 +22,16 @@ func newSubscriptionManager() *subscriptionManager {
 	}
 }
 
-func (sm *subscriptionManager) subscribeClient(client peer.ID, topic string) {
+// subscribeClient returns true if the client was previously not subscribed to
+// the topic.
+func (sm *subscriptionManager) subscribeClient(client peer.ID, topic string) bool {
 	sm.mtx.Lock()
 	defer sm.mtx.Unlock()
 
 	if _, ok := sm.topicSubscriptions[topic]; !ok {
 		sm.topicSubscriptions[topic] = make(map[peer.ID]struct{})
 	} else if _, alreadySubbed := sm.topicSubscriptions[topic][client]; alreadySubbed {
-		return
+		return false
 	}
 
 	sm.topicSubscriptions[topic][client] = struct{}{}
@@ -38,25 +40,38 @@ func (sm *subscriptionManager) subscribeClient(client peer.ID, topic string) {
 		sm.clientSubscriptions[client] = make(map[string]struct{})
 	}
 	sm.clientSubscriptions[client][topic] = struct{}{}
+
+	return true
 }
 
-func (sm *subscriptionManager) unsubscribeClient(client peer.ID, topic string) {
+// unsubscribeClient returns true if the client was previously subscribed to
+// the topic.
+func (sm *subscriptionManager) unsubscribeClient(client peer.ID, topic string) bool {
 	sm.mtx.Lock()
 	defer sm.mtx.Unlock()
 
-	if topicMap, ok := sm.topicSubscriptions[topic]; ok {
-		delete(topicMap, client)
-		if len(topicMap) == 0 {
-			delete(sm.topicSubscriptions, topic)
-		}
+	topicMap, topicExists := sm.topicSubscriptions[topic]
+	if !topicExists {
+		return false
 	}
 
-	if clientMap, ok := sm.clientSubscriptions[client]; ok {
+	if _, clientSubbed := topicMap[client]; !clientSubbed {
+		return false
+	}
+
+	delete(topicMap, client)
+	if len(topicMap) == 0 {
+		delete(sm.topicSubscriptions, topic)
+	}
+
+	if clientMap, clientExists := sm.clientSubscriptions[client]; clientExists {
 		delete(clientMap, topic)
 		if len(clientMap) == 0 {
 			delete(sm.clientSubscriptions, client)
 		}
 	}
+
+	return true
 }
 
 func (sm *subscriptionManager) clientsForTopic(topic string) []peer.ID {

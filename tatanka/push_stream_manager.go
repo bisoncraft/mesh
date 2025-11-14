@@ -87,7 +87,7 @@ func (p *pushStreamManager) newPushStream(stream network.Stream) {
 				p.log.Debugf("Write failed for client %s: %v", client.ShortString(), err)
 			}
 
-			if err := wrapper.stream.SetWriteDeadline(time.Time{}); err != nil {
+			if err := wrapper.stream.SetWriteDeadline(time.Time{}); err != nil && !codec.DeadlineNotSupportedError(err) {
 				p.log.Debugf("Set write deadline failed for client %s: %v", client.ShortString(), err)
 			}
 		}

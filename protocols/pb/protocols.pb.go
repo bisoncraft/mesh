@@ -21,6 +21,58 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type ClientPushMessage_MessageType int32
+
+const (
+	ClientPushMessage_UNSPECIFIED ClientPushMessage_MessageType = 0
+	ClientPushMessage_BROADCAST   ClientPushMessage_MessageType = 1 // Regular data message
+	ClientPushMessage_SUBSCRIBE   ClientPushMessage_MessageType = 2 // Peer subscribed to topic
+	ClientPushMessage_UNSUBSCRIBE ClientPushMessage_MessageType = 3 // Peer unsubscribed from topic
+)
+
+// Enum value maps for ClientPushMessage_MessageType.
+var (
+	ClientPushMessage_MessageType_name = map[int32]string{
+		0: "UNSPECIFIED",
+		1: "BROADCAST",
+		2: "SUBSCRIBE",
+		3: "UNSUBSCRIBE",
+	}
+	ClientPushMessage_MessageType_value = map[string]int32{
+		"UNSPECIFIED": 0,
+		"BROADCAST":   1,
+		"SUBSCRIBE":   2,
+		"UNSUBSCRIBE": 3,
+	}
+)
+
+func (x ClientPushMessage_MessageType) Enum() *ClientPushMessage_MessageType {
+	p := new(ClientPushMessage_MessageType)
+	*p = x
+	return p
+}
+
+func (x ClientPushMessage_MessageType) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (ClientPushMessage_MessageType) Descriptor() protoreflect.EnumDescriptor {
+	return file_protocols_proto_enumTypes[0].Descriptor()
+}
+
+func (ClientPushMessage_MessageType) Type() protoreflect.EnumType {
+	return &file_protocols_proto_enumTypes[0]
+}
+
+func (x ClientPushMessage_MessageType) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use ClientPushMessage_MessageType.Descriptor instead.
+func (ClientPushMessage_MessageType) EnumDescriptor() ([]byte, []int) {
+	return file_protocols_proto_rawDescGZIP(), []int{1, 0}
+}
+
 // ClientPublishMessage is sent by a client to publish a message to a topic.
 // Used with the ClientPublishProtocol.
 type ClientPublishMessage struct {
@@ -78,10 +130,11 @@ func (x *ClientPublishMessage) GetData() []byte {
 // ClientPushMessage is sent by the server to push a message to a subscribed client.
 // Used with the ClientPushProtocol.
 type ClientPushMessage struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Topic         string                 `protobuf:"bytes,1,opt,name=topic,proto3" json:"topic,omitempty"`
-	Data          []byte                 `protobuf:"bytes,2,opt,name=data,proto3" json:"data,omitempty"`
-	Sender        []byte                 `protobuf:"bytes,3,opt,name=sender,proto3" json:"sender,omitempty"`
+	state         protoimpl.MessageState        `protogen:"open.v1"`
+	MessageType   ClientPushMessage_MessageType `protobuf:"varint,1,opt,name=message_type,json=messageType,proto3,enum=pb.ClientPushMessage_MessageType" json:"message_type,omitempty"`
+	Topic         string                        `protobuf:"bytes,2,opt,name=topic,proto3" json:"topic,omitempty"`
+	Data          []byte                        `protobuf:"bytes,3,opt,name=data,proto3" json:"data,omitempty"`     // Only populated for BROADCAST messages
+	Sender        []byte                        `protobuf:"bytes,4,opt,name=sender,proto3" json:"sender,omitempty"` // The peer who sent the message or performed the subscription action
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -114,6 +167,13 @@ func (x *ClientPushMessage) ProtoReflect() protoreflect.Message {
 // Deprecated: Use ClientPushMessage.ProtoReflect.Descriptor instead.
 func (*ClientPushMessage) Descriptor() ([]byte, []int) {
 	return file_protocols_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *ClientPushMessage) GetMessageType() ClientPushMessage_MessageType {
+	if x != nil {
+		return x.MessageType
+	}
+	return ClientPushMessage_UNSPECIFIED
 }
 
 func (x *ClientPushMessage) GetTopic() string {
@@ -418,11 +478,17 @@ const file_protocols_proto_rawDesc = "" +
 	"\x0fprotocols.proto\x12\x02pb\"@\n" +
 	"\x14ClientPublishMessage\x12\x14\n" +
 	"\x05topic\x18\x01 \x01(\tR\x05topic\x12\x12\n" +
-	"\x04data\x18\x02 \x01(\fR\x04data\"U\n" +
-	"\x11ClientPushMessage\x12\x14\n" +
-	"\x05topic\x18\x01 \x01(\tR\x05topic\x12\x12\n" +
-	"\x04data\x18\x02 \x01(\fR\x04data\x12\x16\n" +
-	"\x06sender\x18\x03 \x01(\fR\x06sender\"L\n" +
+	"\x04data\x18\x02 \x01(\fR\x04data\"\xea\x01\n" +
+	"\x11ClientPushMessage\x12D\n" +
+	"\fmessage_type\x18\x01 \x01(\x0e2!.pb.ClientPushMessage.MessageTypeR\vmessageType\x12\x14\n" +
+	"\x05topic\x18\x02 \x01(\tR\x05topic\x12\x12\n" +
+	"\x04data\x18\x03 \x01(\fR\x04data\x12\x16\n" +
+	"\x06sender\x18\x04 \x01(\fR\x06sender\"M\n" +
+	"\vMessageType\x12\x0f\n" +
+	"\vUNSPECIFIED\x10\x00\x12\r\n" +
+	"\tBROADCAST\x10\x01\x12\r\n" +
+	"\tSUBSCRIBE\x10\x02\x12\x0f\n" +
+	"\vUNSUBSCRIBE\x10\x03\"L\n" +
 	"\x16ClientSubscribeMessage\x12\x14\n" +
 	"\x05topic\x18\x01 \x01(\tR\x05topic\x12\x1c\n" +
 	"\tsubscribe\x18\x02 \x01(\bR\tsubscribe\"4\n" +
@@ -449,23 +515,26 @@ func file_protocols_proto_rawDescGZIP() []byte {
 	return file_protocols_proto_rawDescData
 }
 
+var file_protocols_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
 var file_protocols_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
 var file_protocols_proto_goTypes = []any{
-	(*ClientPublishMessage)(nil),              // 0: pb.ClientPublishMessage
-	(*ClientPushMessage)(nil),                 // 1: pb.ClientPushMessage
-	(*ClientSubscribeMessage)(nil),            // 2: pb.ClientSubscribeMessage
-	(*ClientSubscriptionsMessage)(nil),        // 3: pb.ClientSubscriptionsMessage
-	(*ClientAddrRequestMessage)(nil),          // 4: pb.ClientAddrRequestMessage
-	(*ClientAddrResponseMessage)(nil),         // 5: pb.ClientAddrResponseMessage
-	(*ClientAddrResponseMessage_Success)(nil), // 6: pb.ClientAddrResponseMessage.Success
+	(ClientPushMessage_MessageType)(0),        // 0: pb.ClientPushMessage.MessageType
+	(*ClientPublishMessage)(nil),              // 1: pb.ClientPublishMessage
+	(*ClientPushMessage)(nil),                 // 2: pb.ClientPushMessage
+	(*ClientSubscribeMessage)(nil),            // 3: pb.ClientSubscribeMessage
+	(*ClientSubscriptionsMessage)(nil),        // 4: pb.ClientSubscriptionsMessage
+	(*ClientAddrRequestMessage)(nil),          // 5: pb.ClientAddrRequestMessage
+	(*ClientAddrResponseMessage)(nil),         // 6: pb.ClientAddrResponseMessage
+	(*ClientAddrResponseMessage_Success)(nil), // 7: pb.ClientAddrResponseMessage.Success
 }
 var file_protocols_proto_depIdxs = []int32{
-	6, // 0: pb.ClientAddrResponseMessage.success:type_name -> pb.ClientAddrResponseMessage.Success
-	1, // [1:1] is the sub-list for method output_type
-	1, // [1:1] is the sub-list for method input_type
-	1, // [1:1] is the sub-list for extension type_name
-	1, // [1:1] is the sub-list for extension extendee
-	0, // [0:1] is the sub-list for field type_name
+	0, // 0: pb.ClientPushMessage.message_type:type_name -> pb.ClientPushMessage.MessageType
+	7, // 1: pb.ClientAddrResponseMessage.success:type_name -> pb.ClientAddrResponseMessage.Success
+	2, // [2:2] is the sub-list for method output_type
+	2, // [2:2] is the sub-list for method input_type
+	2, // [2:2] is the sub-list for extension type_name
+	2, // [2:2] is the sub-list for extension extendee
+	0, // [0:2] is the sub-list for field type_name
 }
 
 func init() { file_protocols_proto_init() }
@@ -482,13 +551,14 @@ func file_protocols_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_protocols_proto_rawDesc), len(file_protocols_proto_rawDesc)),
-			NumEnums:      0,
+			NumEnums:      1,
 			NumMessages:   7,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
 		GoTypes:           file_protocols_proto_goTypes,
 		DependencyIndexes: file_protocols_proto_depIdxs,
+		EnumInfos:         file_protocols_proto_enumTypes,
 		MessageInfos:      file_protocols_proto_msgTypes,
 	}.Build()
 	File_protocols_proto = out.File

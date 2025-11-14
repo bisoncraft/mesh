@@ -155,6 +155,18 @@ func (tc *testClient) Subscribe(ctx context.Context, topic string) error {
 	return codec.WriteLengthPrefixedMessage(stream, subMsg)
 }
 
+// Unsubscribe unsubscribes the client from a topic.
+func (tc *testClient) Unsubscribe(ctx context.Context, topic string) error {
+	stream, err := tc.host.NewStream(ctx, tc.nodeID, protocols.ClientSubscribeProtocol)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = stream.Close() }()
+
+	subMsg := &protocolsPb.ClientSubscribeMessage{Subscribe: false, Topic: topic}
+	return codec.WriteLengthPrefixedMessage(stream, subMsg)
+}
+
 // Publish publishes a message to a topic.
 func (tc *testClient) Publish(ctx context.Context, topic string, data []byte) error {
 	stream, err := tc.host.NewStream(ctx, tc.nodeID, protocols.ClientPublishProtocol)
@@ -183,6 +195,20 @@ func (tc *testClient) Next(ctx context.Context, topic string) (*protocolsPb.Clie
 		return msg, nil
 	case <-ctx.Done():
 		return nil, ctx.Err()
+	}
+}
+
+// NextData blocks until a DATA message (not a subscription event) is received
+// for the given topic and returns it.
+func (tc *testClient) NextData(ctx context.Context, topic string) (*protocolsPb.ClientPushMessage, error) {
+	for {
+		msg, err := tc.Next(ctx, topic)
+		if err != nil {
+			return nil, err
+		}
+		if msg.MessageType == protocolsPb.ClientPushMessage_BROADCAST {
+			return msg, nil
+		}
 	}
 }
 
@@ -290,6 +316,8 @@ func fullyConnectedMeshWithClients(ctx context.Context, t *testing.T, numMeshNod
 			t.Fatalf("Failed to create client %d: %v", i, err)
 		}
 	}
+
+	time.Sleep(time.Second)
 
 	return mnet, runningNodes, clients
 }
@@ -496,8 +524,6 @@ func TestClientSubscriptionAndBroadcast(t *testing.T) {
 		return i / 2
 	})
 
-	time.Sleep(time.Second)
-
 	topic1 := "topic_1"
 	topic2 := "topic_2"
 
@@ -556,7 +582,7 @@ func TestClientSubscriptionAndBroadcast(t *testing.T) {
 				continue
 			}
 
-			msg, err := subscriber.Next(ctx, topic)
+			msg, err := subscriber.NextData(ctx, topic)
 			if err != nil {
 				t.Fatalf("Iteration %d: Client %s failed to receive message on topic %s: %v",
 					iteration, subscriber.host.ID().ShortString(), topic, err)
@@ -581,6 +607,78 @@ func TestClientSubscriptionAndBroadcast(t *testing.T) {
 	}
 }
 
+func TestClientSubscriptionEvents(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	const numMeshNodes = 2
+	const numClients = 4
+
+	_, _, clients := fullyConnectedMeshWithClients(ctx, t, numMeshNodes, numClients, func(i int) int {
+		return i / 2
+	})
+
+	topic := "test_topic"
+
+	// Helper to verify subscription/unsubscription events
+	verifyEvents := func(subscribers []*testClient, expectedSender *testClient, isSubscribe bool) {
+		t.Helper()
+		expectedType := protocolsPb.ClientPushMessage_UNSUBSCRIBE
+		eventName := "UNSUBSCRIBE"
+		if isSubscribe {
+			expectedType = protocolsPb.ClientPushMessage_SUBSCRIBE
+			eventName = "SUBSCRIBE"
+		}
+
+		for _, client := range subscribers {
+			msg, err := client.Next(ctx, topic)
+			if err != nil {
+				t.Fatalf("Client %s failed to receive message: %v", client.host.ID().ShortString(), err)
+			}
+			if msg.MessageType != expectedType {
+				t.Fatalf("Expected %s event, got %v", eventName, msg.MessageType)
+			}
+			if string(msg.Sender) != string(expectedSender.host.ID()) {
+				t.Fatalf("Wrong sender in %s event. Expected %s, got %s",
+					eventName, expectedSender.host.ID().ShortString(), peer.ID(msg.Sender).ShortString())
+			}
+		}
+	}
+
+	t.Log("Client 0 subscribes (first subscriber)")
+	if err := clients[0].Subscribe(ctx, topic); err != nil {
+		t.Fatalf("Subscribe failed: %v", err)
+	}
+
+	time.Sleep(200 * time.Millisecond)
+
+	t.Log("Client 1 subscribes - Client 0 should receive event")
+	if err := clients[1].Subscribe(ctx, topic); err != nil {
+		t.Fatalf("Subscribe failed: %v", err)
+	}
+	verifyEvents([]*testClient{clients[0]}, clients[1], true)
+
+	time.Sleep(200 * time.Millisecond)
+
+	t.Log("Client 2 subscribes - Clients 0,1 should receive event")
+	if err := clients[2].Subscribe(ctx, topic); err != nil {
+		t.Fatalf("Subscribe failed: %v", err)
+	}
+	verifyEvents([]*testClient{clients[0], clients[1]}, clients[2], true)
+
+	t.Log("Client 1 unsubscribes - Clients 0,2 should receive event")
+	if err := clients[1].Unsubscribe(ctx, topic); err != nil {
+		t.Fatalf("Unsubscribe failed: %v", err)
+	}
+	verifyEvents([]*testClient{clients[0], clients[2]}, clients[1], false)
+
+	t.Log("Client 3 subscribes - Clients 0,2 should receive event")
+	if err := clients[3].Subscribe(ctx, topic); err != nil {
+		t.Fatalf("Subscribe failed: %v", err)
+	}
+	verifyEvents([]*testClient{clients[0], clients[2]}, clients[3], true)
+}
+
 func TestClientAddrSharing(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -590,8 +688,6 @@ func TestClientAddrSharing(t *testing.T) {
 	_, _, clients := fullyConnectedMeshWithClients(ctx, t, numMeshNodes, numClients, func(i int) int {
 		return i
 	})
-
-	time.Sleep(time.Second)
 
 	multiAddrsEqual := func(addrs1, addrs2 []ma.Multiaddr) bool {
 		if len(addrs1) != len(addrs2) {

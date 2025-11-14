@@ -14,9 +14,17 @@ message ClientPublishMessage {
 // ClientPushMessage is sent by the server to push a message to a subscribed client.
 // Used with the ClientPushProtocol.
 message ClientPushMessage {
-  string topic = 1;
-  bytes data = 2;
-  bytes sender = 3;
+  enum MessageType {
+    UNSPECIFIED = 0;
+    BROADCAST = 1;
+    SUBSCRIBE = 2;
+    UNSUBSCRIBE = 3;
+  }
+
+  MessageType message_type = 1;
+  string topic = 2;
+  bytes data = 3;    // Only populated for BROADCAST messages
+  bytes sender = 4;  // The peer who sent the message or performed the subscription action
 }
 
 // ClientSubscribeMessage is sent by a client to subscribe or unsubscribe from a topic.
