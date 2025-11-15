@@ -21,24 +21,24 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-type ClientPushMessage_MessageType int32
+type PushMessage_MessageType int32
 
 const (
-	ClientPushMessage_UNSPECIFIED ClientPushMessage_MessageType = 0
-	ClientPushMessage_BROADCAST   ClientPushMessage_MessageType = 1 // Regular data message
-	ClientPushMessage_SUBSCRIBE   ClientPushMessage_MessageType = 2 // Peer subscribed to topic
-	ClientPushMessage_UNSUBSCRIBE ClientPushMessage_MessageType = 3 // Peer unsubscribed from topic
+	PushMessage_UNSPECIFIED PushMessage_MessageType = 0
+	PushMessage_BROADCAST   PushMessage_MessageType = 1
+	PushMessage_SUBSCRIBE   PushMessage_MessageType = 2
+	PushMessage_UNSUBSCRIBE PushMessage_MessageType = 3
 )
 
-// Enum value maps for ClientPushMessage_MessageType.
+// Enum value maps for PushMessage_MessageType.
 var (
-	ClientPushMessage_MessageType_name = map[int32]string{
+	PushMessage_MessageType_name = map[int32]string{
 		0: "UNSPECIFIED",
 		1: "BROADCAST",
 		2: "SUBSCRIBE",
 		3: "UNSUBSCRIBE",
 	}
-	ClientPushMessage_MessageType_value = map[string]int32{
+	PushMessage_MessageType_value = map[string]int32{
 		"UNSPECIFIED": 0,
 		"BROADCAST":   1,
 		"SUBSCRIBE":   2,
@@ -46,36 +46,399 @@ var (
 	}
 )
 
-func (x ClientPushMessage_MessageType) Enum() *ClientPushMessage_MessageType {
-	p := new(ClientPushMessage_MessageType)
+func (x PushMessage_MessageType) Enum() *PushMessage_MessageType {
+	p := new(PushMessage_MessageType)
 	*p = x
 	return p
 }
 
-func (x ClientPushMessage_MessageType) String() string {
+func (x PushMessage_MessageType) String() string {
 	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
 }
 
-func (ClientPushMessage_MessageType) Descriptor() protoreflect.EnumDescriptor {
+func (PushMessage_MessageType) Descriptor() protoreflect.EnumDescriptor {
 	return file_protocols_proto_enumTypes[0].Descriptor()
 }
 
-func (ClientPushMessage_MessageType) Type() protoreflect.EnumType {
+func (PushMessage_MessageType) Type() protoreflect.EnumType {
 	return &file_protocols_proto_enumTypes[0]
 }
 
-func (x ClientPushMessage_MessageType) Number() protoreflect.EnumNumber {
+func (x PushMessage_MessageType) Number() protoreflect.EnumNumber {
 	return protoreflect.EnumNumber(x)
 }
 
-// Deprecated: Use ClientPushMessage_MessageType.Descriptor instead.
-func (ClientPushMessage_MessageType) EnumDescriptor() ([]byte, []int) {
-	return file_protocols_proto_rawDescGZIP(), []int{1, 0}
+// Deprecated: Use PushMessage_MessageType.Descriptor instead.
+func (PushMessage_MessageType) EnumDescriptor() ([]byte, []int) {
+	return file_protocols_proto_rawDescGZIP(), []int{6, 0}
 }
 
-// ClientPublishMessage is sent by a client to publish a message to a topic.
-// Used with the ClientPublishProtocol.
-type ClientPublishMessage struct {
+type Response struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Types that are valid to be assigned to Response:
+	//
+	//	*Response_Success
+	//	*Response_Error
+	//	*Response_SubscriptionsResponse
+	//	*Response_AddrResponse
+	//	*Response_PostBondResponse
+	//	*Response_DiscoveryResponse
+	Response      isResponse_Response `protobuf_oneof:"response"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Response) Reset() {
+	*x = Response{}
+	mi := &file_protocols_proto_msgTypes[0]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Response) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Response) ProtoMessage() {}
+
+func (x *Response) ProtoReflect() protoreflect.Message {
+	mi := &file_protocols_proto_msgTypes[0]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Response.ProtoReflect.Descriptor instead.
+func (*Response) Descriptor() ([]byte, []int) {
+	return file_protocols_proto_rawDescGZIP(), []int{0}
+}
+
+func (x *Response) GetResponse() isResponse_Response {
+	if x != nil {
+		return x.Response
+	}
+	return nil
+}
+
+func (x *Response) GetSuccess() *Success {
+	if x != nil {
+		if x, ok := x.Response.(*Response_Success); ok {
+			return x.Success
+		}
+	}
+	return nil
+}
+
+func (x *Response) GetError() *Error {
+	if x != nil {
+		if x, ok := x.Response.(*Response_Error); ok {
+			return x.Error
+		}
+	}
+	return nil
+}
+
+func (x *Response) GetSubscriptionsResponse() *SubscriptionsResponse {
+	if x != nil {
+		if x, ok := x.Response.(*Response_SubscriptionsResponse); ok {
+			return x.SubscriptionsResponse
+		}
+	}
+	return nil
+}
+
+func (x *Response) GetAddrResponse() *ClientAddrResponse {
+	if x != nil {
+		if x, ok := x.Response.(*Response_AddrResponse); ok {
+			return x.AddrResponse
+		}
+	}
+	return nil
+}
+
+func (x *Response) GetPostBondResponse() *PostBondResponse {
+	if x != nil {
+		if x, ok := x.Response.(*Response_PostBondResponse); ok {
+			return x.PostBondResponse
+		}
+	}
+	return nil
+}
+
+func (x *Response) GetDiscoveryResponse() *DiscoveryResponse {
+	if x != nil {
+		if x, ok := x.Response.(*Response_DiscoveryResponse); ok {
+			return x.DiscoveryResponse
+		}
+	}
+	return nil
+}
+
+type isResponse_Response interface {
+	isResponse_Response()
+}
+
+type Response_Success struct {
+	Success *Success `protobuf:"bytes,1,opt,name=success,proto3,oneof"`
+}
+
+type Response_Error struct {
+	Error *Error `protobuf:"bytes,2,opt,name=error,proto3,oneof"`
+}
+
+type Response_SubscriptionsResponse struct {
+	SubscriptionsResponse *SubscriptionsResponse `protobuf:"bytes,3,opt,name=subscriptions_response,json=subscriptionsResponse,proto3,oneof"`
+}
+
+type Response_AddrResponse struct {
+	AddrResponse *ClientAddrResponse `protobuf:"bytes,4,opt,name=addr_response,json=addrResponse,proto3,oneof"`
+}
+
+type Response_PostBondResponse struct {
+	PostBondResponse *PostBondResponse `protobuf:"bytes,5,opt,name=post_bond_response,json=postBondResponse,proto3,oneof"`
+}
+
+type Response_DiscoveryResponse struct {
+	DiscoveryResponse *DiscoveryResponse `protobuf:"bytes,6,opt,name=discovery_response,json=discoveryResponse,proto3,oneof"`
+}
+
+func (*Response_Success) isResponse_Response() {}
+
+func (*Response_Error) isResponse_Response() {}
+
+func (*Response_SubscriptionsResponse) isResponse_Response() {}
+
+func (*Response_AddrResponse) isResponse_Response() {}
+
+func (*Response_PostBondResponse) isResponse_Response() {}
+
+func (*Response_DiscoveryResponse) isResponse_Response() {}
+
+type Success struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Success) Reset() {
+	*x = Success{}
+	mi := &file_protocols_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Success) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Success) ProtoMessage() {}
+
+func (x *Success) ProtoReflect() protoreflect.Message {
+	mi := &file_protocols_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Success.ProtoReflect.Descriptor instead.
+func (*Success) Descriptor() ([]byte, []int) {
+	return file_protocols_proto_rawDescGZIP(), []int{1}
+}
+
+// UnauthorizedError is returned when making a request on a protocol for which
+// the peer is not authorized.
+type UnauthorizedError struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UnauthorizedError) Reset() {
+	*x = UnauthorizedError{}
+	mi := &file_protocols_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UnauthorizedError) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UnauthorizedError) ProtoMessage() {}
+
+func (x *UnauthorizedError) ProtoReflect() protoreflect.Message {
+	mi := &file_protocols_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UnauthorizedError.ProtoReflect.Descriptor instead.
+func (*UnauthorizedError) Descriptor() ([]byte, []int) {
+	return file_protocols_proto_rawDescGZIP(), []int{2}
+}
+
+// PostBondError is a type containing specific error information for the
+// PostBonds protocol.
+type PostBondError struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	InvalidBondIndex uint32                 `protobuf:"varint,1,opt,name=invalidBondIndex,proto3" json:"invalidBondIndex,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *PostBondError) Reset() {
+	*x = PostBondError{}
+	mi := &file_protocols_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PostBondError) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PostBondError) ProtoMessage() {}
+
+func (x *PostBondError) ProtoReflect() protoreflect.Message {
+	mi := &file_protocols_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PostBondError.ProtoReflect.Descriptor instead.
+func (*PostBondError) Descriptor() ([]byte, []int) {
+	return file_protocols_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *PostBondError) GetInvalidBondIndex() uint32 {
+	if x != nil {
+		return x.InvalidBondIndex
+	}
+	return 0
+}
+
+type Error struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Types that are valid to be assigned to Error:
+	//
+	//	*Error_Unauthorized
+	//	*Error_PostBondError
+	//	*Error_Message
+	Error         isError_Error `protobuf_oneof:"error"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Error) Reset() {
+	*x = Error{}
+	mi := &file_protocols_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Error) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Error) ProtoMessage() {}
+
+func (x *Error) ProtoReflect() protoreflect.Message {
+	mi := &file_protocols_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Error.ProtoReflect.Descriptor instead.
+func (*Error) Descriptor() ([]byte, []int) {
+	return file_protocols_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *Error) GetError() isError_Error {
+	if x != nil {
+		return x.Error
+	}
+	return nil
+}
+
+func (x *Error) GetUnauthorized() *UnauthorizedError {
+	if x != nil {
+		if x, ok := x.Error.(*Error_Unauthorized); ok {
+			return x.Unauthorized
+		}
+	}
+	return nil
+}
+
+func (x *Error) GetPostBondError() *PostBondError {
+	if x != nil {
+		if x, ok := x.Error.(*Error_PostBondError); ok {
+			return x.PostBondError
+		}
+	}
+	return nil
+}
+
+func (x *Error) GetMessage() string {
+	if x != nil {
+		if x, ok := x.Error.(*Error_Message); ok {
+			return x.Message
+		}
+	}
+	return ""
+}
+
+type isError_Error interface {
+	isError_Error()
+}
+
+type Error_Unauthorized struct {
+	Unauthorized *UnauthorizedError `protobuf:"bytes,1,opt,name=unauthorized,proto3,oneof"`
+}
+
+type Error_PostBondError struct {
+	PostBondError *PostBondError `protobuf:"bytes,2,opt,name=post_bond_error,json=postBondError,proto3,oneof"`
+}
+
+type Error_Message struct {
+	Message string `protobuf:"bytes,3,opt,name=message,proto3,oneof"`
+}
+
+func (*Error_Unauthorized) isError_Error() {}
+
+func (*Error_PostBondError) isError_Error() {}
+
+func (*Error_Message) isError_Error() {}
+
+// PublishRequest is sent by a client to publish a message to a topic.
+type PublishRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Topic         string                 `protobuf:"bytes,1,opt,name=topic,proto3" json:"topic,omitempty"`
 	Data          []byte                 `protobuf:"bytes,2,opt,name=data,proto3" json:"data,omitempty"`
@@ -83,21 +446,21 @@ type ClientPublishMessage struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *ClientPublishMessage) Reset() {
-	*x = ClientPublishMessage{}
-	mi := &file_protocols_proto_msgTypes[0]
+func (x *PublishRequest) Reset() {
+	*x = PublishRequest{}
+	mi := &file_protocols_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *ClientPublishMessage) String() string {
+func (x *PublishRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ClientPublishMessage) ProtoMessage() {}
+func (*PublishRequest) ProtoMessage() {}
 
-func (x *ClientPublishMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_protocols_proto_msgTypes[0]
+func (x *PublishRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_protocols_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -108,52 +471,52 @@ func (x *ClientPublishMessage) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ClientPublishMessage.ProtoReflect.Descriptor instead.
-func (*ClientPublishMessage) Descriptor() ([]byte, []int) {
-	return file_protocols_proto_rawDescGZIP(), []int{0}
+// Deprecated: Use PublishRequest.ProtoReflect.Descriptor instead.
+func (*PublishRequest) Descriptor() ([]byte, []int) {
+	return file_protocols_proto_rawDescGZIP(), []int{5}
 }
 
-func (x *ClientPublishMessage) GetTopic() string {
+func (x *PublishRequest) GetTopic() string {
 	if x != nil {
 		return x.Topic
 	}
 	return ""
 }
 
-func (x *ClientPublishMessage) GetData() []byte {
+func (x *PublishRequest) GetData() []byte {
 	if x != nil {
 		return x.Data
 	}
 	return nil
 }
 
-// ClientPushMessage is sent by the server to push a message to a subscribed client.
-// Used with the ClientPushProtocol.
-type ClientPushMessage struct {
-	state         protoimpl.MessageState        `protogen:"open.v1"`
-	MessageType   ClientPushMessage_MessageType `protobuf:"varint,1,opt,name=message_type,json=messageType,proto3,enum=pb.ClientPushMessage_MessageType" json:"message_type,omitempty"`
-	Topic         string                        `protobuf:"bytes,2,opt,name=topic,proto3" json:"topic,omitempty"`
-	Data          []byte                        `protobuf:"bytes,3,opt,name=data,proto3" json:"data,omitempty"`     // Only populated for BROADCAST messages
-	Sender        []byte                        `protobuf:"bytes,4,opt,name=sender,proto3" json:"sender,omitempty"` // The peer who sent the message or performed the subscription action
+// PushMessage is sent by the server to push a message to a subscribed client.
+// Used with the PushProtocol.
+type PushMessage struct {
+	state         protoimpl.MessageState  `protogen:"open.v1"`
+	MessageType   PushMessage_MessageType `protobuf:"varint,1,opt,name=message_type,json=messageType,proto3,enum=pb.PushMessage_MessageType" json:"message_type,omitempty"`
+	Topic         string                  `protobuf:"bytes,2,opt,name=topic,proto3" json:"topic,omitempty"`
+	Data          []byte                  `protobuf:"bytes,3,opt,name=data,proto3" json:"data,omitempty"`     // Only populated for BROADCAST messages
+	Sender        []byte                  `protobuf:"bytes,4,opt,name=sender,proto3" json:"sender,omitempty"` // The peer who sent the message or performed the subscription action
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *ClientPushMessage) Reset() {
-	*x = ClientPushMessage{}
-	mi := &file_protocols_proto_msgTypes[1]
+func (x *PushMessage) Reset() {
+	*x = PushMessage{}
+	mi := &file_protocols_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *ClientPushMessage) String() string {
+func (x *PushMessage) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ClientPushMessage) ProtoMessage() {}
+func (*PushMessage) ProtoMessage() {}
 
-func (x *ClientPushMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_protocols_proto_msgTypes[1]
+func (x *PushMessage) ProtoReflect() protoreflect.Message {
+	mi := &file_protocols_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -164,42 +527,42 @@ func (x *ClientPushMessage) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ClientPushMessage.ProtoReflect.Descriptor instead.
-func (*ClientPushMessage) Descriptor() ([]byte, []int) {
-	return file_protocols_proto_rawDescGZIP(), []int{1}
+// Deprecated: Use PushMessage.ProtoReflect.Descriptor instead.
+func (*PushMessage) Descriptor() ([]byte, []int) {
+	return file_protocols_proto_rawDescGZIP(), []int{6}
 }
 
-func (x *ClientPushMessage) GetMessageType() ClientPushMessage_MessageType {
+func (x *PushMessage) GetMessageType() PushMessage_MessageType {
 	if x != nil {
 		return x.MessageType
 	}
-	return ClientPushMessage_UNSPECIFIED
+	return PushMessage_UNSPECIFIED
 }
 
-func (x *ClientPushMessage) GetTopic() string {
+func (x *PushMessage) GetTopic() string {
 	if x != nil {
 		return x.Topic
 	}
 	return ""
 }
 
-func (x *ClientPushMessage) GetData() []byte {
+func (x *PushMessage) GetData() []byte {
 	if x != nil {
 		return x.Data
 	}
 	return nil
 }
 
-func (x *ClientPushMessage) GetSender() []byte {
+func (x *PushMessage) GetSender() []byte {
 	if x != nil {
 		return x.Sender
 	}
 	return nil
 }
 
-// ClientSubscribeMessage is sent by a client to subscribe or unsubscribe from a topic.
-// Used with the ClientSubscribeProtocol.
-type ClientSubscribeMessage struct {
+// SubscribeRequest is sent by a client to subscribe or unsubscribe from
+// a topic.
+type SubscribeRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Topic         string                 `protobuf:"bytes,1,opt,name=topic,proto3" json:"topic,omitempty"`
 	Subscribe     bool                   `protobuf:"varint,2,opt,name=subscribe,proto3" json:"subscribe,omitempty"`
@@ -207,21 +570,21 @@ type ClientSubscribeMessage struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *ClientSubscribeMessage) Reset() {
-	*x = ClientSubscribeMessage{}
-	mi := &file_protocols_proto_msgTypes[2]
+func (x *SubscribeRequest) Reset() {
+	*x = SubscribeRequest{}
+	mi := &file_protocols_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *ClientSubscribeMessage) String() string {
+func (x *SubscribeRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ClientSubscribeMessage) ProtoMessage() {}
+func (*SubscribeRequest) ProtoMessage() {}
 
-func (x *ClientSubscribeMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_protocols_proto_msgTypes[2]
+func (x *SubscribeRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_protocols_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -232,49 +595,49 @@ func (x *ClientSubscribeMessage) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ClientSubscribeMessage.ProtoReflect.Descriptor instead.
-func (*ClientSubscribeMessage) Descriptor() ([]byte, []int) {
-	return file_protocols_proto_rawDescGZIP(), []int{2}
+// Deprecated: Use SubscribeRequest.ProtoReflect.Descriptor instead.
+func (*SubscribeRequest) Descriptor() ([]byte, []int) {
+	return file_protocols_proto_rawDescGZIP(), []int{7}
 }
 
-func (x *ClientSubscribeMessage) GetTopic() string {
+func (x *SubscribeRequest) GetTopic() string {
 	if x != nil {
 		return x.Topic
 	}
 	return ""
 }
 
-func (x *ClientSubscribeMessage) GetSubscribe() bool {
+func (x *SubscribeRequest) GetSubscribe() bool {
 	if x != nil {
 		return x.Subscribe
 	}
 	return false
 }
 
-// ClientSubscriptionsMessage contains the list of topics a client is subscribed to.
-// Used with the ClientSubscriptionsProtocol.
-type ClientSubscriptionsMessage struct {
+// SubscriptionsResponse is sent by a tatanka node informing the client
+// which topics they are subscribed to.
+type SubscriptionsResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Topics        []string               `protobuf:"bytes,1,rep,name=topics,proto3" json:"topics,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *ClientSubscriptionsMessage) Reset() {
-	*x = ClientSubscriptionsMessage{}
-	mi := &file_protocols_proto_msgTypes[3]
+func (x *SubscriptionsResponse) Reset() {
+	*x = SubscriptionsResponse{}
+	mi := &file_protocols_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *ClientSubscriptionsMessage) String() string {
+func (x *SubscriptionsResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ClientSubscriptionsMessage) ProtoMessage() {}
+func (*SubscriptionsResponse) ProtoMessage() {}
 
-func (x *ClientSubscriptionsMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_protocols_proto_msgTypes[3]
+func (x *SubscriptionsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_protocols_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -285,42 +648,41 @@ func (x *ClientSubscriptionsMessage) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ClientSubscriptionsMessage.ProtoReflect.Descriptor instead.
-func (*ClientSubscriptionsMessage) Descriptor() ([]byte, []int) {
-	return file_protocols_proto_rawDescGZIP(), []int{3}
+// Deprecated: Use SubscriptionsResponse.ProtoReflect.Descriptor instead.
+func (*SubscriptionsResponse) Descriptor() ([]byte, []int) {
+	return file_protocols_proto_rawDescGZIP(), []int{8}
 }
 
-func (x *ClientSubscriptionsMessage) GetTopics() []string {
+func (x *SubscriptionsResponse) GetTopics() []string {
 	if x != nil {
 		return x.Topics
 	}
 	return nil
 }
 
-// ClientAddrRequestMessage is sent by a client to request the addresses of another peer.
-// Used with the ClientAddrProtocol.
-type ClientAddrRequestMessage struct {
+// ClientAddrRequest is sent by a client to request the addresses of another peer.
+type ClientAddrRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Id            []byte                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"` // peer.ID serialized as bytes
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *ClientAddrRequestMessage) Reset() {
-	*x = ClientAddrRequestMessage{}
-	mi := &file_protocols_proto_msgTypes[4]
+func (x *ClientAddrRequest) Reset() {
+	*x = ClientAddrRequest{}
+	mi := &file_protocols_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *ClientAddrRequestMessage) String() string {
+func (x *ClientAddrRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ClientAddrRequestMessage) ProtoMessage() {}
+func (*ClientAddrRequest) ProtoMessage() {}
 
-func (x *ClientAddrRequestMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_protocols_proto_msgTypes[4]
+func (x *ClientAddrRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_protocols_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -331,124 +693,42 @@ func (x *ClientAddrRequestMessage) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ClientAddrRequestMessage.ProtoReflect.Descriptor instead.
-func (*ClientAddrRequestMessage) Descriptor() ([]byte, []int) {
-	return file_protocols_proto_rawDescGZIP(), []int{4}
+// Deprecated: Use ClientAddrRequest.ProtoReflect.Descriptor instead.
+func (*ClientAddrRequest) Descriptor() ([]byte, []int) {
+	return file_protocols_proto_rawDescGZIP(), []int{9}
 }
 
-func (x *ClientAddrRequestMessage) GetId() []byte {
+func (x *ClientAddrRequest) GetId() []byte {
 	if x != nil {
 		return x.Id
 	}
 	return nil
 }
 
-// ClientAddrResponseMessage is the response containing the multiaddresses of a peer or an error.
-// Used with the ClientAddrProtocol.
-type ClientAddrResponseMessage struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	// Types that are valid to be assigned to Result:
-	//
-	//	*ClientAddrResponseMessage_Success_
-	//	*ClientAddrResponseMessage_Error
-	Result        isClientAddrResponseMessage_Result `protobuf_oneof:"result"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *ClientAddrResponseMessage) Reset() {
-	*x = ClientAddrResponseMessage{}
-	mi := &file_protocols_proto_msgTypes[5]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *ClientAddrResponseMessage) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*ClientAddrResponseMessage) ProtoMessage() {}
-
-func (x *ClientAddrResponseMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_protocols_proto_msgTypes[5]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use ClientAddrResponseMessage.ProtoReflect.Descriptor instead.
-func (*ClientAddrResponseMessage) Descriptor() ([]byte, []int) {
-	return file_protocols_proto_rawDescGZIP(), []int{5}
-}
-
-func (x *ClientAddrResponseMessage) GetResult() isClientAddrResponseMessage_Result {
-	if x != nil {
-		return x.Result
-	}
-	return nil
-}
-
-func (x *ClientAddrResponseMessage) GetSuccess() *ClientAddrResponseMessage_Success {
-	if x != nil {
-		if x, ok := x.Result.(*ClientAddrResponseMessage_Success_); ok {
-			return x.Success
-		}
-	}
-	return nil
-}
-
-func (x *ClientAddrResponseMessage) GetError() string {
-	if x != nil {
-		if x, ok := x.Result.(*ClientAddrResponseMessage_Error); ok {
-			return x.Error
-		}
-	}
-	return ""
-}
-
-type isClientAddrResponseMessage_Result interface {
-	isClientAddrResponseMessage_Result()
-}
-
-type ClientAddrResponseMessage_Success_ struct {
-	Success *ClientAddrResponseMessage_Success `protobuf:"bytes,1,opt,name=success,proto3,oneof"`
-}
-
-type ClientAddrResponseMessage_Error struct {
-	Error string `protobuf:"bytes,2,opt,name=error,proto3,oneof"` // Error message, e.g., "peer not found"
-}
-
-func (*ClientAddrResponseMessage_Success_) isClientAddrResponseMessage_Result() {}
-
-func (*ClientAddrResponseMessage_Error) isClientAddrResponseMessage_Result() {}
-
-type ClientAddrResponseMessage_Success struct {
+// ClientAddrResponse is the response containing the multiaddresses of a peer or an error.
+// Used with the ClientAddr.
+type ClientAddrResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Addrs         [][]byte               `protobuf:"bytes,1,rep,name=addrs,proto3" json:"addrs,omitempty"` // multiaddrs serialized as bytes
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *ClientAddrResponseMessage_Success) Reset() {
-	*x = ClientAddrResponseMessage_Success{}
-	mi := &file_protocols_proto_msgTypes[6]
+func (x *ClientAddrResponse) Reset() {
+	*x = ClientAddrResponse{}
+	mi := &file_protocols_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *ClientAddrResponseMessage_Success) String() string {
+func (x *ClientAddrResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ClientAddrResponseMessage_Success) ProtoMessage() {}
+func (*ClientAddrResponse) ProtoMessage() {}
 
-func (x *ClientAddrResponseMessage_Success) ProtoReflect() protoreflect.Message {
-	mi := &file_protocols_proto_msgTypes[6]
+func (x *ClientAddrResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_protocols_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -459,14 +739,252 @@ func (x *ClientAddrResponseMessage_Success) ProtoReflect() protoreflect.Message 
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ClientAddrResponseMessage_Success.ProtoReflect.Descriptor instead.
-func (*ClientAddrResponseMessage_Success) Descriptor() ([]byte, []int) {
-	return file_protocols_proto_rawDescGZIP(), []int{5, 0}
+// Deprecated: Use ClientAddrResponse.ProtoReflect.Descriptor instead.
+func (*ClientAddrResponse) Descriptor() ([]byte, []int) {
+	return file_protocols_proto_rawDescGZIP(), []int{10}
 }
 
-func (x *ClientAddrResponseMessage_Success) GetAddrs() [][]byte {
+func (x *ClientAddrResponse) GetAddrs() [][]byte {
 	if x != nil {
 		return x.Addrs
+	}
+	return nil
+}
+
+type Bond struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	AssetID       uint32                 `protobuf:"varint,1,opt,name=assetID,proto3" json:"assetID,omitempty"`
+	BondID        []byte                 `protobuf:"bytes,2,opt,name=bondID,proto3" json:"bondID,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Bond) Reset() {
+	*x = Bond{}
+	mi := &file_protocols_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Bond) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Bond) ProtoMessage() {}
+
+func (x *Bond) ProtoReflect() protoreflect.Message {
+	mi := &file_protocols_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Bond.ProtoReflect.Descriptor instead.
+func (*Bond) Descriptor() ([]byte, []int) {
+	return file_protocols_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *Bond) GetAssetID() uint32 {
+	if x != nil {
+		return x.AssetID
+	}
+	return 0
+}
+
+func (x *Bond) GetBondID() []byte {
+	if x != nil {
+		return x.BondID
+	}
+	return nil
+}
+
+type PostBondRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Bonds         []*Bond                `protobuf:"bytes,1,rep,name=bonds,proto3" json:"bonds,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PostBondRequest) Reset() {
+	*x = PostBondRequest{}
+	mi := &file_protocols_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PostBondRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PostBondRequest) ProtoMessage() {}
+
+func (x *PostBondRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_protocols_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PostBondRequest.ProtoReflect.Descriptor instead.
+func (*PostBondRequest) Descriptor() ([]byte, []int) {
+	return file_protocols_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *PostBondRequest) GetBonds() []*Bond {
+	if x != nil {
+		return x.Bonds
+	}
+	return nil
+}
+
+type PostBondResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	BondStrength  uint32                 `protobuf:"varint,1,opt,name=bondStrength,proto3" json:"bondStrength,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PostBondResponse) Reset() {
+	*x = PostBondResponse{}
+	mi := &file_protocols_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PostBondResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PostBondResponse) ProtoMessage() {}
+
+func (x *PostBondResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_protocols_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PostBondResponse.ProtoReflect.Descriptor instead.
+func (*PostBondResponse) Descriptor() ([]byte, []int) {
+	return file_protocols_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *PostBondResponse) GetBondStrength() uint32 {
+	if x != nil {
+		return x.BondStrength
+	}
+	return 0
+}
+
+// PeerInfo contains information about a single peer.
+type PeerInfo struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            []byte                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`       // peer.ID serialized as bytes
+	Addrs         [][]byte               `protobuf:"bytes,2,rep,name=addrs,proto3" json:"addrs,omitempty"` // multiaddrs serialized as bytes
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PeerInfo) Reset() {
+	*x = PeerInfo{}
+	mi := &file_protocols_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PeerInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PeerInfo) ProtoMessage() {}
+
+func (x *PeerInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_protocols_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PeerInfo.ProtoReflect.Descriptor instead.
+func (*PeerInfo) Descriptor() ([]byte, []int) {
+	return file_protocols_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *PeerInfo) GetId() []byte {
+	if x != nil {
+		return x.Id
+	}
+	return nil
+}
+
+func (x *PeerInfo) GetAddrs() [][]byte {
+	if x != nil {
+		return x.Addrs
+	}
+	return nil
+}
+
+// DiscoveryResponse contains a list of peers for discovery.
+type DiscoveryResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Peers         []*PeerInfo            `protobuf:"bytes,1,rep,name=peers,proto3" json:"peers,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DiscoveryResponse) Reset() {
+	*x = DiscoveryResponse{}
+	mi := &file_protocols_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DiscoveryResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DiscoveryResponse) ProtoMessage() {}
+
+func (x *DiscoveryResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_protocols_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DiscoveryResponse.ProtoReflect.Descriptor instead.
+func (*DiscoveryResponse) Descriptor() ([]byte, []int) {
+	return file_protocols_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *DiscoveryResponse) GetPeers() []*PeerInfo {
+	if x != nil {
+		return x.Peers
 	}
 	return nil
 }
@@ -475,12 +993,30 @@ var File_protocols_proto protoreflect.FileDescriptor
 
 const file_protocols_proto_rawDesc = "" +
 	"\n" +
-	"\x0fprotocols.proto\x12\x02pb\"@\n" +
-	"\x14ClientPublishMessage\x12\x14\n" +
+	"\x0fprotocols.proto\x12\x02pb\"\x83\x03\n" +
+	"\bResponse\x12'\n" +
+	"\asuccess\x18\x01 \x01(\v2\v.pb.SuccessH\x00R\asuccess\x12!\n" +
+	"\x05error\x18\x02 \x01(\v2\t.pb.ErrorH\x00R\x05error\x12R\n" +
+	"\x16subscriptions_response\x18\x03 \x01(\v2\x19.pb.SubscriptionsResponseH\x00R\x15subscriptionsResponse\x12=\n" +
+	"\raddr_response\x18\x04 \x01(\v2\x16.pb.ClientAddrResponseH\x00R\faddrResponse\x12D\n" +
+	"\x12post_bond_response\x18\x05 \x01(\v2\x14.pb.PostBondResponseH\x00R\x10postBondResponse\x12F\n" +
+	"\x12discovery_response\x18\x06 \x01(\v2\x15.pb.DiscoveryResponseH\x00R\x11discoveryResponseB\n" +
+	"\n" +
+	"\bresponse\"\t\n" +
+	"\aSuccess\"\x13\n" +
+	"\x11UnauthorizedError\";\n" +
+	"\rPostBondError\x12*\n" +
+	"\x10invalidBondIndex\x18\x01 \x01(\rR\x10invalidBondIndex\"\xa6\x01\n" +
+	"\x05Error\x12;\n" +
+	"\funauthorized\x18\x01 \x01(\v2\x15.pb.UnauthorizedErrorH\x00R\funauthorized\x12;\n" +
+	"\x0fpost_bond_error\x18\x02 \x01(\v2\x11.pb.PostBondErrorH\x00R\rpostBondError\x12\x1a\n" +
+	"\amessage\x18\x03 \x01(\tH\x00R\amessageB\a\n" +
+	"\x05error\":\n" +
+	"\x0ePublishRequest\x12\x14\n" +
 	"\x05topic\x18\x01 \x01(\tR\x05topic\x12\x12\n" +
-	"\x04data\x18\x02 \x01(\fR\x04data\"\xea\x01\n" +
-	"\x11ClientPushMessage\x12D\n" +
-	"\fmessage_type\x18\x01 \x01(\x0e2!.pb.ClientPushMessage.MessageTypeR\vmessageType\x12\x14\n" +
+	"\x04data\x18\x02 \x01(\fR\x04data\"\xde\x01\n" +
+	"\vPushMessage\x12>\n" +
+	"\fmessage_type\x18\x01 \x01(\x0e2\x1b.pb.PushMessage.MessageTypeR\vmessageType\x12\x14\n" +
 	"\x05topic\x18\x02 \x01(\tR\x05topic\x12\x12\n" +
 	"\x04data\x18\x03 \x01(\fR\x04data\x12\x16\n" +
 	"\x06sender\x18\x04 \x01(\fR\x06sender\"M\n" +
@@ -488,20 +1024,28 @@ const file_protocols_proto_rawDesc = "" +
 	"\vUNSPECIFIED\x10\x00\x12\r\n" +
 	"\tBROADCAST\x10\x01\x12\r\n" +
 	"\tSUBSCRIBE\x10\x02\x12\x0f\n" +
-	"\vUNSUBSCRIBE\x10\x03\"L\n" +
-	"\x16ClientSubscribeMessage\x12\x14\n" +
+	"\vUNSUBSCRIBE\x10\x03\"F\n" +
+	"\x10SubscribeRequest\x12\x14\n" +
 	"\x05topic\x18\x01 \x01(\tR\x05topic\x12\x1c\n" +
-	"\tsubscribe\x18\x02 \x01(\bR\tsubscribe\"4\n" +
-	"\x1aClientSubscriptionsMessage\x12\x16\n" +
-	"\x06topics\x18\x01 \x03(\tR\x06topics\"*\n" +
-	"\x18ClientAddrRequestMessage\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\fR\x02id\"\xa1\x01\n" +
-	"\x19ClientAddrResponseMessage\x12A\n" +
-	"\asuccess\x18\x01 \x01(\v2%.pb.ClientAddrResponseMessage.SuccessH\x00R\asuccess\x12\x16\n" +
-	"\x05error\x18\x02 \x01(\tH\x00R\x05error\x1a\x1f\n" +
-	"\aSuccess\x12\x14\n" +
-	"\x05addrs\x18\x01 \x03(\fR\x05addrsB\b\n" +
-	"\x06resultB.Z,github.com/martonp/tatanka-mesh/protocols/pbb\x06proto3"
+	"\tsubscribe\x18\x02 \x01(\bR\tsubscribe\"/\n" +
+	"\x15SubscriptionsResponse\x12\x16\n" +
+	"\x06topics\x18\x01 \x03(\tR\x06topics\"#\n" +
+	"\x11ClientAddrRequest\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\fR\x02id\"*\n" +
+	"\x12ClientAddrResponse\x12\x14\n" +
+	"\x05addrs\x18\x01 \x03(\fR\x05addrs\"8\n" +
+	"\x04Bond\x12\x18\n" +
+	"\aassetID\x18\x01 \x01(\rR\aassetID\x12\x16\n" +
+	"\x06bondID\x18\x02 \x01(\fR\x06bondID\"1\n" +
+	"\x0fPostBondRequest\x12\x1e\n" +
+	"\x05bonds\x18\x01 \x03(\v2\b.pb.BondR\x05bonds\"6\n" +
+	"\x10PostBondResponse\x12\"\n" +
+	"\fbondStrength\x18\x01 \x01(\rR\fbondStrength\"0\n" +
+	"\bPeerInfo\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\fR\x02id\x12\x14\n" +
+	"\x05addrs\x18\x02 \x03(\fR\x05addrs\"7\n" +
+	"\x11DiscoveryResponse\x12\"\n" +
+	"\x05peers\x18\x01 \x03(\v2\f.pb.PeerInfoR\x05peersB.Z,github.com/martonp/tatanka-mesh/protocols/pbb\x06proto3"
 
 var (
 	file_protocols_proto_rawDescOnce sync.Once
@@ -516,25 +1060,43 @@ func file_protocols_proto_rawDescGZIP() []byte {
 }
 
 var file_protocols_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_protocols_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
+var file_protocols_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
 var file_protocols_proto_goTypes = []any{
-	(ClientPushMessage_MessageType)(0),        // 0: pb.ClientPushMessage.MessageType
-	(*ClientPublishMessage)(nil),              // 1: pb.ClientPublishMessage
-	(*ClientPushMessage)(nil),                 // 2: pb.ClientPushMessage
-	(*ClientSubscribeMessage)(nil),            // 3: pb.ClientSubscribeMessage
-	(*ClientSubscriptionsMessage)(nil),        // 4: pb.ClientSubscriptionsMessage
-	(*ClientAddrRequestMessage)(nil),          // 5: pb.ClientAddrRequestMessage
-	(*ClientAddrResponseMessage)(nil),         // 6: pb.ClientAddrResponseMessage
-	(*ClientAddrResponseMessage_Success)(nil), // 7: pb.ClientAddrResponseMessage.Success
+	(PushMessage_MessageType)(0),  // 0: pb.PushMessage.MessageType
+	(*Response)(nil),              // 1: pb.Response
+	(*Success)(nil),               // 2: pb.Success
+	(*UnauthorizedError)(nil),     // 3: pb.UnauthorizedError
+	(*PostBondError)(nil),         // 4: pb.PostBondError
+	(*Error)(nil),                 // 5: pb.Error
+	(*PublishRequest)(nil),        // 6: pb.PublishRequest
+	(*PushMessage)(nil),           // 7: pb.PushMessage
+	(*SubscribeRequest)(nil),      // 8: pb.SubscribeRequest
+	(*SubscriptionsResponse)(nil), // 9: pb.SubscriptionsResponse
+	(*ClientAddrRequest)(nil),     // 10: pb.ClientAddrRequest
+	(*ClientAddrResponse)(nil),    // 11: pb.ClientAddrResponse
+	(*Bond)(nil),                  // 12: pb.Bond
+	(*PostBondRequest)(nil),       // 13: pb.PostBondRequest
+	(*PostBondResponse)(nil),      // 14: pb.PostBondResponse
+	(*PeerInfo)(nil),              // 15: pb.PeerInfo
+	(*DiscoveryResponse)(nil),     // 16: pb.DiscoveryResponse
 }
 var file_protocols_proto_depIdxs = []int32{
-	0, // 0: pb.ClientPushMessage.message_type:type_name -> pb.ClientPushMessage.MessageType
-	7, // 1: pb.ClientAddrResponseMessage.success:type_name -> pb.ClientAddrResponseMessage.Success
-	2, // [2:2] is the sub-list for method output_type
-	2, // [2:2] is the sub-list for method input_type
-	2, // [2:2] is the sub-list for extension type_name
-	2, // [2:2] is the sub-list for extension extendee
-	0, // [0:2] is the sub-list for field type_name
+	2,  // 0: pb.Response.success:type_name -> pb.Success
+	5,  // 1: pb.Response.error:type_name -> pb.Error
+	9,  // 2: pb.Response.subscriptions_response:type_name -> pb.SubscriptionsResponse
+	11, // 3: pb.Response.addr_response:type_name -> pb.ClientAddrResponse
+	14, // 4: pb.Response.post_bond_response:type_name -> pb.PostBondResponse
+	16, // 5: pb.Response.discovery_response:type_name -> pb.DiscoveryResponse
+	3,  // 6: pb.Error.unauthorized:type_name -> pb.UnauthorizedError
+	4,  // 7: pb.Error.post_bond_error:type_name -> pb.PostBondError
+	0,  // 8: pb.PushMessage.message_type:type_name -> pb.PushMessage.MessageType
+	12, // 9: pb.PostBondRequest.bonds:type_name -> pb.Bond
+	15, // 10: pb.DiscoveryResponse.peers:type_name -> pb.PeerInfo
+	11, // [11:11] is the sub-list for method output_type
+	11, // [11:11] is the sub-list for method input_type
+	11, // [11:11] is the sub-list for extension type_name
+	11, // [11:11] is the sub-list for extension extendee
+	0,  // [0:11] is the sub-list for field type_name
 }
 
 func init() { file_protocols_proto_init() }
@@ -542,9 +1104,18 @@ func file_protocols_proto_init() {
 	if File_protocols_proto != nil {
 		return
 	}
-	file_protocols_proto_msgTypes[5].OneofWrappers = []any{
-		(*ClientAddrResponseMessage_Success_)(nil),
-		(*ClientAddrResponseMessage_Error)(nil),
+	file_protocols_proto_msgTypes[0].OneofWrappers = []any{
+		(*Response_Success)(nil),
+		(*Response_Error)(nil),
+		(*Response_SubscriptionsResponse)(nil),
+		(*Response_AddrResponse)(nil),
+		(*Response_PostBondResponse)(nil),
+		(*Response_DiscoveryResponse)(nil),
+	}
+	file_protocols_proto_msgTypes[4].OneofWrappers = []any{
+		(*Error_Unauthorized)(nil),
+		(*Error_PostBondError)(nil),
+		(*Error_Message)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -552,7 +1123,7 @@ func file_protocols_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_protocols_proto_rawDesc), len(file_protocols_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   7,
+			NumMessages:   16,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

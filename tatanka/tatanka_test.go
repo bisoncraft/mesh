@@ -26,6 +26,20 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+type testBondStorage struct {
+	score uint32
+}
+
+var _ bondStorage = (*testBondStorage)(nil)
+
+func (tbs *testBondStorage) addBonds(peerID peer.ID, bonds []*bondParams) uint32 {
+	return tbs.score
+}
+
+func (tbs *testBondStorage) getBondStrength(peerID peer.ID) uint32 {
+	return tbs.score
+}
+
 func newTestNode(t *testing.T, ctx context.Context, h host.Host, dataDir string, manifest *manifest) *TatankaNode {
 	logBackend := slog.NewBackend(os.Stdout)
 	log := logBackend.Logger(h.ID().ShortString())
@@ -50,6 +64,8 @@ func newTestNode(t *testing.T, ctx context.Context, h host.Host, dataDir string,
 		t.Fatalf("Failed to create test node: %v", err)
 	}
 
+	n.bondStorage = &testBondStorage{score: 1}
+
 	go func() {
 		if err := n.Run(ctx); err != nil {
 			t.Errorf("Failed to run test node: %v", err)
@@ -65,7 +81,7 @@ type testClient struct {
 	host       host.Host
 	nodeID     peer.ID
 	pushStream network.Stream
-	channels   map[string]chan *protocolsPb.ClientPushMessage
+	channels   map[string]chan *protocolsPb.PushMessage
 	mtx        sync.RWMutex
 }
 
@@ -83,7 +99,7 @@ func newTestClient(t *testing.T, ctx context.Context, h host.Host, nodeID peer.I
 		host:       h,
 		nodeID:     nodeID,
 		pushStream: stream,
-		channels:   make(map[string]chan *protocolsPb.ClientPushMessage),
+		channels:   make(map[string]chan *protocolsPb.PushMessage),
 	}
 
 	// Start goroutine to read incoming push messages
@@ -120,7 +136,7 @@ func (tc *testClient) readPushMessages() {
 			return
 		}
 
-		msg := &protocolsPb.ClientPushMessage{}
+		msg := &protocolsPb.PushMessage{}
 		if err := proto.Unmarshal(data, msg); err != nil {
 			tc.t.Logf("Error unmarshaling push message from client %s: %v", tc.nodeID.ShortString(), err)
 			continue
@@ -129,7 +145,7 @@ func (tc *testClient) readPushMessages() {
 		tc.mtx.Lock()
 		ch, exists := tc.channels[msg.Topic]
 		if !exists {
-			ch = make(chan *protocolsPb.ClientPushMessage, 100)
+			ch = make(chan *protocolsPb.PushMessage, 100)
 			tc.channels[msg.Topic] = ch
 		}
 		tc.mtx.Unlock()
@@ -151,7 +167,7 @@ func (tc *testClient) Subscribe(ctx context.Context, topic string) error {
 	}
 	defer func() { _ = stream.Close() }()
 
-	subMsg := &protocolsPb.ClientSubscribeMessage{Subscribe: true, Topic: topic}
+	subMsg := &protocolsPb.SubscribeRequest{Subscribe: true, Topic: topic}
 	if err := codec.WriteLengthPrefixedMessage(stream, subMsg); err != nil {
 		if !errors.Is(err, io.EOF) && !errors.Is(err, context.Canceled) && !errors.Is(err, io.ErrClosedPipe) {
 			return err
@@ -169,7 +185,7 @@ func (tc *testClient) Unsubscribe(ctx context.Context, topic string) error {
 	}
 	defer func() { _ = stream.Close() }()
 
-	subMsg := &protocolsPb.ClientSubscribeMessage{Subscribe: false, Topic: topic}
+	subMsg := &protocolsPb.SubscribeRequest{Subscribe: false, Topic: topic}
 	return codec.WriteLengthPrefixedMessage(stream, subMsg)
 }
 
@@ -181,7 +197,7 @@ func (tc *testClient) Publish(ctx context.Context, topic string, data []byte) er
 	}
 	defer func() { _ = stream.Close() }()
 
-	pubMsg := &protocolsPb.ClientPublishMessage{Topic: topic, Data: data}
+	pubMsg := &protocolsPb.PublishRequest{Topic: topic, Data: data}
 	if err := codec.WriteLengthPrefixedMessage(stream, pubMsg); err != nil {
 		if !errors.Is(err, io.EOF) && !errors.Is(err, context.Canceled) && !errors.Is(err, io.ErrClosedPipe) {
 			return err
@@ -208,11 +224,11 @@ func (tc *testClient) Close() {
 
 // Next blocks until a message is received for the given topic and returns it.
 // Returns an error if the context is cancelled before a message arrives.
-func (tc *testClient) Next(ctx context.Context, topic string) (*protocolsPb.ClientPushMessage, error) {
+func (tc *testClient) Next(ctx context.Context, topic string) (*protocolsPb.PushMessage, error) {
 	tc.mtx.Lock()
 	ch, exists := tc.channels[topic]
 	if !exists {
-		ch = make(chan *protocolsPb.ClientPushMessage, 100)
+		ch = make(chan *protocolsPb.PushMessage, 100)
 		tc.channels[topic] = ch
 	}
 	tc.mtx.Unlock()
@@ -227,13 +243,13 @@ func (tc *testClient) Next(ctx context.Context, topic string) (*protocolsPb.Clie
 
 // NextData blocks until a DATA message (not a subscription event) is received
 // for the given topic and returns it.
-func (tc *testClient) NextData(ctx context.Context, topic string) (*protocolsPb.ClientPushMessage, error) {
+func (tc *testClient) NextData(ctx context.Context, topic string) (*protocolsPb.PushMessage, error) {
 	for {
 		msg, err := tc.Next(ctx, topic)
 		if err != nil {
 			return nil, err
 		}
-		if msg.MessageType == protocolsPb.ClientPushMessage_BROADCAST {
+		if msg.MessageType == protocolsPb.PushMessage_BROADCAST {
 			return msg, nil
 		}
 	}
@@ -246,7 +262,7 @@ func (tc *testClient) GetPeerAddr(ctx context.Context, id peer.ID) ([]ma.Multiad
 	}
 	defer func() { _ = stream.Close() }()
 
-	addrMsg := &protocolsPb.ClientAddrRequestMessage{Id: []byte(id)}
+	addrMsg := &protocolsPb.ClientAddrRequest{Id: []byte(id)}
 	if err := codec.WriteLengthPrefixedMessage(stream, addrMsg); err != nil {
 		if !errors.Is(err, io.EOF) && !errors.Is(err, context.Canceled) && !errors.Is(err, io.ErrClosedPipe) {
 			return nil, err
@@ -262,17 +278,17 @@ func (tc *testClient) GetPeerAddr(ctx context.Context, id peer.ID) ([]ma.Multiad
 
 	buf := bufio.NewReader(stream)
 
-	responseMessage := &protocolsPb.ClientAddrResponseMessage{}
+	responseMessage := &protocolsPb.Response{}
 	if err := codec.ReadLengthPrefixedMessage(buf, responseMessage); err != nil {
 		return nil, err
 	}
 
 	// Switch on the result type
-	switch result := responseMessage.Result.(type) {
-	case *protocolsPb.ClientAddrResponseMessage_Success_:
+	switch result := responseMessage.Response.(type) {
+	case *protocolsPb.Response_AddrResponse:
 		// Convert bytes back to multiaddrs
-		addrs := make([]ma.Multiaddr, len(result.Success.Addrs))
-		for i, addrBytes := range result.Success.Addrs {
+		addrs := make([]ma.Multiaddr, len(result.AddrResponse.Addrs))
+		for i, addrBytes := range result.AddrResponse.Addrs {
 			addr, err := ma.NewMultiaddrBytes(addrBytes)
 			if err != nil {
 				return nil, fmt.Errorf("failed to parse multiaddr: %w", err)
@@ -281,8 +297,14 @@ func (tc *testClient) GetPeerAddr(ctx context.Context, id peer.ID) ([]ma.Multiad
 		}
 		return addrs, nil
 
-	case *protocolsPb.ClientAddrResponseMessage_Error:
-		return nil, fmt.Errorf("server error: %s", result.Error)
+	case *protocolsPb.Response_Error:
+		if msg := result.Error.GetMessage(); msg != "" {
+			return nil, fmt.Errorf("server error: %s", msg)
+		}
+		if result.Error.GetUnauthorized() != nil {
+			return nil, errUnauthorized
+		}
+		return nil, fmt.Errorf("server error")
 
 	default:
 		return nil, fmt.Errorf("no success or error in response")
@@ -654,10 +676,10 @@ func TestClientSubscriptionEvents(t *testing.T) {
 	// Helper to verify subscription/unsubscription events
 	verifyEvents := func(subscribers []*testClient, expectedSender *testClient, isSubscribe bool) {
 		t.Helper()
-		expectedType := protocolsPb.ClientPushMessage_UNSUBSCRIBE
+		expectedType := protocolsPb.PushMessage_UNSUBSCRIBE
 		eventName := "UNSUBSCRIBE"
 		if isSubscribe {
-			expectedType = protocolsPb.ClientPushMessage_SUBSCRIBE
+			expectedType = protocolsPb.PushMessage_SUBSCRIBE
 			eventName = "SUBSCRIBE"
 		}
 

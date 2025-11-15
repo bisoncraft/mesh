@@ -5,7 +5,7 @@ import (
 
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/peer"
-	pb "github.com/martonp/tatanka-mesh/tatanka/pb"
+	protocolsPb "github.com/martonp/tatanka-mesh/protocols/pb"
 	ma "github.com/multiformats/go-multiaddr"
 )
 
@@ -72,14 +72,14 @@ func TestPeerInfoRoundTrip(t *testing.T) {
 	}
 
 	// Test invalid PB (e.g., bad ID bytes)
-	badPb := &pb.PeerInfo{Id: []byte("invalid")}
+	badPb := &protocolsPb.PeerInfo{Id: []byte("invalid")}
 	_, err = pbPeerInfoToLibp2p(badPb)
 	if err == nil {
 		t.Error("Expected error for invalid peer ID")
 	}
 
 	// Test invalid addr bytes
-	badAddrPb := &pb.PeerInfo{
+	badAddrPb := &protocolsPb.PeerInfo{
 		Id:    []byte(originalID),
 		Addrs: [][]byte{[]byte("invalid addr")},
 	}

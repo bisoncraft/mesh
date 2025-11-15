@@ -20,7 +20,6 @@ import (
 	"github.com/martonp/tatanka-mesh/codec"
 	"github.com/martonp/tatanka-mesh/protocols"
 	protocolsPb "github.com/martonp/tatanka-mesh/protocols/pb"
-	pb "github.com/martonp/tatanka-mesh/tatanka/pb"
 	ma "github.com/multiformats/go-multiaddr"
 )
 
@@ -67,11 +66,13 @@ func WithHost(h host.Host) Option {
 
 // TatankaNode is a permissioned node in the tatanka mesh
 type TatankaNode struct {
-	config     *Config
-	node       host.Host
-	log        slog.Logger
-	manifest   *manifest
-	privateKey crypto.PrivKey
+	config       *Config
+	node         host.Host
+	log          slog.Logger
+	manifest     *manifest
+	privateKey   crypto.PrivKey
+	bondVerifier *bondVerifier
+	bondStorage  bondStorage
 
 	gossipSub               *gossipSub
 	clientConnectionManager *clientConnectionManager
@@ -98,6 +99,8 @@ func NewTatankaNode(config *Config, opts ...Option) (*TatankaNode, error) {
 		privateKey:              privateKey,
 		clientConnectionManager: newClientConnectionManager(config.Logger),
 		subscriptionManager:     newSubscriptionManager(),
+		bondVerifier:            newBondVerifier(),
+		bondStorage:             newMemoryBondStorage(time.Now),
 	}
 
 	for _, opt := range opts {
@@ -111,7 +114,7 @@ func (t *TatankaNode) getManifestPeers() map[peer.ID]struct{} {
 	return t.manifest.allPeerIDs()
 }
 
-func (t *TatankaNode) handleBroadcastMessage(msg *protocolsPb.ClientPushMessage) {
+func (t *TatankaNode) handleBroadcastMessage(msg *protocolsPb.PushMessage) {
 	clients := t.subscriptionManager.clientsForTopic(msg.Topic)
 	if len(clients) > 0 {
 		t.pushStreamManager.distribute(clients, msg)
@@ -243,11 +246,12 @@ func getOrCreatePrivateKey(filePath string) (crypto.PrivKey, error) {
 }
 
 func (t *TatankaNode) setupStreamHandlers() {
-	t.node.SetStreamHandler(protocols.DiscoveryProtocol, t.handleDiscovery)
-	t.node.SetStreamHandler(protocols.ClientSubscribeProtocol, t.handleClientSubscribe)
-	t.node.SetStreamHandler(protocols.ClientPublishProtocol, t.handleClientPublish)
-	t.node.SetStreamHandler(protocols.ClientPushProtocol, t.handleClientPush)
-	t.node.SetStreamHandler(protocols.ClientAddrProtocol, t.handleClientAddr)
+	t.setStreamHandler(protocols.PostBondsProtocol, t.handlePostBonds, requireNoPermission)
+	t.setStreamHandler(protocols.DiscoveryProtocol, t.handleDiscovery, requireAny(t.isManifestPeer, t.requireBonds))
+	t.setStreamHandler(protocols.ClientSubscribeProtocol, t.handleClientSubscribe, t.requireBonds)
+	t.setStreamHandler(protocols.ClientPublishProtocol, t.handleClientPublish, t.requireBonds)
+	t.setStreamHandler(protocols.ClientPushProtocol, t.handleClientPush, t.requireBonds)
+	t.setStreamHandler(protocols.ClientAddrProtocol, t.handleClientAddr, t.requireBonds)
 }
 
 // discoverPeers queries the given peer for the list of other tatanka nodes that
@@ -267,25 +271,43 @@ func (t *TatankaNode) discoverPeers(ctx context.Context, peerToQuery *peer.AddrI
 
 	buf := bufio.NewReader(s)
 
-	response := &pb.DiscoveryResponse{}
+	response := &protocolsPb.Response{}
 	if err := codec.ReadLengthPrefixedMessage(buf, response); err != nil {
 		return nil, err
 	}
 
-	discoveredPeers := make([]peer.AddrInfo, 0, len(response.Peers))
-	for _, pbPeer := range response.Peers {
-		peerInfo, err := pbPeerInfoToLibp2p(pbPeer)
-		if err != nil {
-			t.log.Errorf("Failed to parse peer info: %v", err)
-			continue
+	// Handle response types
+	discoveryResponse := response.GetDiscoveryResponse()
+	if discoveryResponse != nil {
+		// Success - process the discovery response
+		discoveredPeers := make([]peer.AddrInfo, 0, len(discoveryResponse.Peers))
+		for _, pbPeer := range discoveryResponse.Peers {
+			peerInfo, err := pbPeerInfoToLibp2p(pbPeer)
+			if err != nil {
+				t.log.Errorf("Failed to parse peer info: %v", err)
+				continue
+			}
+
+			discoveredPeers = append(discoveredPeers, peerInfo)
 		}
 
-		discoveredPeers = append(discoveredPeers, peerInfo)
+		t.log.Tracef("Discovered %d peers from %s", len(discoveredPeers), peerToQuery.ID)
+		return discoveredPeers, nil
 	}
 
-	t.log.Tracef("Discovered %d peers from %s", len(discoveredPeers), peerToQuery.ID)
+	// Handle error responses
+	if errResp := response.GetError(); errResp != nil {
+		if errResp.GetUnauthorized() != nil {
+			return nil, fmt.Errorf("peer returned unauthorized error")
+		}
+		if msg := errResp.GetMessage(); msg != "" {
+			return nil, fmt.Errorf("peer returned error: %s", msg)
+		}
+		return nil, fmt.Errorf("peer returned error response")
+	}
 
-	return discoveredPeers, nil
+	// Unknown response type
+	return nil, fmt.Errorf("unexpected response type for discovery protocol: %T", response.Response)
 }
 
 func (t *TatankaNode) refreshPeersFromBootstrap(ctx context.Context) {

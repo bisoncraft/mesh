@@ -98,104 +98,6 @@ func (x *ClientConnectionMsg) GetTimestamp() int64 {
 	return 0
 }
 
-// PeerInfo contains information about a single peer.
-type PeerInfo struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            []byte                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`       // peer.ID serialized as bytes
-	Addrs         [][]byte               `protobuf:"bytes,2,rep,name=addrs,proto3" json:"addrs,omitempty"` // multiaddrs serialized as bytes
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *PeerInfo) Reset() {
-	*x = PeerInfo{}
-	mi := &file_messages_proto_msgTypes[1]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *PeerInfo) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*PeerInfo) ProtoMessage() {}
-
-func (x *PeerInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_messages_proto_msgTypes[1]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use PeerInfo.ProtoReflect.Descriptor instead.
-func (*PeerInfo) Descriptor() ([]byte, []int) {
-	return file_messages_proto_rawDescGZIP(), []int{1}
-}
-
-func (x *PeerInfo) GetId() []byte {
-	if x != nil {
-		return x.Id
-	}
-	return nil
-}
-
-func (x *PeerInfo) GetAddrs() [][]byte {
-	if x != nil {
-		return x.Addrs
-	}
-	return nil
-}
-
-// DiscoveryResponse contains a list of peers for discovery.
-type DiscoveryResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Peers         []*PeerInfo            `protobuf:"bytes,1,rep,name=peers,proto3" json:"peers,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *DiscoveryResponse) Reset() {
-	*x = DiscoveryResponse{}
-	mi := &file_messages_proto_msgTypes[2]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *DiscoveryResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*DiscoveryResponse) ProtoMessage() {}
-
-func (x *DiscoveryResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_messages_proto_msgTypes[2]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use DiscoveryResponse.ProtoReflect.Descriptor instead.
-func (*DiscoveryResponse) Descriptor() ([]byte, []int) {
-	return file_messages_proto_rawDescGZIP(), []int{2}
-}
-
-func (x *DiscoveryResponse) GetPeers() []*PeerInfo {
-	if x != nil {
-		return x.Peers
-	}
-	return nil
-}
-
 var File_messages_proto protoreflect.FileDescriptor
 
 const file_messages_proto_rawDesc = "" +
@@ -207,12 +109,7 @@ const file_messages_proto_rawDesc = "" +
 	"reporterId\x12\x14\n" +
 	"\x05addrs\x18\x03 \x03(\fR\x05addrs\x12\x1c\n" +
 	"\tconnected\x18\x04 \x01(\bR\tconnected\x12\x1c\n" +
-	"\ttimestamp\x18\x05 \x01(\x03R\ttimestamp\"0\n" +
-	"\bPeerInfo\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\fR\x02id\x12\x14\n" +
-	"\x05addrs\x18\x02 \x03(\fR\x05addrs\"7\n" +
-	"\x11DiscoveryResponse\x12\"\n" +
-	"\x05peers\x18\x01 \x03(\v2\f.pb.PeerInfoR\x05peersB,Z*github.com/martonp/tatanka-mesh/tatanka/pbb\x06proto3"
+	"\ttimestamp\x18\x05 \x01(\x03R\ttimestampB,Z*github.com/martonp/tatanka-mesh/tatanka/pbb\x06proto3"
 
 var (
 	file_messages_proto_rawDescOnce sync.Once
@@ -226,19 +123,16 @@ func file_messages_proto_rawDescGZIP() []byte {
 	return file_messages_proto_rawDescData
 }
 
-var file_messages_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
+var file_messages_proto_msgTypes = make([]protoimpl.MessageInfo, 1)
 var file_messages_proto_goTypes = []any{
 	(*ClientConnectionMsg)(nil), // 0: pb.ClientConnectionMsg
-	(*PeerInfo)(nil),            // 1: pb.PeerInfo
-	(*DiscoveryResponse)(nil),   // 2: pb.DiscoveryResponse
 }
 var file_messages_proto_depIdxs = []int32{
-	1, // 0: pb.DiscoveryResponse.peers:type_name -> pb.PeerInfo
-	1, // [1:1] is the sub-list for method output_type
-	1, // [1:1] is the sub-list for method input_type
-	1, // [1:1] is the sub-list for extension type_name
-	1, // [1:1] is the sub-list for extension extendee
-	0, // [0:1] is the sub-list for field type_name
+	0, // [0:0] is the sub-list for method output_type
+	0, // [0:0] is the sub-list for method input_type
+	0, // [0:0] is the sub-list for extension type_name
+	0, // [0:0] is the sub-list for extension extendee
+	0, // [0:0] is the sub-list for field type_name
 }
 
 func init() { file_messages_proto_init() }
@@ -252,7 +146,7 @@ func file_messages_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_messages_proto_rawDesc), len(file_messages_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   3,
+			NumMessages:   1,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

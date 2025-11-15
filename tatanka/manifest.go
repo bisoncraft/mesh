@@ -3,6 +3,7 @@ package tatanka
 import (
 	"encoding/json"
 	"errors"
+	"math/big"
 	"os"
 
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -14,16 +15,24 @@ type bootstrapPeer struct {
 	Addresses []string `json:"addresses"`
 }
 
+// bondAsset is a bond asset a peer can use to bond to the mesh.
+type bondAsset struct {
+	AssetID uint32   `json:"asset_id"`
+	Amount  *big.Int `json:"amount"`
+}
+
 // manifestFile is the JSON format of the manifest file.
 type manifestFile struct {
 	BootstrapPeers    []bootstrapPeer `json:"bootstrap_peers"`
 	NonBootstrapPeers []string        `json:"non_bootstrap_peers"`
+	BondAssets        []*bondAsset    `json:"bond_assets"`
 }
 
 // manifest is the parsed manifest file.
 type manifest struct {
 	bootstrapPeers    []*peer.AddrInfo
 	nonBootstrapPeers []peer.ID
+	bondAssets        []*bondAsset
 }
 
 func (m *manifest) allPeerIDs() map[peer.ID]struct{} {
@@ -58,6 +67,7 @@ func (m *manifest) toManifestFile() manifestFile {
 	return manifestFile{
 		BootstrapPeers:    bootstrapPeers,
 		NonBootstrapPeers: nonBootstrapPeers,
+		BondAssets:        m.bondAssets,
 	}
 }
 
@@ -118,5 +128,6 @@ func loadManifest(path, url string) (*manifest, error) {
 	return &manifest{
 		bootstrapPeers:    bootstrapPeers,
 		nonBootstrapPeers: nonBootstrapPeers,
+		bondAssets:        mf.BondAssets,
 	}, nil
 }

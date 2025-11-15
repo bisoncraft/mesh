@@ -88,7 +88,7 @@ type gossipSubCfg struct {
 	node                          host.Host
 	log                           slog.Logger
 	getManifestPeers              func() map[peer.ID]struct{}
-	handleBroadcastMessage        func(msg *protocolsPb.ClientPushMessage)
+	handleBroadcastMessage        func(msg *protocolsPb.PushMessage)
 	handleClientConnectionMessage func(update *clientConnectionUpdate)
 }
 
@@ -160,7 +160,7 @@ func (gs *gossipSub) listenForClientMessages(ctx context.Context) error {
 		}
 
 		if msg != nil {
-			pushMessage := &protocolsPb.ClientPushMessage{}
+			pushMessage := &protocolsPb.PushMessage{}
 			if err := proto.Unmarshal(msg.Data, pushMessage); err != nil {
 				gs.log.Errorf("Failed to unmarshal push message: %v", err)
 				continue
@@ -204,7 +204,7 @@ func (gs *gossipSub) listenForClientConnections(ctx context.Context) error {
 	}
 }
 
-func (gs *gossipSub) publishClientMessage(ctx context.Context, msg *protocolsPb.ClientPushMessage) error {
+func (gs *gossipSub) publishClientMessage(ctx context.Context, msg *protocolsPb.PushMessage) error {
 	data, err := proto.Marshal(msg)
 	if err != nil {
 		return fmt.Errorf("failed to marshal client push message: %w", err)

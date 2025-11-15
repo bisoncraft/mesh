@@ -4,16 +4,49 @@ package pb;
 
 option go_package = "github.com/martonp/tatanka-mesh/protocols/pb";
 
-// ClientPublishMessage is sent by a client to publish a message to a topic.
-// Used with the ClientPublishProtocol.
-message ClientPublishMessage {
+message Response {
+  oneof response {
+    Success success = 1;
+    Error error = 2;
+    SubscriptionsResponse subscriptions_response = 3;
+    ClientAddrResponse addr_response = 4;
+    PostBondResponse post_bond_response = 5;
+    DiscoveryResponse discovery_response = 6;
+  }
+}
+
+message Success {
+  // Intentionally empty generic success response
+}
+
+// UnauthorizedError is returned when making a request on a protocol for which
+// the peer is not authorized.
+message UnauthorizedError {
+}
+
+// PostBondError is a type containing specific error information for the
+// PostBonds protocol.
+message PostBondError {
+  uint32 invalidBondIndex = 1;
+}
+
+message Error {
+  oneof error {
+    UnauthorizedError unauthorized = 1;
+    PostBondError post_bond_error = 2;
+    string message = 3;
+  }
+}
+
+// PublishRequest is sent by a client to publish a message to a topic.
+message PublishRequest {
   string topic = 1;
   bytes data = 2;
 }
 
-// ClientPushMessage is sent by the server to push a message to a subscribed client.
-// Used with the ClientPushProtocol.
-message ClientPushMessage {
+// PushMessage is sent by the server to push a message to a subscribed client.
+// Used with the PushProtocol.
+message PushMessage {
   enum MessageType {
     UNSPECIFIED = 0;
     BROADCAST = 1;
@@ -27,34 +60,51 @@ message ClientPushMessage {
   bytes sender = 4;  // The peer who sent the message or performed the subscription action
 }
 
-// ClientSubscribeMessage is sent by a client to subscribe or unsubscribe from a topic.
-// Used with the ClientSubscribeProtocol.
-message ClientSubscribeMessage {
+// SubscribeRequest is sent by a client to subscribe or unsubscribe from
+// a topic.
+message SubscribeRequest {
   string topic = 1;
   bool subscribe = 2;
 }
 
-// ClientSubscriptionsMessage contains the list of topics a client is subscribed to.
-// Used with the ClientSubscriptionsProtocol.
-message ClientSubscriptionsMessage {
+// SubscriptionsResponse is sent by a tatanka node informing the client
+// which topics they are subscribed to.
+message SubscriptionsResponse {
   repeated string topics = 1;
 }
 
-// ClientAddrRequestMessage is sent by a client to request the addresses of another peer.
-// Used with the ClientAddrProtocol.
-message ClientAddrRequestMessage {
+// ClientAddrRequest is sent by a client to request the addresses of another peer.
+message ClientAddrRequest {
   bytes id = 1; // peer.ID serialized as bytes
 }
 
-// ClientAddrResponseMessage is the response containing the multiaddresses of a peer or an error.
-// Used with the ClientAddrProtocol.
-message ClientAddrResponseMessage {
-  oneof result {
-    Success success = 1;
-    string error = 2;  // Error message, e.g., "peer not found"
-  }
+// ClientAddrResponse is the response containing the multiaddresses of a peer or an error.
+// Used with the ClientAddr.
+message ClientAddrResponse {
+  repeated bytes addrs = 1;  // multiaddrs serialized as bytes
+}
 
-  message Success {
-    repeated bytes addrs = 1;  // multiaddrs serialized as bytes
-  }
+message Bond {
+  uint32 assetID = 1;
+  bytes bondID = 2;
+}
+
+message PostBondRequest {
+  repeated Bond bonds = 1;
+}  
+
+
+message PostBondResponse {
+  uint32 bondStrength = 1;
+}
+
+// PeerInfo contains information about a single peer.
+message PeerInfo {
+  bytes id = 1;            // peer.ID serialized as bytes
+  repeated bytes addrs = 2; // multiaddrs serialized as bytes
+}
+
+// DiscoveryResponse contains a list of peers for discovery.
+message DiscoveryResponse {
+  repeated PeerInfo peers = 1;
 }

@@ -117,7 +117,7 @@ func (p *pushStreamManager) newPushStream(stream network.Stream) {
 }
 
 // distribute distributes a message to all the clients except the sender.
-func (p *pushStreamManager) distribute(clients []peer.ID, msg *protocolsPb.ClientPushMessage) {
+func (p *pushStreamManager) distribute(clients []peer.ID, msg *protocolsPb.PushMessage) {
 	sender, err := peer.IDFromBytes(msg.Sender)
 	if err != nil {
 		p.log.Errorf("Failed to parse sender ID for message %s: %v", msg.Topic, err)

@@ -24,4 +24,9 @@ const (
 	// DiscoveryProtocol is used by clients and other tatanka nodes to query the
 	// other tatanka nodes that the node is connected to.
 	DiscoveryProtocol = "/tatanka/discovery/1.0.0"
+
+	// PostBondsProtocol is used by a client to share their bonds with the mesh.
+	// This must be the first protocol to be opened after a client connects to a
+	// tatanka node.
+	PostBondsProtocol = "/tatanka/post-bonds/1.0.0"
 )

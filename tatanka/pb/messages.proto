@@ -13,14 +13,3 @@ message ClientConnectionMsg {
   int64 timestamp = 5;
 }
 
-// PeerInfo contains information about a single peer.
-message PeerInfo {
-  bytes id = 1;            // peer.ID serialized as bytes
-  repeated bytes addrs = 2; // multiaddrs serialized as bytes
-}
-
-// DiscoveryResponse contains a list of peers for discovery.
-message DiscoveryResponse {
-  repeated PeerInfo peers = 1;
-}
-
