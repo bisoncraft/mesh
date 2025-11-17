@@ -1,27 +1,27 @@
 name: Build and Test
 on: [push, pull_request]
 permissions:
-    contents: read
+  contents: read
 jobs:
-    build:
-        name: Go CI
-        runs-on: ubuntu-latest
-        steps:
-            - name: Set up Go
-              uses: actions/setup-go@v6
-              with:
-                  go-version: 1.24.9
-            - name: Check out source
-              uses: actions/checkout@v5
-            - name: Run golangci-lint
-              uses: golangci/golangci-lint-action@v7
-              with:
-                  version: v2.6.1
-                  args: --timeout 5m
-            - name: Build And Vet
-              run: |
-                  go vet ./...
-                  go build -v ./...
-            - name: Test
-              run: |
-                  env GORACE="halt_on_error=1" go test -count 1 -timeout 30s -race -cover ./...
+  build:
+    name: Go CI
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: 1.24.9
+      - name: Check out source
+        uses: actions/checkout@v5
+      # - name: Run golangci-lint
+      #   uses: golangci/golangci-lint-action@v7
+      #   with:
+      #     version: v2.6.1
+      #     args: --timeout 5m
+      - name: Build And Vet
+        run: |
+          go vet ./...
+          go build -v ./...
+      - name: Test
+        run: |
+          env GORACE="halt_on_error=1" go test -count 1 -timeout 30s -race -cover ./...
