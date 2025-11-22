@@ -7,6 +7,7 @@ import (
 
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/martonp/tatanka-mesh/bond"
 	"github.com/martonp/tatanka-mesh/codec"
 	protocolsPb "github.com/martonp/tatanka-mesh/protocols/pb"
 	ma "github.com/multiformats/go-multiaddr"
@@ -242,9 +243,9 @@ func (t *TatankaNode) handlePostBonds(s network.Stream) {
 		}
 	}
 
-	bondsParams := make([]*bondParams, 0, len(postBondMessage.Bonds))
-	for i, bond := range postBondMessage.Bonds {
-		valid, expiry, strength, err := t.bondVerifier.verifyBond(bond.AssetID, bond.BondID, client)
+	bondsParams := make([]*bond.BondParams, 0, len(postBondMessage.Bonds))
+	for i, bp := range postBondMessage.Bonds {
+		valid, expiry, strength, err := t.bondVerifier.verifyBond(bp.AssetID, bp.BondID, client)
 		if err != nil {
 			sendErrorResponse(err)
 			return
@@ -253,10 +254,10 @@ func (t *TatankaNode) handlePostBonds(s network.Stream) {
 			sendInvalidBondIndex(uint32(i))
 			return
 		}
-		bondsParams = append(bondsParams, &bondParams{
-			id:       string(bond.BondID),
-			expiry:   expiry,
-			strength: strength,
+		bondsParams = append(bondsParams, &bond.BondParams{
+			ID:       string(bp.BondID),
+			Expiry:   expiry,
+			Strength: strength,
 		})
 	}
 
