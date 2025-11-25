@@ -34,16 +34,16 @@ func NewBondInfo() *BondInfo {
 }
 
 // AddBond adds a bond to the client bond info, maintaining sorted order.
-func (cbi *BondInfo) AddBonds(bonds []*BondParams, now time.Time) {
-	cbi.mtx.Lock()
-	defer cbi.mtx.Unlock()
+func (bi *BondInfo) AddBonds(bonds []*BondParams, now time.Time) {
+	bi.mtx.Lock()
+	defer bi.mtx.Unlock()
 
 	// Make sure none of bonds are already stored, and that none of the new
 	// bonds are duplicates.
 	newBonds := make([]*BondParams, 0, len(bonds))
 	newBondIDs := make(map[string]struct{}, len(bonds))
 	for _, bond := range bonds {
-		if _, ok := cbi.storedBonds[bond.ID]; ok {
+		if _, ok := bi.storedBonds[bond.ID]; ok {
 			continue
 		}
 		if _, ok := newBondIDs[bond.ID]; ok {
@@ -62,37 +62,37 @@ func (cbi *BondInfo) AddBonds(bonds []*BondParams, now time.Time) {
 		if !bond.Expiry.After(now) {
 			continue
 		}
-		cbi.storedBonds[bond.ID] = struct{}{}
-		_ = cbi.totalStrength.Add(bond.Strength)
+		bi.storedBonds[bond.ID] = struct{}{}
+		_ = bi.totalStrength.Add(bond.Strength)
 		bondsToAdd = append(bondsToAdd, bond)
 	}
 
 	// Sort the bonds by expiry time
-	cbi.bondParams = append(cbi.bondParams, bondsToAdd...)
-	sort.Slice(cbi.bondParams, func(i, j int) bool {
-		return cbi.bondParams[i].Expiry.Before(cbi.bondParams[j].Expiry)
+	bi.bondParams = append(bi.bondParams, bondsToAdd...)
+	sort.Slice(bi.bondParams, func(i, j int) bool {
+		return bi.bondParams[i].Expiry.Before(bi.bondParams[j].Expiry)
 	})
 }
 
 // BondStrength returns the total bond strength of the the provided client bond info.
-func (cbi *BondInfo) BondStrength() uint32 {
-	return cbi.totalStrength.Load()
+func (bi *BondInfo) BondStrength() uint32 {
+	return bi.totalStrength.Load()
 }
 
 // ClearExpiredBonds clears expired bonds from the client bond info.
-func (cbi *BondInfo) ClearExpiredBonds(now time.Time) {
-	cbi.mtx.Lock()
-	defer cbi.mtx.Unlock()
+func (bi *BondInfo) ClearExpiredBonds(now time.Time) {
+	bi.mtx.Lock()
+	defer bi.mtx.Unlock()
 
-	firstUnexpiredIndex := len(cbi.bondParams)
-	for i, bondParams := range cbi.bondParams {
+	firstUnexpiredIndex := len(bi.bondParams)
+	for i, bondParams := range bi.bondParams {
 		if bondParams.Expiry.After(now) {
 			firstUnexpiredIndex = i
 			break
 		}
-		cbi.totalStrength.Add(-bondParams.Strength)
-		delete(cbi.storedBonds, bondParams.ID)
+		bi.totalStrength.Add(-bondParams.Strength)
+		delete(bi.storedBonds, bondParams.ID)
 	}
 
-	cbi.bondParams = cbi.bondParams[firstUnexpiredIndex:]
+	bi.bondParams = bi.bondParams[firstUnexpiredIndex:]
 }
