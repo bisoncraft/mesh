@@ -19,6 +19,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	mocknet "github.com/libp2p/go-libp2p/p2p/net/mock"
+	"github.com/martonp/tatanka-mesh/bond"
 	"github.com/martonp/tatanka-mesh/codec"
 	"github.com/martonp/tatanka-mesh/protocols"
 	protocolsPb "github.com/martonp/tatanka-mesh/protocols/pb"
@@ -32,11 +33,11 @@ type testBondStorage struct {
 
 var _ bondStorage = (*testBondStorage)(nil)
 
-func (tbs *testBondStorage) addBonds(peerID peer.ID, bonds []*bondParams) uint32 {
+func (tbs *testBondStorage) addBonds(peerID peer.ID, bonds []*bond.BondParams) uint32 {
 	return tbs.score
 }
 
-func (tbs *testBondStorage) getBondStrength(peerID peer.ID) uint32 {
+func (tbs *testBondStorage) bondStrength(peerID peer.ID) uint32 {
 	return tbs.score
 }
 

@@ -39,7 +39,7 @@ func (t *TatankaNode) requireBonds(s network.Stream) error {
 		return nil
 	}
 
-	bonds := t.bondStorage.getBondStrength(peerID)
+	bonds := t.bondStorage.bondStrength(peerID)
 	if bonds == 0 {
 		return errUnauthorized
 	}
