@@ -359,16 +359,27 @@ func (t *TatankaNode) refreshPeersFromBootstrap(ctx context.Context) {
 
 	wg.Wait()
 
-	peerMap := make(map[peer.ID][]ma.Multiaddr)
+	peerMap := make(map[peer.ID]map[string]ma.Multiaddr)
 	for _, pInfo := range discoveredPeers {
-		// TODO: this will cause duplicates..
-		peerMap[pInfo.ID] = append(peerMap[pInfo.ID], pInfo.Addrs...)
+		if peerMap[pInfo.ID] == nil {
+			peerMap[pInfo.ID] = map[string]ma.Multiaddr{}
+		}
+
+		for _, addr := range pInfo.Addrs {
+			peerMap[pInfo.ID][addr.String()] = addr
+		}
 	}
 
-	for p, addrs := range peerMap {
+	for p, peerAddrs := range peerMap {
 		if p == t.node.ID() {
 			continue
 		}
+
+		addrs := make([]ma.Multiaddr, 0, len(peerAddrs))
+		for _, addr := range peerAddrs {
+			addrs = append(addrs, addr)
+		}
+
 		t.node.Peerstore().AddAddrs(p, addrs, discoveryInterval+time.Minute)
 	}
 }
