@@ -24,6 +24,7 @@ type Config struct {
 	DebugLevel   string `short:"d" long:"debuglevel" description:"Logging level {trace, debug, info, warn, error, critical}."`
 	ListenIP     string `long:"listenip" description:"IP address to listen on."`
 	ListenPort   int    `long:"listenport" description:"Port to listen on."`
+	MetricsPort  int    `long:"metricsport" description:"Port to scrape metrics from."`
 	ManifestPath string `long:"manifestpath" description:"Path to local manifest file."`
 	ManifestURL  string `long:"manifesturl" description:"URL to remote manifest."`
 }
@@ -50,6 +51,7 @@ func main() {
 		DebugLevel:   "info",
 		ListenIP:     "0.0.0.0",
 		ListenPort:   12345,
+		MetricsPort:  12355,
 		ManifestPath: "",
 		ManifestURL:  "",
 	}
@@ -97,6 +99,7 @@ func main() {
 		Logger:       log,
 		ListenIP:     cfg.ListenIP,
 		ListenPort:   cfg.ListenPort,
+		MetricsPort:  cfg.MetricsPort,
 		ManifestPath: cfg.ManifestPath,
 		ManifestURL:  cfg.ManifestURL,
 	}

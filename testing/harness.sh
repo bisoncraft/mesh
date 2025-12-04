@@ -28,12 +28,14 @@ create_config() {
   local node_dir=$1
   local manifest_path=$2
   local listen_port=$3
+  local metrics_port=$4
   local config_path=$node_dir/tatanka.conf
 
   cat <<EOF > $config_path
 appdata=$node_dir
 manifestpath=$manifest_path
 listenport=$listen_port
+metricsport=$metrics_port
 EOF
 
   echo $config_path
@@ -58,7 +60,8 @@ start_harness() {
     peer_id=$(generate_privkey $node_dir)
 
     listen_port=$((12345 + i))
-    config_path=$(create_config $node_dir $MANIFEST_FILE $listen_port)
+    metrics_port=$((12355 + i))
+    config_path=$(create_config $node_dir $MANIFEST_FILE $listen_port $metrics_port)
 
     addr="/ip4/127.0.0.1/tcp/$listen_port"
     manifest_bootstrap+=("{\"id\": \"$peer_id\", \"addresses\": [\"$addr\"]}")

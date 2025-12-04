@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sync"
@@ -21,6 +22,7 @@ import (
 	"github.com/martonp/tatanka-mesh/protocols"
 	protocolsPb "github.com/martonp/tatanka-mesh/protocols/pb"
 	ma "github.com/multiformats/go-multiaddr"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 const (
@@ -50,6 +52,7 @@ type Config struct {
 	Logger       slog.Logger
 	ListenIP     string
 	ListenPort   int
+	MetricsPort  int
 	ManifestPath string
 	ManifestURL  string
 }
@@ -78,6 +81,8 @@ type TatankaNode struct {
 	clientConnectionManager *clientConnectionManager
 	subscriptionManager     *subscriptionManager
 	pushStreamManager       *pushStreamManager
+
+	metricsServer *http.Server
 }
 
 // NewTatankaNode creates a new TatankaNode with the given configuration and options.
@@ -185,6 +190,23 @@ func (t *TatankaNode) Run(ctx context.Context) error {
 
 	t.setupStreamHandlers()
 
+	metricsMux := http.NewServeMux()
+	metricsMux.Handle("/metrics", promhttp.Handler())
+
+	t.metricsServer = &http.Server{
+		Addr:    fmt.Sprintf(":%d", t.config.MetricsPort),
+		Handler: metricsMux,
+	}
+
+	go func() {
+		t.log.Infof("Starting metrics server on :%d/metrics", t.config.MetricsPort)
+		if err := t.metricsServer.ListenAndServe(); err != nil {
+			if !errors.Is(err, http.ErrServerClosed) {
+				t.log.Errorf("Failed to start metrics server: %v", err)
+			}
+		}
+	}()
+
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -205,6 +227,10 @@ func (t *TatankaNode) Run(ctx context.Context) error {
 	wg.Wait()
 
 	t.log.Infof("Shutting down tatanka node...")
+	err = t.metricsServer.Shutdown(ctx)
+	if err != nil {
+		return err
+	}
 
 	err = t.node.Close()
 	if err != nil {
