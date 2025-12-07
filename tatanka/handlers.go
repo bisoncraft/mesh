@@ -1,7 +1,6 @@
 package tatanka
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 
@@ -105,15 +104,9 @@ func (t *TatankaNode) handleClientSubscribe(s network.Stream) {
 	defer func() { _ = s.Close() }()
 
 	client := s.Conn().RemotePeer()
-	if err := codec.SetReadDeadline(codec.ReadTimeout, s); err != nil {
-		t.log.Errorf("Failed to set read deadline for client %s: %v.", client.ShortString(), err)
-		return
-	}
-
-	buf := bufio.NewReader(s)
 
 	subscribeMessage := &protocolsPb.SubscribeRequest{}
-	if err := codec.ReadLengthPrefixedMessage(buf, subscribeMessage); err != nil {
+	if err := codec.ReadLengthPrefixedMessage(s, subscribeMessage); err != nil {
 		t.log.Debugf("Failed to read/unmarshal subscribe message from client %s: %v.", client.ShortString(), err)
 		// TODO: client sent invalid message, remove client?
 		return
@@ -139,15 +132,8 @@ func (t *TatankaNode) handleClientPublish(s network.Stream) {
 
 	client := s.Conn().RemotePeer()
 
-	if err := codec.SetReadDeadline(codec.ReadTimeout, s); err != nil {
-		t.log.Errorf("Failed to set read deadline for client %s: %v.", client.ShortString(), err)
-		return
-	}
-
-	buf := bufio.NewReader(s)
-
 	publishMessage := &protocolsPb.PublishRequest{}
-	if err := codec.ReadLengthPrefixedMessage(buf, publishMessage); err != nil {
+	if err := codec.ReadLengthPrefixedMessage(s, publishMessage); err != nil {
 		t.log.Debugf("Failed to read/unmarshal publish message from client %s: %v.", client.ShortString(), err)
 		// TODO: remove client?
 		return
@@ -167,11 +153,6 @@ func (t *TatankaNode) handleClientAddr(s network.Stream) {
 
 	client := s.Conn().RemotePeer()
 
-	if err := codec.SetReadDeadline(codec.ReadTimeout, s); err != nil {
-		t.log.Errorf("Failed to set read deadline for client %s: %v.", client.ShortString(), err)
-		return
-	}
-
 	sendErrorResponse := func(err error) {
 		responseMessage := pbResponseError(err)
 		if werr := codec.WriteLengthPrefixedMessage(s, responseMessage); werr != nil {
@@ -179,10 +160,8 @@ func (t *TatankaNode) handleClientAddr(s network.Stream) {
 		}
 	}
 
-	buf := bufio.NewReader(s)
-
 	requestMessage := &protocolsPb.ClientAddrRequest{}
-	if err := codec.ReadLengthPrefixedMessage(buf, requestMessage); err != nil {
+	if err := codec.ReadLengthPrefixedMessage(s, requestMessage); err != nil {
 		sendErrorResponse(fmt.Errorf("failed to read/unmarshal addr request message: %w", err))
 		return
 	}
@@ -215,15 +194,8 @@ func (t *TatankaNode) handlePostBonds(s network.Stream) {
 
 	client := s.Conn().RemotePeer()
 
-	if err := codec.SetReadDeadline(codec.ReadTimeout, s); err != nil {
-		t.log.Errorf("Failed to set read deadline for client %s: %v.", client.ShortString(), err)
-		return
-	}
-
-	buf := bufio.NewReader(s)
-
 	postBondMessage := &protocolsPb.PostBondRequest{}
-	if err := codec.ReadLengthPrefixedMessage(buf, postBondMessage); err != nil {
+	if err := codec.ReadLengthPrefixedMessage(s, postBondMessage); err != nil {
 		t.log.Debugf("Failed to read/unmarshal post bond message from client %s: %v.", client.ShortString(), err)
 		// TODO: remove client?
 		return

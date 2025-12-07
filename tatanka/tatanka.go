@@ -1,7 +1,6 @@
 package tatanka
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -291,14 +290,8 @@ func (t *TatankaNode) discoverPeers(ctx context.Context, peerToQuery *peer.AddrI
 	}
 	defer func() { _ = s.Close() }()
 
-	if err := codec.SetReadDeadline(codec.ReadTimeout, s); err != nil {
-		return nil, err
-	}
-
-	buf := bufio.NewReader(s)
-
 	response := &protocolsPb.Response{}
-	if err := codec.ReadLengthPrefixedMessage(buf, response); err != nil {
+	if err := codec.ReadLengthPrefixedMessage(s, response); err != nil {
 		return nil, err
 	}
 

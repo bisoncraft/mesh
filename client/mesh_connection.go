@@ -1,7 +1,6 @@
 package client
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -18,10 +17,6 @@ import (
 	"github.com/martonp/tatanka-mesh/protocols"
 	protocolsPb "github.com/martonp/tatanka-mesh/protocols/pb"
 	"google.golang.org/protobuf/proto"
-)
-
-const (
-	defaultStreamTimeout = 5 * time.Second
 )
 
 var (
@@ -116,91 +111,53 @@ func (m *meshConnection) run(ctx context.Context) error {
 
 // subscribe subscribes to the provided topic.
 func (m *meshConnection) subscribe(ctx context.Context, topic string) error {
-	subscribeCtx, cancel := context.WithTimeout(ctx, defaultStreamTimeout)
-	defer cancel()
-
-	s, err := m.host.NewStream(subscribeCtx, m.peerID, protocols.ClientSubscribeProtocol)
+	s, err := m.host.NewStream(ctx, m.peerID, protocols.ClientSubscribeProtocol)
 	if err != nil {
 		return fmt.Errorf("failed to create stream: %w", err)
 	}
 	defer func() { _ = s.Close() }()
 
-	if err := codec.SetWriteDeadline(writeTimeout, s); err != nil {
-		return fmt.Errorf("failed to set write deadline: %w", err)
+	req := &protocolsPb.SubscribeRequest{
+		Topic:     topic,
+		Subscribe: true,
 	}
-
-	// Subscribe to topic.
-	err = codec.WriteLengthPrefixedMessage(s,
-		&protocolsPb.SubscribeRequest{
-			Topic:     topic,
-			Subscribe: true,
-		})
-
-	if err != nil {
-		return fmt.Errorf("failed to subscribe to topic %s: %w", topic, err)
-	}
-
-	return nil
+	return codec.WriteLengthPrefixedMessage(s, req, writeTimeout)
 }
 
 // broadcast publishes the provided message bytes on a mesh topic.
-func (m *meshConnection) broadcast(ctx context.Context, msgBytes []byte) error {
-	broadcastCtx, cancel := context.WithTimeout(ctx, defaultStreamTimeout)
-	defer cancel()
-
-	s, err := m.host.NewStream(broadcastCtx, m.peerID, protocols.ClientPublishProtocol)
+func (m *meshConnection) broadcast(ctx context.Context, topic string, data []byte) error {
+	s, err := m.host.NewStream(ctx, m.peerID, protocols.ClientPublishProtocol)
 	if err != nil {
 		return fmt.Errorf("failed to create stream: %w", err)
 	}
 	defer func() { _ = s.Close() }()
 
-	if err := codec.SetWriteDeadline(writeTimeout, s); err != nil {
-		return fmt.Errorf("failed setting write deadline: %w", err)
+	req := &protocolsPb.PublishRequest{
+		Topic: topic,
+		Data:  data,
 	}
-
-	err = codec.WriteLengthPrefixedMessageBytes(s, msgBytes)
-	if err != nil {
-		return fmt.Errorf("failed to write message bytes: %w", err)
-	}
-
-	return nil
+	return codec.WriteLengthPrefixedMessage(s, req)
 }
 
 // unsubscribe unsubscribes from the provided topic.
 func (m *meshConnection) unsubscribe(ctx context.Context, topic string) error {
-	unsubscribeCtx, cancel := context.WithTimeout(ctx, defaultStreamTimeout)
-	defer cancel()
-
-	s, err := m.host.NewStream(unsubscribeCtx, m.peerID, protocols.ClientSubscribeProtocol)
+	s, err := m.host.NewStream(ctx, m.peerID, protocols.ClientSubscribeProtocol)
 	if err != nil {
 		return fmt.Errorf("failed to create stream: %w", err)
 	}
 	defer func() { _ = s.Close() }()
 
-	if err := codec.SetWriteDeadline(writeTimeout, s); err != nil {
-		return fmt.Errorf("failed setting write deadline: %w", err)
+	req := &protocolsPb.SubscribeRequest{
+		Topic:     topic,
+		Subscribe: false,
 	}
-
-	// Unsubscribe from the topic.
-	err = codec.WriteLengthPrefixedMessage(s,
-		&protocolsPb.SubscribeRequest{
-			Topic:     topic,
-			Subscribe: false,
-		})
-	if err != nil {
-		return fmt.Errorf("failed to unsubscribe from topic %s: %w", topic, err)
-	}
-
-	return nil
+	return codec.WriteLengthPrefixedMessage(s, req, writeTimeout)
 }
 
 // postBondInternal posts the provided bond request.
 func (m *meshConnection) postBondInternal(ctx context.Context, req *protocolsPb.PostBondRequest) error {
-	postBondCtx, cancel := context.WithTimeout(ctx, defaultStreamTimeout)
-	defer cancel()
-
 	// Post the provided bond.
-	s, err := m.host.NewStream(postBondCtx, m.peerID, protocols.PostBondsProtocol)
+	s, err := m.host.NewStream(ctx, m.peerID, protocols.PostBondsProtocol)
 	if err != nil {
 		return fmt.Errorf("failed to create stream: %w", err)
 	}
@@ -211,12 +168,10 @@ func (m *meshConnection) postBondInternal(ctx context.Context, req *protocolsPb.
 		return fmt.Errorf("failed to write post bond request: %w", err)
 	}
 
-	buf := bufio.NewReader(s)
-
 	// Process the post bond response.
 	hostID := m.host.ID()
 	resp := &protocolsPb.Response{}
-	err = codec.ReadLengthPrefixedMessage(buf, resp)
+	err = codec.ReadLengthPrefixedMessage(s, resp)
 	if err != nil {
 		return fmt.Errorf("failed to read message bytes: %w", err)
 	}
@@ -310,10 +265,7 @@ func (m *meshConnection) maintainPushStream(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-reconnectTimer.C:
-			streamCtx, cancel := context.WithTimeout(ctx, defaultStreamTimeout)
-			defer cancel()
-
-			stream, err := m.host.NewStream(streamCtx, m.peerID, protocols.ClientPushProtocol)
+			stream, err := m.host.NewStream(ctx, m.peerID, protocols.ClientPushProtocol)
 			if err != nil {
 				if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 					m.log.Errorf("%s: failed to create push stream to peer with ID %s: %v", m.host.ID(), m.peerID, err)
@@ -327,9 +279,8 @@ func (m *meshConnection) maintainPushStream(ctx context.Context) {
 
 			// Process push stream response.
 			hostID := m.host.ID()
-			buf := bufio.NewReader(stream)
 			resp := &protocolsPb.Response{}
-			err = codec.ReadLengthPrefixedMessage(buf, resp)
+			err = codec.ReadLengthPrefixedMessage(stream, resp)
 			if err != nil {
 				m.log.Errorf("%s: failed to read push stream response: %v", hostID, err)
 				return
@@ -360,7 +311,7 @@ func (m *meshConnection) maintainPushStream(ctx context.Context) {
 			// Setting the mesh connection indicates it is ready for use.
 			m.setMeshConnection(m)
 
-			m.handlePushedData(ctx, stream, buf)
+			m.handlePushedData(ctx, stream)
 
 			// Reset the reconnect timer  to trigger a reconnection.
 			reconnectTimer = time.NewTimer(0)
@@ -377,14 +328,15 @@ type readPayload struct {
 // handlePushedData listens for messages on the push stream and processes them using the
 // handler function. This function will block until the context is done or the push
 // stream is closed.
-func (m *meshConnection) handlePushedData(ctx context.Context, pushStream network.Stream, buf *bufio.Reader) {
+func (m *meshConnection) handlePushedData(ctx context.Context, pushStream network.Stream) {
 	defer func() { _ = pushStream.Close() }()
 
 	for {
 		readCh := make(chan readPayload, 1)
 
 		go func() {
-			data, err := codec.ReadLengthPrefixedMessageBytes(buf)
+			// Timeout is 0, so no deadline is set.
+			data, err := codec.ReadLengthPrefixedBytes(pushStream, 0)
 			readCh <- readPayload{
 				data: data,
 				err:  err,

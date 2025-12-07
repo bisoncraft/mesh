@@ -1,7 +1,6 @@
 package client
 
 import (
-	"bufio"
 	"context"
 	"crypto/rand"
 	"errors"
@@ -67,15 +66,8 @@ func TestClient(t *testing.T) {
 		defer func() { _ = s.Close() }()
 
 		clientID := s.Conn().RemotePeer()
-		if err := codec.SetReadDeadline(codec.ReadTimeout, s); err != nil {
-			t.Fatalf("Failed to set read deadline for client %s: %v", clientID, err)
-			return
-		}
-
-		buf := bufio.NewReader(s)
-
 		subscribeMessage := &protocolsPb.SubscribeRequest{}
-		if err := codec.ReadLengthPrefixedMessage(buf, subscribeMessage); err != nil {
+		if err := codec.ReadLengthPrefixedMessage(s, subscribeMessage); err != nil {
 			t.Fatalf("Failed to read/unmarshal subscribe message from client %s: %v", clientID, err)
 
 			return
@@ -103,18 +95,8 @@ func TestClient(t *testing.T) {
 		defer func() { _ = s.Close() }()
 
 		clientID := s.Conn().RemotePeer()
-		if err := codec.SetReadDeadline(codec.ReadTimeout, s); err != nil {
-			if errors.Is(err, io.EOF) {
-				t.Fatalf("Failed to set read deadline for client %s: %v.", clientID, err)
-			}
-
-			return
-		}
-
-		buf := bufio.NewReader(s)
-
 		publishMessage := &protocolsPb.PublishRequest{}
-		if err := codec.ReadLengthPrefixedMessage(buf, publishMessage); err != nil {
+		if err := codec.ReadLengthPrefixedMessage(s, publishMessage); err != nil {
 			if errors.Is(err, io.EOF) {
 				t.Fatalf("Failed to read push message from client %s: %v.", clientID, err)
 			}
@@ -128,18 +110,8 @@ func TestClient(t *testing.T) {
 	remoteHostPostBondHandler := func(s network.Stream) {
 		defer func() { _ = s.Close() }()
 
-		if err := codec.SetReadDeadline(codec.ReadTimeout, s); err != nil {
-			if errors.Is(err, io.EOF) {
-				t.Fatalf("Failed to set read deadline: %v.", err)
-			}
-
-			return
-		}
-
-		buf := bufio.NewReader(s)
-
 		msg := &protocolsPb.PostBondRequest{}
-		if err := codec.ReadLengthPrefixedMessage(buf, msg); err != nil {
+		if err := codec.ReadLengthPrefixedMessage(s, msg); err != nil {
 			if errors.Is(err, io.EOF) {
 				t.Fatalf("Failed to read message: %v", err)
 			}
@@ -324,17 +296,7 @@ func TestClient(t *testing.T) {
 	}
 
 	// Ensure the client can broadcast a message.
-	broadcastMessage := &protocolsPb.PublishRequest{
-		Topic: pingTopic,
-		Data:  []byte("pong"),
-	}
-
-	broadcastMessageBytes, err := proto.Marshal(broadcastMessage)
-	if err != nil {
-		t.Fatalf("Unexpected error marshalling broadcast message: %v", err)
-	}
-
-	err = client.Broadcast(ctx, broadcastMessageBytes)
+	err = client.Broadcast(ctx, pingTopic, []byte("pong"))
 	if err != nil {
 		t.Fatalf("Unexpected error broadcasting message: %v", err)
 	}

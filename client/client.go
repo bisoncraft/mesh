@@ -113,13 +113,13 @@ func (c *Client) setPrimaryMeshConnection(mc *meshConnection) {
 }
 
 // Broadcast publishes the provided message bytes on a mesh topic.
-func (c *Client) Broadcast(ctx context.Context, publishMsgBytes []byte) error {
+func (c *Client) Broadcast(ctx context.Context, topic string, data []byte) error {
 	meshConn := c.primaryMeshConn.Load()
 	if meshConn == nil {
 		return fmt.Errorf("failed to broadcast message: %w", errNoMeshConnection)
 	}
 
-	return meshConn.broadcast(ctx, publishMsgBytes)
+	return meshConn.broadcast(ctx, topic, data)
 }
 
 // Subscribe subscribes the client to the provided topic.

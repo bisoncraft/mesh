@@ -1,7 +1,6 @@
 package client
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -34,18 +33,8 @@ func TestMeshConnection(t *testing.T) {
 	hostBPublishHandler := func(s network.Stream) {
 		defer func() { _ = s.Close() }()
 
-		if err := codec.SetReadDeadline(codec.ReadTimeout, s); err != nil {
-			if errors.Is(err, io.EOF) {
-				t.Fatalf("Failed to set read deadline: %v", err)
-			}
-
-			return
-		}
-
-		buf := bufio.NewReader(s)
-
 		pubMsg := &protocolsPb.PublishRequest{}
-		if err := codec.ReadLengthPrefixedMessage(buf, pubMsg); err != nil {
+		if err := codec.ReadLengthPrefixedMessage(s, pubMsg); err != nil {
 			if errors.Is(err, io.EOF) {
 				t.Fatalf("Failed to read message: %v", err)
 			}
@@ -59,18 +48,8 @@ func TestMeshConnection(t *testing.T) {
 	hostBSubscribeHandler := func(s network.Stream) {
 		defer func() { _ = s.Close() }()
 
-		if err := codec.SetReadDeadline(codec.ReadTimeout, s); err != nil {
-			if errors.Is(err, io.EOF) {
-				t.Fatalf("Failed to set read deadline: %v", err)
-			}
-
-			return
-		}
-
-		buf := bufio.NewReader(s)
-
 		msg := &protocolsPb.SubscribeRequest{}
-		if err := codec.ReadLengthPrefixedMessage(buf, msg); err != nil {
+		if err := codec.ReadLengthPrefixedMessage(s, msg); err != nil {
 			if errors.Is(err, io.EOF) {
 				t.Fatalf("Failed to read message: %v", err)
 			}
@@ -85,18 +64,8 @@ func TestMeshConnection(t *testing.T) {
 	hostBFailureBondHandler := func(s network.Stream) {
 		defer func() { _ = s.Close() }()
 
-		if err := codec.SetReadDeadline(codec.ReadTimeout, s); err != nil {
-			if errors.Is(err, io.EOF) {
-				t.Fatalf("Failed to set read deadline: %v.", err)
-			}
-
-			return
-		}
-
-		buf := bufio.NewReader(s)
-
 		msg := &protocolsPb.PostBondRequest{}
-		if err := codec.ReadLengthPrefixedMessage(buf, msg); err != nil {
+		if err := codec.ReadLengthPrefixedMessage(s, msg); err != nil {
 			if errors.Is(err, io.EOF) {
 				t.Fatalf("Failed to read message: %v", err)
 			}
@@ -156,18 +125,8 @@ func TestMeshConnection(t *testing.T) {
 	hostBSuccessBondHandler := func(s network.Stream) {
 		defer func() { _ = s.Close() }()
 
-		if err := codec.SetReadDeadline(codec.ReadTimeout, s); err != nil {
-			if errors.Is(err, io.EOF) {
-				t.Fatalf("Failed to set read deadline: %v.", err)
-			}
-
-			return
-		}
-
-		buf := bufio.NewReader(s)
-
 		msg := &protocolsPb.PostBondRequest{}
-		if err := codec.ReadLengthPrefixedMessage(buf, msg); err != nil {
+		if err := codec.ReadLengthPrefixedMessage(s, msg); err != nil {
 			if errors.Is(err, io.EOF) {
 				t.Fatalf("Failed to read message: %v", err)
 			}
@@ -355,17 +314,7 @@ func TestMeshConnection(t *testing.T) {
 
 	// Ensure the mesh connection can publish messages.
 	data := []byte("testing")
-	pubMsg := &protocolsPb.PublishRequest{
-		Topic: testTopic,
-		Data:  data,
-	}
-
-	pubMsgB, err := proto.Marshal(pubMsg)
-	if err != nil {
-		t.Fatalf("Unexpected error marshalling message: %v", err)
-	}
-
-	err = meshConn.broadcast(ctx, pubMsgB)
+	err = meshConn.broadcast(ctx, testTopic, data)
 	if err != nil {
 		t.Fatalf("Failed to broadcast message: %v", err)
 	}

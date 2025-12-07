@@ -1,7 +1,6 @@
 package tatanka
 
 import (
-	"bufio"
 	"context"
 	"testing"
 	"time"
@@ -57,12 +56,8 @@ func TestPushPermissions(t *testing.T) {
 	}
 
 	// Read the response
-	if err := codec.SetReadDeadline(codec.ReadTimeout, stream); err != nil {
-		t.Fatalf("Failed to set read deadline: %v", err)
-	}
-	buf := bufio.NewReader(stream)
 	response1 := &protocolsPb.Response{}
-	if err := codec.ReadLengthPrefixedMessage(buf, response1); err != nil {
+	if err := codec.ReadLengthPrefixedMessage(stream, response1); err != nil {
 		t.Fatalf("Failed to read response: %v", err)
 	}
 
@@ -87,12 +82,8 @@ func TestPushPermissions(t *testing.T) {
 	defer func() { _ = stream2.Close() }()
 
 	// Read the response
-	if err := codec.SetReadDeadline(codec.ReadTimeout, stream2); err != nil {
-		t.Fatalf("Failed to set read deadline: %v", err)
-	}
-	buf2 := bufio.NewReader(stream2)
 	response2 := &protocolsPb.Response{}
-	if err := codec.ReadLengthPrefixedMessage(buf2, response2); err != nil {
+	if err := codec.ReadLengthPrefixedMessage(stream2, response2); err != nil {
 		t.Fatalf("Failed to read second response: %v", err)
 	}
 
@@ -156,12 +147,8 @@ func TestDiscoveryPermissions(t *testing.T) {
 	defer func() { _ = stream1.Close() }()
 
 	// Read the response
-	if err := codec.SetReadDeadline(codec.ReadTimeout, stream1); err != nil {
-		t.Fatalf("Failed to set read deadline: %v", err)
-	}
-	buf1 := bufio.NewReader(stream1)
 	response1 := &protocolsPb.Response{}
-	if err := codec.ReadLengthPrefixedMessage(buf1, response1); err != nil {
+	if err := codec.ReadLengthPrefixedMessage(stream1, response1); err != nil {
 		t.Fatalf("Failed to read response from manifest client: %v", err)
 	}
 
@@ -177,12 +164,8 @@ func TestDiscoveryPermissions(t *testing.T) {
 	}
 
 	// Read the response
-	if err := codec.SetReadDeadline(codec.ReadTimeout, stream2); err != nil {
-		t.Fatalf("Failed to set read deadline: %v", err)
-	}
-	buf2 := bufio.NewReader(stream2)
 	response2 := &protocolsPb.Response{}
-	if err := codec.ReadLengthPrefixedMessage(buf2, response2); err != nil {
+	if err := codec.ReadLengthPrefixedMessage(stream2, response2); err != nil {
 		t.Fatalf("Failed to read response from non-manifest client: %v", err)
 	}
 
@@ -206,12 +189,8 @@ func TestDiscoveryPermissions(t *testing.T) {
 	defer func() { _ = stream3.Close() }()
 
 	// Read the response
-	if err := codec.SetReadDeadline(codec.ReadTimeout, stream3); err != nil {
-		t.Fatalf("Failed to set read deadline: %v", err)
-	}
-	buf3 := bufio.NewReader(stream3)
 	response3 := &protocolsPb.Response{}
-	if err := codec.ReadLengthPrefixedMessage(buf3, response3); err != nil {
+	if err := codec.ReadLengthPrefixedMessage(stream3, response3); err != nil {
 		t.Fatalf("Failed to read second response from non-manifest client: %v", err)
 	}
 
@@ -228,12 +207,8 @@ func TestDiscoveryPermissions(t *testing.T) {
 	defer func() { _ = stream4.Close() }()
 
 	// Read the response
-	if err := codec.SetReadDeadline(codec.ReadTimeout, stream4); err != nil {
-		t.Fatalf("Failed to set read deadline: %v", err)
-	}
-	buf4 := bufio.NewReader(stream4)
 	response4 := &protocolsPb.Response{}
-	if err := codec.ReadLengthPrefixedMessage(buf4, response4); err != nil {
+	if err := codec.ReadLengthPrefixedMessage(stream4, response4); err != nil {
 		t.Fatalf("Failed to read second response from manifest client: %v", err)
 	}
 

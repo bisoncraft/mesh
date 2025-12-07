@@ -69,7 +69,7 @@ func (p *pushStreamManager) newPushStream(stream network.Stream) {
 	p.mtx.Unlock()
 
 	if oldWrapper != nil {
-		_ = oldWrapper.stream.Reset()
+		_ = oldWrapper.stream.Close()
 		close(oldWrapper.writeCh)
 	} else {
 		p.notifyConnected(client, newStreamTimestamp, true)
@@ -78,17 +78,8 @@ func (p *pushStreamManager) newPushStream(stream network.Stream) {
 	// Goroutine for writes. This will run until the write channel is closed.
 	go func() {
 		for data := range wrapper.writeCh {
-			if err := wrapper.stream.SetWriteDeadline(time.Now().Add(writeTimeout)); err != nil && !codec.DeadlineNotSupportedError(err) {
-				p.log.Debugf("Failed to set write deadline for client %s: %v", client.ShortString(), err)
-				continue
-			}
-
-			if _, err := wrapper.stream.Write(data); err != nil {
-				p.log.Debugf("Write failed for client %s: %v", client.ShortString(), err)
-			}
-
-			if err := wrapper.stream.SetWriteDeadline(time.Time{}); err != nil && !codec.DeadlineNotSupportedError(err) {
-				p.log.Debugf("Set write deadline failed for client %s: %v", client.ShortString(), err)
+			if err := codec.WriteBytes(wrapper.stream, data, writeTimeout); err != nil {
+				p.log.Errorf("Write failed for client %s: %v", client.ShortString(), err)
 			}
 		}
 	}()
