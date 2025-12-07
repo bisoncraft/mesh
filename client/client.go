@@ -123,7 +123,7 @@ func (c *Client) Broadcast(ctx context.Context, publishMsgBytes []byte) error {
 }
 
 // Subscribe subscribes the client to the provided topic.
-func (c *Client) Subscribe(ctx context.Context, topic string, handlerFunc func(*protocolsPb.PushMessage)) error {
+func (c *Client) Subscribe(ctx context.Context, topic string, handlerFunc TopicHandler) error {
 	// Ensure the topic has not already been subscribed to.
 	registered := c.topicRegistry.isRegistered(topic)
 	if registered {
@@ -132,7 +132,7 @@ func (c *Client) Subscribe(ctx context.Context, topic string, handlerFunc func(*
 
 	meshConn := c.primaryMeshConn.Load()
 	if meshConn == nil {
-		return fmt.Errorf("failed to subscribe topic: %w", errNoMeshConnection)
+		return errNoMeshConnection
 	}
 
 	err := meshConn.subscribe(ctx, topic)
@@ -156,7 +156,7 @@ func (c *Client) Unsubscribe(ctx context.Context, topic string) error {
 
 	meshConn := c.primaryMeshConn.Load()
 	if meshConn == nil {
-		return fmt.Errorf("failed to unsubscribe topic: %w", errNoMeshConnection)
+		return errNoMeshConnection
 	}
 
 	err := meshConn.unsubscribe(ctx, topic)
@@ -179,14 +179,32 @@ func (c *Client) handlePushMessage(msg *protocolsPb.PushMessage) {
 		return
 	}
 
-	handlerFunc(msg)
+	event := TopicEvent{
+		Peer: peer.ID(msg.GetSender()),
+		Type: TopicEventData,
+	}
+
+	switch msg.GetMessageType() {
+	case protocolsPb.PushMessage_BROADCAST:
+		event.Type = TopicEventData
+		event.Data = msg.GetData()
+	case protocolsPb.PushMessage_SUBSCRIBE:
+		event.Type = TopicEventPeerSubscribed
+	case protocolsPb.PushMessage_UNSUBSCRIBE:
+		event.Type = TopicEventPeerUnsubscribed
+	default:
+		c.log.Warnf("%s: received push message with unknown type %v on topic %s", hostID, msg.GetMessageType(), msg.Topic)
+		return
+	}
+
+	handlerFunc(event)
 }
 
 // postBond posts the client's bond.
 func (c *Client) postBond(ctx context.Context) error {
 	meshConn := c.primaryMeshConn.Load()
 	if meshConn == nil {
-		return fmt.Errorf("failed to post bond: %w", errNoMeshConnection)
+		return errNoMeshConnection
 	}
 
 	return meshConn.postBond(ctx)

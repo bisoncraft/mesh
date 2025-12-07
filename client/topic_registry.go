@@ -3,24 +3,22 @@ package client
 import (
 	"fmt"
 	"sync"
-
-	protocolsPb "github.com/martonp/tatanka-mesh/protocols/pb"
 )
 
 // topicRegistry represents a registry of topics and their corresponding handlers.
 type topicRegistry struct {
 	mtx    sync.RWMutex
-	topics map[string]func(*protocolsPb.PushMessage)
+	topics map[string]TopicHandler
 }
 
 func newTopicRegistry() *topicRegistry {
 	return &topicRegistry{
-		topics: make(map[string]func(*protocolsPb.PushMessage)),
+		topics: make(map[string]TopicHandler),
 	}
 }
 
 // register tracks the provided topic and its corresponding handler.
-func (t *topicRegistry) register(topic string, handlerFunc func(*protocolsPb.PushMessage)) {
+func (t *topicRegistry) register(topic string, handlerFunc TopicHandler) {
 	t.mtx.Lock()
 	t.topics[topic] = handlerFunc
 	t.mtx.Unlock()
@@ -43,7 +41,7 @@ func (t *topicRegistry) isRegistered(topic string) bool {
 }
 
 // fetchHandler returns the handler associated with the provided topic or an error if there is none.
-func (t *topicRegistry) fetchHandler(topic string) (func(*protocolsPb.PushMessage), error) {
+func (t *topicRegistry) fetchHandler(topic string) (TopicHandler, error) {
 	t.mtx.RLock()
 	f, exists := t.topics[topic]
 	t.mtx.RUnlock()

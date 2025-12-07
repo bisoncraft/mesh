@@ -3,8 +3,6 @@ package client
 import (
 	"testing"
 	"time"
-
-	protocolsPb "github.com/martonp/tatanka-mesh/protocols/pb"
 )
 
 func TestTopicRegistry(t *testing.T) {
@@ -14,7 +12,7 @@ func TestTopicRegistry(t *testing.T) {
 	pingTopic := "ping"
 
 	pingHandlerSignals := make(chan struct{}, 1)
-	pingHandler := func(_ *protocolsPb.PushMessage) {
+	pingHandler := func(_ TopicEvent) {
 		pingHandlerSignals <- struct{}{}
 	}
 
@@ -36,7 +34,7 @@ func TestTopicRegistry(t *testing.T) {
 		t.Fatalf("Unexpected error fetching topic handler: %v", err)
 	}
 
-	handleFunc(&protocolsPb.PushMessage{})
+	handleFunc(TopicEvent{})
 
 	select {
 	case <-pingHandlerSignals:

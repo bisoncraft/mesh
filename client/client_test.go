@@ -221,13 +221,9 @@ func TestClient(t *testing.T) {
 
 	pingTopic := "ping"
 
-	clientReceivedMsgs := make(chan *protocolsPb.PushMessage, 10)
-	clientPingHandlerFunc := func(msg *protocolsPb.PushMessage) {
-		if msg.Topic != pingTopic {
-			t.Fatalf("Expected %s topic, got %s", pingTopic, msg.Topic)
-		}
-
-		clientReceivedMsgs <- msg
+	clientReceivedMsgs := make(chan TopicEvent, 10)
+	clientPingHandlerFunc := func(evt TopicEvent) {
+		clientReceivedMsgs <- evt
 	}
 
 	// Ensure the client can subscribe to a topic.
@@ -256,8 +252,8 @@ func TestClient(t *testing.T) {
 	remoteHostBroadcastMsg(pingTopic, []byte(pingTopic), remoteHost.ID())
 	select {
 	case pushedMsg := <-clientReceivedMsgs:
-		if pushedMsg.Topic != pingTopic {
-			t.Fatalf("Expected %s, got %s", pingTopic, pushedMsg.Topic)
+		if pushedMsg.Type != TopicEventData {
+			t.Fatalf("Expected TopicEventData type, got %v", pushedMsg.Type)
 		}
 
 		if string(pushedMsg.Data) != pingTopic {
@@ -271,7 +267,7 @@ func TestClient(t *testing.T) {
 	echoTopic := "echo"
 
 	// Ensure the client can unsubscribe from a topic.
-	err = client.Subscribe(ctx, echoTopic, func(msg *protocolsPb.PushMessage) {})
+	err = client.Subscribe(ctx, echoTopic, func(TopicEvent) {})
 	if err != nil {
 		t.Fatalf("Unexpected error subscribing to topic %s, %v", echoTopic, err)
 	}
@@ -394,10 +390,6 @@ func TestClient(t *testing.T) {
 	// Ensure the client can receive pushed messages.
 	select {
 	case pushedMsg := <-clientReceivedMsgs:
-		if pushedMsg.Topic != pingTopic {
-			t.Fatalf("Expected %s, got %s", pingTopic, pushedMsg.Topic)
-		}
-
 		if string(pushedMsg.Data) != pingTopic {
 			t.Fatalf("Expected %s for data, got %s", pingTopic, string(pushedMsg.Data))
 		}
