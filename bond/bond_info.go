@@ -1,10 +1,18 @@
 package bond
 
 import (
+	"fmt"
 	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	protocolsPb "github.com/martonp/tatanka-mesh/protocols/pb"
+)
+
+const (
+	// MinRequiredBondStrength is the minimum required bond strength for a client.
+	MinRequiredBondStrength = 1
 )
 
 // BondParams contains the parameters of a bond.
@@ -16,7 +24,7 @@ type BondParams struct {
 
 // BondInfo stores the bond information for a client.
 type BondInfo struct {
-	mtx           sync.Mutex
+	mtx           sync.RWMutex
 	totalStrength atomic.Uint32
 	// storedBonds are the bond IDs that have been stored for this client
 	storedBonds map[string]struct{}
@@ -95,4 +103,40 @@ func (bi *BondInfo) ClearExpiredBonds(now time.Time) {
 	}
 
 	bi.bondParams = bi.bondParams[firstUnexpiredIndex:]
+}
+
+// RemoveBondAtIndex removes the bond at the provided index.
+func (cbi *BondInfo) RemoveBondAtIndex(index uint32) error {
+	cbi.mtx.RLock()
+	bondSize := len(cbi.bondParams)
+	cbi.mtx.RUnlock()
+
+	if bondSize == 0 {
+		// No bond to remove
+		return nil
+	}
+
+	if index > uint32(bondSize)-1 {
+		return fmt.Errorf("index %d exceeds max bonds index range %d", index, bondSize-1)
+	}
+
+	cbi.mtx.Lock()
+	cbi.bondParams = append(cbi.bondParams[:index], cbi.bondParams[index+1:]...)
+	cbi.mtx.Unlock()
+
+	return nil
+}
+
+// PostBondReqFromBondInfo converts the provided bond info into a post bond request.
+func PostBondReqFromBondInfo(info *BondInfo) (*protocolsPb.PostBondRequest, error) {
+	if len(info.bondParams) == 0 {
+		return nil, fmt.Errorf("no bonds provided")
+	}
+
+	req := &protocolsPb.PostBondRequest{}
+	for _, bp := range info.bondParams {
+		req.Bonds = append(req.Bonds, &protocolsPb.Bond{BondID: []byte(bp.ID)})
+	}
+
+	return req, nil
 }
