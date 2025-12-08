@@ -70,7 +70,7 @@ func (x PushMessage_MessageType) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use PushMessage_MessageType.Descriptor instead.
 func (PushMessage_MessageType) EnumDescriptor() ([]byte, []int) {
-	return file_protocols_proto_rawDescGZIP(), []int{6, 0}
+	return file_protocols_proto_rawDescGZIP(), []int{8, 0}
 }
 
 type Response struct {
@@ -293,6 +293,84 @@ func (*UnauthorizedError) Descriptor() ([]byte, []int) {
 	return file_protocols_proto_rawDescGZIP(), []int{2}
 }
 
+// CounterpartyNotFoundError is returned during a client initiate relay request
+// to indicate that the relay was unable to be setup because the counterparty
+// was not found.
+type CounterpartyNotFoundError struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CounterpartyNotFoundError) Reset() {
+	*x = CounterpartyNotFoundError{}
+	mi := &file_protocols_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CounterpartyNotFoundError) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CounterpartyNotFoundError) ProtoMessage() {}
+
+func (x *CounterpartyNotFoundError) ProtoReflect() protoreflect.Message {
+	mi := &file_protocols_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CounterpartyNotFoundError.ProtoReflect.Descriptor instead.
+func (*CounterpartyNotFoundError) Descriptor() ([]byte, []int) {
+	return file_protocols_proto_rawDescGZIP(), []int{3}
+}
+
+// CounterpartyRejectedError is returned during a client initiate relay request
+// to indicate that the relay was unable to be setup because the counterparty
+// rejected the relay request.
+type CounterpartyRejectedError struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CounterpartyRejectedError) Reset() {
+	*x = CounterpartyRejectedError{}
+	mi := &file_protocols_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CounterpartyRejectedError) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CounterpartyRejectedError) ProtoMessage() {}
+
+func (x *CounterpartyRejectedError) ProtoReflect() protoreflect.Message {
+	mi := &file_protocols_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CounterpartyRejectedError.ProtoReflect.Descriptor instead.
+func (*CounterpartyRejectedError) Descriptor() ([]byte, []int) {
+	return file_protocols_proto_rawDescGZIP(), []int{4}
+}
+
 // PostBondError is a type containing specific error information for the
 // PostBonds protocol.
 type PostBondError struct {
@@ -304,7 +382,7 @@ type PostBondError struct {
 
 func (x *PostBondError) Reset() {
 	*x = PostBondError{}
-	mi := &file_protocols_proto_msgTypes[3]
+	mi := &file_protocols_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -316,7 +394,7 @@ func (x *PostBondError) String() string {
 func (*PostBondError) ProtoMessage() {}
 
 func (x *PostBondError) ProtoReflect() protoreflect.Message {
-	mi := &file_protocols_proto_msgTypes[3]
+	mi := &file_protocols_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -329,7 +407,7 @@ func (x *PostBondError) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PostBondError.ProtoReflect.Descriptor instead.
 func (*PostBondError) Descriptor() ([]byte, []int) {
-	return file_protocols_proto_rawDescGZIP(), []int{3}
+	return file_protocols_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *PostBondError) GetInvalidBondIndex() uint32 {
@@ -346,6 +424,8 @@ type Error struct {
 	//	*Error_Unauthorized
 	//	*Error_PostBondError
 	//	*Error_Message
+	//	*Error_CpNotFoundError
+	//	*Error_CpRejectedError
 	Error         isError_Error `protobuf_oneof:"error"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -353,7 +433,7 @@ type Error struct {
 
 func (x *Error) Reset() {
 	*x = Error{}
-	mi := &file_protocols_proto_msgTypes[4]
+	mi := &file_protocols_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -365,7 +445,7 @@ func (x *Error) String() string {
 func (*Error) ProtoMessage() {}
 
 func (x *Error) ProtoReflect() protoreflect.Message {
-	mi := &file_protocols_proto_msgTypes[4]
+	mi := &file_protocols_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -378,7 +458,7 @@ func (x *Error) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Error.ProtoReflect.Descriptor instead.
 func (*Error) Descriptor() ([]byte, []int) {
-	return file_protocols_proto_rawDescGZIP(), []int{4}
+	return file_protocols_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *Error) GetError() isError_Error {
@@ -415,6 +495,24 @@ func (x *Error) GetMessage() string {
 	return ""
 }
 
+func (x *Error) GetCpNotFoundError() *CounterpartyNotFoundError {
+	if x != nil {
+		if x, ok := x.Error.(*Error_CpNotFoundError); ok {
+			return x.CpNotFoundError
+		}
+	}
+	return nil
+}
+
+func (x *Error) GetCpRejectedError() *CounterpartyRejectedError {
+	if x != nil {
+		if x, ok := x.Error.(*Error_CpRejectedError); ok {
+			return x.CpRejectedError
+		}
+	}
+	return nil
+}
+
 type isError_Error interface {
 	isError_Error()
 }
@@ -431,11 +529,23 @@ type Error_Message struct {
 	Message string `protobuf:"bytes,3,opt,name=message,proto3,oneof"`
 }
 
+type Error_CpNotFoundError struct {
+	CpNotFoundError *CounterpartyNotFoundError `protobuf:"bytes,4,opt,name=cp_not_found_error,json=cpNotFoundError,proto3,oneof"`
+}
+
+type Error_CpRejectedError struct {
+	CpRejectedError *CounterpartyRejectedError `protobuf:"bytes,5,opt,name=cp_rejected_error,json=cpRejectedError,proto3,oneof"`
+}
+
 func (*Error_Unauthorized) isError_Error() {}
 
 func (*Error_PostBondError) isError_Error() {}
 
 func (*Error_Message) isError_Error() {}
+
+func (*Error_CpNotFoundError) isError_Error() {}
+
+func (*Error_CpRejectedError) isError_Error() {}
 
 // PublishRequest is sent by a client to publish a message to a topic.
 type PublishRequest struct {
@@ -448,7 +558,7 @@ type PublishRequest struct {
 
 func (x *PublishRequest) Reset() {
 	*x = PublishRequest{}
-	mi := &file_protocols_proto_msgTypes[5]
+	mi := &file_protocols_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -460,7 +570,7 @@ func (x *PublishRequest) String() string {
 func (*PublishRequest) ProtoMessage() {}
 
 func (x *PublishRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_protocols_proto_msgTypes[5]
+	mi := &file_protocols_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -473,7 +583,7 @@ func (x *PublishRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PublishRequest.ProtoReflect.Descriptor instead.
 func (*PublishRequest) Descriptor() ([]byte, []int) {
-	return file_protocols_proto_rawDescGZIP(), []int{5}
+	return file_protocols_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *PublishRequest) GetTopic() string {
@@ -504,7 +614,7 @@ type PushMessage struct {
 
 func (x *PushMessage) Reset() {
 	*x = PushMessage{}
-	mi := &file_protocols_proto_msgTypes[6]
+	mi := &file_protocols_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -516,7 +626,7 @@ func (x *PushMessage) String() string {
 func (*PushMessage) ProtoMessage() {}
 
 func (x *PushMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_protocols_proto_msgTypes[6]
+	mi := &file_protocols_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -529,7 +639,7 @@ func (x *PushMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PushMessage.ProtoReflect.Descriptor instead.
 func (*PushMessage) Descriptor() ([]byte, []int) {
-	return file_protocols_proto_rawDescGZIP(), []int{6}
+	return file_protocols_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *PushMessage) GetMessageType() PushMessage_MessageType {
@@ -572,7 +682,7 @@ type SubscribeRequest struct {
 
 func (x *SubscribeRequest) Reset() {
 	*x = SubscribeRequest{}
-	mi := &file_protocols_proto_msgTypes[7]
+	mi := &file_protocols_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -584,7 +694,7 @@ func (x *SubscribeRequest) String() string {
 func (*SubscribeRequest) ProtoMessage() {}
 
 func (x *SubscribeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_protocols_proto_msgTypes[7]
+	mi := &file_protocols_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -597,7 +707,7 @@ func (x *SubscribeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SubscribeRequest.ProtoReflect.Descriptor instead.
 func (*SubscribeRequest) Descriptor() ([]byte, []int) {
-	return file_protocols_proto_rawDescGZIP(), []int{7}
+	return file_protocols_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *SubscribeRequest) GetTopic() string {
@@ -625,7 +735,7 @@ type SubscriptionsResponse struct {
 
 func (x *SubscriptionsResponse) Reset() {
 	*x = SubscriptionsResponse{}
-	mi := &file_protocols_proto_msgTypes[8]
+	mi := &file_protocols_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -637,7 +747,7 @@ func (x *SubscriptionsResponse) String() string {
 func (*SubscriptionsResponse) ProtoMessage() {}
 
 func (x *SubscriptionsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_protocols_proto_msgTypes[8]
+	mi := &file_protocols_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -650,7 +760,7 @@ func (x *SubscriptionsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SubscriptionsResponse.ProtoReflect.Descriptor instead.
 func (*SubscriptionsResponse) Descriptor() ([]byte, []int) {
-	return file_protocols_proto_rawDescGZIP(), []int{8}
+	return file_protocols_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *SubscriptionsResponse) GetTopics() []string {
@@ -670,7 +780,7 @@ type ClientAddrRequest struct {
 
 func (x *ClientAddrRequest) Reset() {
 	*x = ClientAddrRequest{}
-	mi := &file_protocols_proto_msgTypes[9]
+	mi := &file_protocols_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -682,7 +792,7 @@ func (x *ClientAddrRequest) String() string {
 func (*ClientAddrRequest) ProtoMessage() {}
 
 func (x *ClientAddrRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_protocols_proto_msgTypes[9]
+	mi := &file_protocols_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -695,7 +805,7 @@ func (x *ClientAddrRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClientAddrRequest.ProtoReflect.Descriptor instead.
 func (*ClientAddrRequest) Descriptor() ([]byte, []int) {
-	return file_protocols_proto_rawDescGZIP(), []int{9}
+	return file_protocols_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *ClientAddrRequest) GetId() []byte {
@@ -716,7 +826,7 @@ type ClientAddrResponse struct {
 
 func (x *ClientAddrResponse) Reset() {
 	*x = ClientAddrResponse{}
-	mi := &file_protocols_proto_msgTypes[10]
+	mi := &file_protocols_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -728,7 +838,7 @@ func (x *ClientAddrResponse) String() string {
 func (*ClientAddrResponse) ProtoMessage() {}
 
 func (x *ClientAddrResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_protocols_proto_msgTypes[10]
+	mi := &file_protocols_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -741,7 +851,7 @@ func (x *ClientAddrResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClientAddrResponse.ProtoReflect.Descriptor instead.
 func (*ClientAddrResponse) Descriptor() ([]byte, []int) {
-	return file_protocols_proto_rawDescGZIP(), []int{10}
+	return file_protocols_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *ClientAddrResponse) GetAddrs() [][]byte {
@@ -761,7 +871,7 @@ type Bond struct {
 
 func (x *Bond) Reset() {
 	*x = Bond{}
-	mi := &file_protocols_proto_msgTypes[11]
+	mi := &file_protocols_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -773,7 +883,7 @@ func (x *Bond) String() string {
 func (*Bond) ProtoMessage() {}
 
 func (x *Bond) ProtoReflect() protoreflect.Message {
-	mi := &file_protocols_proto_msgTypes[11]
+	mi := &file_protocols_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -786,7 +896,7 @@ func (x *Bond) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Bond.ProtoReflect.Descriptor instead.
 func (*Bond) Descriptor() ([]byte, []int) {
-	return file_protocols_proto_rawDescGZIP(), []int{11}
+	return file_protocols_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *Bond) GetAssetID() uint32 {
@@ -812,7 +922,7 @@ type PostBondRequest struct {
 
 func (x *PostBondRequest) Reset() {
 	*x = PostBondRequest{}
-	mi := &file_protocols_proto_msgTypes[12]
+	mi := &file_protocols_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -824,7 +934,7 @@ func (x *PostBondRequest) String() string {
 func (*PostBondRequest) ProtoMessage() {}
 
 func (x *PostBondRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_protocols_proto_msgTypes[12]
+	mi := &file_protocols_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -837,7 +947,7 @@ func (x *PostBondRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PostBondRequest.ProtoReflect.Descriptor instead.
 func (*PostBondRequest) Descriptor() ([]byte, []int) {
-	return file_protocols_proto_rawDescGZIP(), []int{12}
+	return file_protocols_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *PostBondRequest) GetBonds() []*Bond {
@@ -856,7 +966,7 @@ type PostBondResponse struct {
 
 func (x *PostBondResponse) Reset() {
 	*x = PostBondResponse{}
-	mi := &file_protocols_proto_msgTypes[13]
+	mi := &file_protocols_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -868,7 +978,7 @@ func (x *PostBondResponse) String() string {
 func (*PostBondResponse) ProtoMessage() {}
 
 func (x *PostBondResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_protocols_proto_msgTypes[13]
+	mi := &file_protocols_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -881,7 +991,7 @@ func (x *PostBondResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PostBondResponse.ProtoReflect.Descriptor instead.
 func (*PostBondResponse) Descriptor() ([]byte, []int) {
-	return file_protocols_proto_rawDescGZIP(), []int{13}
+	return file_protocols_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *PostBondResponse) GetBondStrength() uint32 {
@@ -902,7 +1012,7 @@ type PeerInfo struct {
 
 func (x *PeerInfo) Reset() {
 	*x = PeerInfo{}
-	mi := &file_protocols_proto_msgTypes[14]
+	mi := &file_protocols_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -914,7 +1024,7 @@ func (x *PeerInfo) String() string {
 func (*PeerInfo) ProtoMessage() {}
 
 func (x *PeerInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_protocols_proto_msgTypes[14]
+	mi := &file_protocols_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -927,7 +1037,7 @@ func (x *PeerInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PeerInfo.ProtoReflect.Descriptor instead.
 func (*PeerInfo) Descriptor() ([]byte, []int) {
-	return file_protocols_proto_rawDescGZIP(), []int{14}
+	return file_protocols_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *PeerInfo) GetId() []byte {
@@ -954,7 +1064,7 @@ type DiscoveryResponse struct {
 
 func (x *DiscoveryResponse) Reset() {
 	*x = DiscoveryResponse{}
-	mi := &file_protocols_proto_msgTypes[15]
+	mi := &file_protocols_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -966,7 +1076,7 @@ func (x *DiscoveryResponse) String() string {
 func (*DiscoveryResponse) ProtoMessage() {}
 
 func (x *DiscoveryResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_protocols_proto_msgTypes[15]
+	mi := &file_protocols_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -979,7 +1089,7 @@ func (x *DiscoveryResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DiscoveryResponse.ProtoReflect.Descriptor instead.
 func (*DiscoveryResponse) Descriptor() ([]byte, []int) {
-	return file_protocols_proto_rawDescGZIP(), []int{15}
+	return file_protocols_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *DiscoveryResponse) GetPeers() []*PeerInfo {
@@ -988,6 +1098,280 @@ func (x *DiscoveryResponse) GetPeers() []*PeerInfo {
 	}
 	return nil
 }
+
+// ClientRelayMessageRequest is a client originating request to send a
+// message to another client.
+type ClientRelayMessageRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	PeerID        []byte                 `protobuf:"bytes,1,opt,name=peerID,proto3" json:"peerID,omitempty"` // peer.ID serialized as bytes
+	Message       []byte                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ClientRelayMessageRequest) Reset() {
+	*x = ClientRelayMessageRequest{}
+	mi := &file_protocols_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ClientRelayMessageRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ClientRelayMessageRequest) ProtoMessage() {}
+
+func (x *ClientRelayMessageRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_protocols_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ClientRelayMessageRequest.ProtoReflect.Descriptor instead.
+func (*ClientRelayMessageRequest) Descriptor() ([]byte, []int) {
+	return file_protocols_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *ClientRelayMessageRequest) GetPeerID() []byte {
+	if x != nil {
+		return x.PeerID
+	}
+	return nil
+}
+
+func (x *ClientRelayMessageRequest) GetMessage() []byte {
+	if x != nil {
+		return x.Message
+	}
+	return nil
+}
+
+// ClientRelayMessageResponse is the response to a ClientRelayMessageRequest.
+type ClientRelayMessageResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Types that are valid to be assigned to Response:
+	//
+	//	*ClientRelayMessageResponse_Message
+	//	*ClientRelayMessageResponse_Error
+	Response      isClientRelayMessageResponse_Response `protobuf_oneof:"response"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ClientRelayMessageResponse) Reset() {
+	*x = ClientRelayMessageResponse{}
+	mi := &file_protocols_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ClientRelayMessageResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ClientRelayMessageResponse) ProtoMessage() {}
+
+func (x *ClientRelayMessageResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_protocols_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ClientRelayMessageResponse.ProtoReflect.Descriptor instead.
+func (*ClientRelayMessageResponse) Descriptor() ([]byte, []int) {
+	return file_protocols_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *ClientRelayMessageResponse) GetResponse() isClientRelayMessageResponse_Response {
+	if x != nil {
+		return x.Response
+	}
+	return nil
+}
+
+func (x *ClientRelayMessageResponse) GetMessage() []byte {
+	if x != nil {
+		if x, ok := x.Response.(*ClientRelayMessageResponse_Message); ok {
+			return x.Message
+		}
+	}
+	return nil
+}
+
+func (x *ClientRelayMessageResponse) GetError() *Error {
+	if x != nil {
+		if x, ok := x.Response.(*ClientRelayMessageResponse_Error); ok {
+			return x.Error
+		}
+	}
+	return nil
+}
+
+type isClientRelayMessageResponse_Response interface {
+	isClientRelayMessageResponse_Response()
+}
+
+type ClientRelayMessageResponse_Message struct {
+	Message []byte `protobuf:"bytes,1,opt,name=message,proto3,oneof"`
+}
+
+type ClientRelayMessageResponse_Error struct {
+	Error *Error `protobuf:"bytes,2,opt,name=error,proto3,oneof"`
+}
+
+func (*ClientRelayMessageResponse_Message) isClientRelayMessageResponse_Response() {}
+
+func (*ClientRelayMessageResponse_Error) isClientRelayMessageResponse_Response() {}
+
+// TatankaRelayMessageRequest is a tatanka node originating request to a client
+// to notify them that another client is sending them a message.
+type TatankaRelayMessageRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	PeerID        []byte                 `protobuf:"bytes,1,opt,name=peerID,proto3" json:"peerID,omitempty"` // peer.ID serialized as bytes
+	Message       []byte                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TatankaRelayMessageRequest) Reset() {
+	*x = TatankaRelayMessageRequest{}
+	mi := &file_protocols_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TatankaRelayMessageRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TatankaRelayMessageRequest) ProtoMessage() {}
+
+func (x *TatankaRelayMessageRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_protocols_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TatankaRelayMessageRequest.ProtoReflect.Descriptor instead.
+func (*TatankaRelayMessageRequest) Descriptor() ([]byte, []int) {
+	return file_protocols_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *TatankaRelayMessageRequest) GetPeerID() []byte {
+	if x != nil {
+		return x.PeerID
+	}
+	return nil
+}
+
+func (x *TatankaRelayMessageRequest) GetMessage() []byte {
+	if x != nil {
+		return x.Message
+	}
+	return nil
+}
+
+// TatankaRelayMessageResponse is the response to a TatankaRelayMessageRequest.
+type TatankaRelayMessageResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Types that are valid to be assigned to Response:
+	//
+	//	*TatankaRelayMessageResponse_Message
+	//	*TatankaRelayMessageResponse_Error
+	Response      isTatankaRelayMessageResponse_Response `protobuf_oneof:"response"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TatankaRelayMessageResponse) Reset() {
+	*x = TatankaRelayMessageResponse{}
+	mi := &file_protocols_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TatankaRelayMessageResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TatankaRelayMessageResponse) ProtoMessage() {}
+
+func (x *TatankaRelayMessageResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_protocols_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TatankaRelayMessageResponse.ProtoReflect.Descriptor instead.
+func (*TatankaRelayMessageResponse) Descriptor() ([]byte, []int) {
+	return file_protocols_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *TatankaRelayMessageResponse) GetResponse() isTatankaRelayMessageResponse_Response {
+	if x != nil {
+		return x.Response
+	}
+	return nil
+}
+
+func (x *TatankaRelayMessageResponse) GetMessage() []byte {
+	if x != nil {
+		if x, ok := x.Response.(*TatankaRelayMessageResponse_Message); ok {
+			return x.Message
+		}
+	}
+	return nil
+}
+
+func (x *TatankaRelayMessageResponse) GetError() *Error {
+	if x != nil {
+		if x, ok := x.Response.(*TatankaRelayMessageResponse_Error); ok {
+			return x.Error
+		}
+	}
+	return nil
+}
+
+type isTatankaRelayMessageResponse_Response interface {
+	isTatankaRelayMessageResponse_Response()
+}
+
+type TatankaRelayMessageResponse_Message struct {
+	Message []byte `protobuf:"bytes,1,opt,name=message,proto3,oneof"`
+}
+
+type TatankaRelayMessageResponse_Error struct {
+	Error *Error `protobuf:"bytes,2,opt,name=error,proto3,oneof"`
+}
+
+func (*TatankaRelayMessageResponse_Message) isTatankaRelayMessageResponse_Response() {}
+
+func (*TatankaRelayMessageResponse_Error) isTatankaRelayMessageResponse_Response() {}
 
 var File_protocols_proto protoreflect.FileDescriptor
 
@@ -1004,13 +1388,17 @@ const file_protocols_proto_rawDesc = "" +
 	"\n" +
 	"\bresponse\"\t\n" +
 	"\aSuccess\"\x13\n" +
-	"\x11UnauthorizedError\";\n" +
+	"\x11UnauthorizedError\"\x1b\n" +
+	"\x19CounterpartyNotFoundError\"\x1b\n" +
+	"\x19CounterpartyRejectedError\";\n" +
 	"\rPostBondError\x12*\n" +
-	"\x10invalidBondIndex\x18\x01 \x01(\rR\x10invalidBondIndex\"\xa6\x01\n" +
+	"\x10invalidBondIndex\x18\x01 \x01(\rR\x10invalidBondIndex\"\xc1\x02\n" +
 	"\x05Error\x12;\n" +
 	"\funauthorized\x18\x01 \x01(\v2\x15.pb.UnauthorizedErrorH\x00R\funauthorized\x12;\n" +
 	"\x0fpost_bond_error\x18\x02 \x01(\v2\x11.pb.PostBondErrorH\x00R\rpostBondError\x12\x1a\n" +
-	"\amessage\x18\x03 \x01(\tH\x00R\amessageB\a\n" +
+	"\amessage\x18\x03 \x01(\tH\x00R\amessage\x12L\n" +
+	"\x12cp_not_found_error\x18\x04 \x01(\v2\x1d.pb.CounterpartyNotFoundErrorH\x00R\x0fcpNotFoundError\x12K\n" +
+	"\x11cp_rejected_error\x18\x05 \x01(\v2\x1d.pb.CounterpartyRejectedErrorH\x00R\x0fcpRejectedErrorB\a\n" +
 	"\x05error\":\n" +
 	"\x0ePublishRequest\x12\x14\n" +
 	"\x05topic\x18\x01 \x01(\tR\x05topic\x12\x12\n" +
@@ -1045,7 +1433,23 @@ const file_protocols_proto_rawDesc = "" +
 	"\x02id\x18\x01 \x01(\fR\x02id\x12\x14\n" +
 	"\x05addrs\x18\x02 \x03(\fR\x05addrs\"7\n" +
 	"\x11DiscoveryResponse\x12\"\n" +
-	"\x05peers\x18\x01 \x03(\v2\f.pb.PeerInfoR\x05peersB.Z,github.com/martonp/tatanka-mesh/protocols/pbb\x06proto3"
+	"\x05peers\x18\x01 \x03(\v2\f.pb.PeerInfoR\x05peers\"M\n" +
+	"\x19ClientRelayMessageRequest\x12\x16\n" +
+	"\x06peerID\x18\x01 \x01(\fR\x06peerID\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\fR\amessage\"g\n" +
+	"\x1aClientRelayMessageResponse\x12\x1a\n" +
+	"\amessage\x18\x01 \x01(\fH\x00R\amessage\x12!\n" +
+	"\x05error\x18\x02 \x01(\v2\t.pb.ErrorH\x00R\x05errorB\n" +
+	"\n" +
+	"\bresponse\"N\n" +
+	"\x1aTatankaRelayMessageRequest\x12\x16\n" +
+	"\x06peerID\x18\x01 \x01(\fR\x06peerID\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\fR\amessage\"h\n" +
+	"\x1bTatankaRelayMessageResponse\x12\x1a\n" +
+	"\amessage\x18\x01 \x01(\fH\x00R\amessage\x12!\n" +
+	"\x05error\x18\x02 \x01(\v2\t.pb.ErrorH\x00R\x05errorB\n" +
+	"\n" +
+	"\bresponseB.Z,github.com/martonp/tatanka-mesh/protocols/pbb\x06proto3"
 
 var (
 	file_protocols_proto_rawDescOnce sync.Once
@@ -1060,43 +1464,53 @@ func file_protocols_proto_rawDescGZIP() []byte {
 }
 
 var file_protocols_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_protocols_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
+var file_protocols_proto_msgTypes = make([]protoimpl.MessageInfo, 22)
 var file_protocols_proto_goTypes = []any{
-	(PushMessage_MessageType)(0),  // 0: pb.PushMessage.MessageType
-	(*Response)(nil),              // 1: pb.Response
-	(*Success)(nil),               // 2: pb.Success
-	(*UnauthorizedError)(nil),     // 3: pb.UnauthorizedError
-	(*PostBondError)(nil),         // 4: pb.PostBondError
-	(*Error)(nil),                 // 5: pb.Error
-	(*PublishRequest)(nil),        // 6: pb.PublishRequest
-	(*PushMessage)(nil),           // 7: pb.PushMessage
-	(*SubscribeRequest)(nil),      // 8: pb.SubscribeRequest
-	(*SubscriptionsResponse)(nil), // 9: pb.SubscriptionsResponse
-	(*ClientAddrRequest)(nil),     // 10: pb.ClientAddrRequest
-	(*ClientAddrResponse)(nil),    // 11: pb.ClientAddrResponse
-	(*Bond)(nil),                  // 12: pb.Bond
-	(*PostBondRequest)(nil),       // 13: pb.PostBondRequest
-	(*PostBondResponse)(nil),      // 14: pb.PostBondResponse
-	(*PeerInfo)(nil),              // 15: pb.PeerInfo
-	(*DiscoveryResponse)(nil),     // 16: pb.DiscoveryResponse
+	(PushMessage_MessageType)(0),        // 0: pb.PushMessage.MessageType
+	(*Response)(nil),                    // 1: pb.Response
+	(*Success)(nil),                     // 2: pb.Success
+	(*UnauthorizedError)(nil),           // 3: pb.UnauthorizedError
+	(*CounterpartyNotFoundError)(nil),   // 4: pb.CounterpartyNotFoundError
+	(*CounterpartyRejectedError)(nil),   // 5: pb.CounterpartyRejectedError
+	(*PostBondError)(nil),               // 6: pb.PostBondError
+	(*Error)(nil),                       // 7: pb.Error
+	(*PublishRequest)(nil),              // 8: pb.PublishRequest
+	(*PushMessage)(nil),                 // 9: pb.PushMessage
+	(*SubscribeRequest)(nil),            // 10: pb.SubscribeRequest
+	(*SubscriptionsResponse)(nil),       // 11: pb.SubscriptionsResponse
+	(*ClientAddrRequest)(nil),           // 12: pb.ClientAddrRequest
+	(*ClientAddrResponse)(nil),          // 13: pb.ClientAddrResponse
+	(*Bond)(nil),                        // 14: pb.Bond
+	(*PostBondRequest)(nil),             // 15: pb.PostBondRequest
+	(*PostBondResponse)(nil),            // 16: pb.PostBondResponse
+	(*PeerInfo)(nil),                    // 17: pb.PeerInfo
+	(*DiscoveryResponse)(nil),           // 18: pb.DiscoveryResponse
+	(*ClientRelayMessageRequest)(nil),   // 19: pb.ClientRelayMessageRequest
+	(*ClientRelayMessageResponse)(nil),  // 20: pb.ClientRelayMessageResponse
+	(*TatankaRelayMessageRequest)(nil),  // 21: pb.TatankaRelayMessageRequest
+	(*TatankaRelayMessageResponse)(nil), // 22: pb.TatankaRelayMessageResponse
 }
 var file_protocols_proto_depIdxs = []int32{
 	2,  // 0: pb.Response.success:type_name -> pb.Success
-	5,  // 1: pb.Response.error:type_name -> pb.Error
-	9,  // 2: pb.Response.subscriptions_response:type_name -> pb.SubscriptionsResponse
-	11, // 3: pb.Response.addr_response:type_name -> pb.ClientAddrResponse
-	14, // 4: pb.Response.post_bond_response:type_name -> pb.PostBondResponse
-	16, // 5: pb.Response.discovery_response:type_name -> pb.DiscoveryResponse
+	7,  // 1: pb.Response.error:type_name -> pb.Error
+	11, // 2: pb.Response.subscriptions_response:type_name -> pb.SubscriptionsResponse
+	13, // 3: pb.Response.addr_response:type_name -> pb.ClientAddrResponse
+	16, // 4: pb.Response.post_bond_response:type_name -> pb.PostBondResponse
+	18, // 5: pb.Response.discovery_response:type_name -> pb.DiscoveryResponse
 	3,  // 6: pb.Error.unauthorized:type_name -> pb.UnauthorizedError
-	4,  // 7: pb.Error.post_bond_error:type_name -> pb.PostBondError
-	0,  // 8: pb.PushMessage.message_type:type_name -> pb.PushMessage.MessageType
-	12, // 9: pb.PostBondRequest.bonds:type_name -> pb.Bond
-	15, // 10: pb.DiscoveryResponse.peers:type_name -> pb.PeerInfo
-	11, // [11:11] is the sub-list for method output_type
-	11, // [11:11] is the sub-list for method input_type
-	11, // [11:11] is the sub-list for extension type_name
-	11, // [11:11] is the sub-list for extension extendee
-	0,  // [0:11] is the sub-list for field type_name
+	6,  // 7: pb.Error.post_bond_error:type_name -> pb.PostBondError
+	4,  // 8: pb.Error.cp_not_found_error:type_name -> pb.CounterpartyNotFoundError
+	5,  // 9: pb.Error.cp_rejected_error:type_name -> pb.CounterpartyRejectedError
+	0,  // 10: pb.PushMessage.message_type:type_name -> pb.PushMessage.MessageType
+	14, // 11: pb.PostBondRequest.bonds:type_name -> pb.Bond
+	17, // 12: pb.DiscoveryResponse.peers:type_name -> pb.PeerInfo
+	7,  // 13: pb.ClientRelayMessageResponse.error:type_name -> pb.Error
+	7,  // 14: pb.TatankaRelayMessageResponse.error:type_name -> pb.Error
+	15, // [15:15] is the sub-list for method output_type
+	15, // [15:15] is the sub-list for method input_type
+	15, // [15:15] is the sub-list for extension type_name
+	15, // [15:15] is the sub-list for extension extendee
+	0,  // [0:15] is the sub-list for field type_name
 }
 
 func init() { file_protocols_proto_init() }
@@ -1112,10 +1526,20 @@ func file_protocols_proto_init() {
 		(*Response_PostBondResponse)(nil),
 		(*Response_DiscoveryResponse)(nil),
 	}
-	file_protocols_proto_msgTypes[4].OneofWrappers = []any{
+	file_protocols_proto_msgTypes[6].OneofWrappers = []any{
 		(*Error_Unauthorized)(nil),
 		(*Error_PostBondError)(nil),
 		(*Error_Message)(nil),
+		(*Error_CpNotFoundError)(nil),
+		(*Error_CpRejectedError)(nil),
+	}
+	file_protocols_proto_msgTypes[19].OneofWrappers = []any{
+		(*ClientRelayMessageResponse_Message)(nil),
+		(*ClientRelayMessageResponse_Error)(nil),
+	}
+	file_protocols_proto_msgTypes[21].OneofWrappers = []any{
+		(*TatankaRelayMessageResponse_Message)(nil),
+		(*TatankaRelayMessageResponse_Error)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -1123,7 +1547,7 @@ func file_protocols_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_protocols_proto_rawDesc), len(file_protocols_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   16,
+			NumMessages:   22,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

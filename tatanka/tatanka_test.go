@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/decred/slog"
+	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -22,8 +23,13 @@ import (
 	"github.com/martonp/tatanka-mesh/codec"
 	"github.com/martonp/tatanka-mesh/protocols"
 	protocolsPb "github.com/martonp/tatanka-mesh/protocols/pb"
-	ma "github.com/multiformats/go-multiaddr"
 	"google.golang.org/protobuf/proto"
+)
+
+var (
+	errRelayRejected = errors.New("relay rejected")
+	errRelayNotFound = errors.New("relay counterparty not found")
+	errRelayOther    = errors.New("relay error")
 )
 
 type testBondStorage struct {
@@ -82,7 +88,13 @@ type testClient struct {
 	nodeID     peer.ID
 	pushStream network.Stream
 	channels   map[string]chan *protocolsPb.PushMessage
+	relays     chan relayRequest
 	mtx        sync.RWMutex
+}
+
+type relayRequest struct {
+	stream network.Stream
+	req    *protocolsPb.TatankaRelayMessageRequest
 }
 
 // newTestClient creates a new test client connected to a mesh node.
@@ -100,7 +112,10 @@ func newTestClient(t *testing.T, ctx context.Context, h host.Host, nodeID peer.I
 		nodeID:     nodeID,
 		pushStream: stream,
 		channels:   make(map[string]chan *protocolsPb.PushMessage),
+		relays:     make(chan relayRequest, 2),
 	}
+
+	h.SetStreamHandler(protocols.TatankaRelayMessageProtocol, tc.handleIncomingRelay)
 
 	// Start goroutine to read incoming push messages
 	go tc.readPushMessages()
@@ -255,53 +270,100 @@ func (tc *testClient) NextData(ctx context.Context, topic string) (*protocolsPb.
 	}
 }
 
-func (tc *testClient) GetPeerAddr(ctx context.Context, id peer.ID) ([]ma.Multiaddr, error) {
-	stream, err := tc.host.NewStream(ctx, tc.nodeID, protocols.ClientAddrProtocol)
+// relayMessage asks the connected tatanka node to relay a message to the
+// given counterparty client and returns the response payload.
+func (tc *testClient) relayMessage(ctx context.Context, counterparty peer.ID, message []byte) ([]byte, error) {
+	stream, err := tc.host.NewStream(ctx, tc.nodeID, protocols.ClientRelayMessageProtocol)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = stream.Close() }()
 
-	addrMsg := &protocolsPb.ClientAddrRequest{Id: []byte(id)}
-	if err := codec.WriteLengthPrefixedMessage(stream, addrMsg); err != nil {
-		if !errors.Is(err, io.EOF) && !errors.Is(err, context.Canceled) && !errors.Is(err, io.ErrClosedPipe) {
-			return nil, err
-		}
-
-		return []ma.Multiaddr{}, nil
+	req := &protocolsPb.ClientRelayMessageRequest{
+		PeerID:  []byte(counterparty),
+		Message: message,
 	}
-	_ = stream.CloseWrite()
-
-	responseMessage := &protocolsPb.Response{}
-	if err := codec.ReadLengthPrefixedMessage(stream, responseMessage); err != nil {
+	if err := codec.WriteLengthPrefixedMessage(stream, req); err != nil {
 		return nil, err
 	}
 
-	// Switch on the result type
-	switch result := responseMessage.Response.(type) {
-	case *protocolsPb.Response_AddrResponse:
-		// Convert bytes back to multiaddrs
-		addrs := make([]ma.Multiaddr, len(result.AddrResponse.Addrs))
-		for i, addrBytes := range result.AddrResponse.Addrs {
-			addr, err := ma.NewMultiaddrBytes(addrBytes)
-			if err != nil {
-				return nil, fmt.Errorf("failed to parse multiaddr: %w", err)
-			}
-			addrs[i] = addr
-		}
-		return addrs, nil
+	resp := &protocolsPb.ClientRelayMessageResponse{}
+	if err := codec.ReadLengthPrefixedMessage(stream, resp); err != nil {
+		return nil, err
+	}
 
-	case *protocolsPb.Response_Error:
-		if msg := result.Error.GetMessage(); msg != "" {
-			return nil, fmt.Errorf("server error: %s", msg)
+	if resp.GetError() != nil {
+		errObj := resp.GetError()
+		switch {
+		case errObj.GetCpNotFoundError() != nil:
+			return nil, errRelayNotFound
+		case errObj.GetCpRejectedError() != nil:
+			return nil, errRelayRejected
+		default:
+			return nil, fmt.Errorf("%w: %v", errRelayOther, errObj)
 		}
-		if result.Error.GetUnauthorized() != nil {
-			return nil, errUnauthorized
-		}
-		return nil, fmt.Errorf("server error")
+	}
 
+	return resp.GetMessage(), nil
+}
+
+// acceptRelay waits for an incoming TatankaRelayMessageRequest and responds
+// with the provided response payload.
+func (tc *testClient) acceptRelay(ctx context.Context, response []byte) ([]byte, error) {
+	select {
+	case rr := <-tc.relays:
+		resp := &protocolsPb.TatankaRelayMessageResponse{
+			Response: &protocolsPb.TatankaRelayMessageResponse_Message{
+				Message: response,
+			},
+		}
+		if err := codec.WriteLengthPrefixedMessage(rr.stream, resp); err != nil {
+			_ = rr.stream.Close()
+			return nil, err
+		}
+		_ = rr.stream.Close()
+		return rr.req.Message, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// rejectRelay responds to a TatankaRelayMessageRequest with a rejection.
+func (tc *testClient) rejectRelay(ctx context.Context) error {
+	select {
+	case rr := <-tc.relays:
+		resp := &protocolsPb.TatankaRelayMessageResponse{
+			Response: &protocolsPb.TatankaRelayMessageResponse_Error{
+				Error: &protocolsPb.Error{
+					Error: &protocolsPb.Error_CpRejectedError{
+						CpRejectedError: &protocolsPb.CounterpartyRejectedError{},
+					},
+				},
+			},
+		}
+		if err := codec.WriteLengthPrefixedMessage(rr.stream, resp); err != nil {
+			_ = rr.stream.Close()
+			return err
+		}
+		_ = rr.stream.Close()
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (tc *testClient) handleIncomingRelay(s network.Stream) {
+	req := &protocolsPb.TatankaRelayMessageRequest{}
+	if err := codec.ReadLengthPrefixedMessage(s, req); err != nil {
+		_ = s.Close()
+		return
+	}
+
+	select {
+	case tc.relays <- relayRequest{stream: s, req: req}:
 	default:
-		return nil, fmt.Errorf("no success or error in response")
+		tc.t.Logf("relay channel full, closing stream")
+		_ = s.Close()
 	}
 }
 
@@ -560,6 +622,127 @@ func TestDiscoveryProtocol(t *testing.T) {
 	}
 }
 
+func TestClientRelay(t *testing.T) {
+	t.Run("across_nodes", func(t *testing.T) {
+		t.Parallel()
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		_, _, clients := fullyConnectedMeshWithClients(ctx, t, 2, 2, func(i int) int { return i })
+		checkRelayHappyPath(ctx, t, clients[0], clients[1])
+	})
+
+	t.Run("same_node", func(t *testing.T) {
+		t.Parallel()
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		_, _, clients := fullyConnectedMeshWithClients(ctx, t, 1, 2, func(i int) int { return 0 })
+		checkRelayHappyPath(ctx, t, clients[0], clients[1])
+	})
+
+	t.Run("counterparty_not_found", func(t *testing.T) {
+		t.Parallel()
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		_, _, clients := fullyConnectedMeshWithClients(ctx, t, 1, 1, func(i int) int { return 0 })
+		initiator := clients[0]
+
+		// Generate a random peer ID not present.
+		_, pub, err := crypto.GenerateKeyPair(crypto.Ed25519, -1)
+		if err != nil {
+			t.Fatalf("failed generating peer key: %v", err)
+		}
+		missing, err := peer.IDFromPublicKey(pub)
+		if err != nil {
+			t.Fatalf("failed deriving peer ID: %v", err)
+		}
+
+		_, err = initiator.relayMessage(ctx, missing, []byte("hi"))
+		if !errors.Is(err, errRelayNotFound) {
+			t.Fatalf("expected counterparty not found error, got %v", err)
+		}
+	})
+
+	t.Run("direct_reject", func(t *testing.T) {
+		t.Parallel()
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		_, _, clients := fullyConnectedMeshWithClients(ctx, t, 1, 2, func(i int) int { return 0 })
+		initiator := clients[0]
+		counterparty := clients[1]
+
+		// Make counterparty reject.
+		go func() {
+			_ = counterparty.rejectRelay(ctx)
+		}()
+
+		if _, err := initiator.relayMessage(ctx, counterparty.host.ID(), []byte("hi")); !errors.Is(err, errRelayRejected) {
+			t.Fatalf("expected rejection error, got %v", err)
+		}
+	})
+
+	t.Run("forward_reject", func(t *testing.T) {
+		t.Parallel()
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		_, _, clients := fullyConnectedMeshWithClients(ctx, t, 2, 2, func(i int) int { return i })
+		initiator := clients[0]
+		counterparty := clients[1]
+
+		// Make counterparty reject.
+		go func() {
+			_ = counterparty.rejectRelay(ctx)
+		}()
+
+		if _, err := initiator.relayMessage(ctx, counterparty.host.ID(), []byte("hi")); !errors.Is(err, errRelayRejected) {
+			t.Fatalf("expected rejection error, got %v", err)
+		}
+	})
+}
+
+// checkRelayHappyPath checks that sending a message between two clients works.
+func checkRelayHappyPath(ctx context.Context, t *testing.T, initiator, counterparty *testClient) {
+	t.Helper()
+
+	// Allow gossip to propagate.
+	time.Sleep(time.Second)
+
+	errCh := make(chan error, 1)
+	respCh := make(chan []byte, 1)
+	go func() {
+		reqMsg, err := counterparty.acceptRelay(ctx, []byte("pong from counterparty"))
+		if err != nil {
+			errCh <- err
+			return
+		}
+		if string(reqMsg) != "ping from initiator" {
+			errCh <- fmt.Errorf("unexpected request message: %q", string(reqMsg))
+			return
+		}
+		respCh <- []byte("pong from counterparty")
+	}()
+
+	resp, err := initiator.relayMessage(ctx, counterparty.host.ID(), []byte("ping from initiator"))
+	if err != nil {
+		t.Fatalf("initiator failed to relay message: %v", err)
+	}
+
+	select {
+	case err := <-errCh:
+		t.Fatalf("counterparty relay error: %v", err)
+	case want := <-respCh:
+		if string(resp) != string(want) {
+			t.Fatalf("unexpected response: got %q want %q", string(resp), string(want))
+		}
+	case <-ctx.Done():
+		t.Fatalf("timeout waiting for relay: %v", ctx.Err())
+	}
+}
+
 func TestClientSubscriptionAndBroadcast(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -724,47 +907,4 @@ func TestClientSubscriptionEvents(t *testing.T) {
 		t.Fatalf("Subscribe failed: %v", err)
 	}
 	verifyEvents([]*testClient{clients[0], clients[2]}, clients[3], true)
-}
-
-func TestClientAddrSharing(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	const numMeshNodes = 3
-	const numClients = 3
-	_, _, clients := fullyConnectedMeshWithClients(ctx, t, numMeshNodes, numClients, func(i int) int {
-		return i
-	})
-
-	multiAddrsEqual := func(addrs1, addrs2 []ma.Multiaddr) bool {
-		if len(addrs1) != len(addrs2) {
-			return false
-		}
-		for i := range addrs1 {
-			if !addrs1[i].Equal(addrs2[i]) {
-				return false
-			}
-		}
-		return true
-	}
-
-	addr, err := clients[0].GetPeerAddr(ctx, clients[1].host.ID())
-	if err != nil {
-		t.Fatalf("Failed to get client 1 addr: %v", err)
-	}
-	if !multiAddrsEqual(addr, clients[1].host.Addrs()) {
-		t.Fatalf("Client 1 addr does not match expected addr. Got %v, expected %v", addr, clients[1].host.Addrs())
-	}
-
-	addr, err = clients[0].GetPeerAddr(ctx, clients[2].host.ID())
-	if err != nil {
-		t.Fatalf("Failed to get client 2 addr: %v", err)
-	}
-	if !multiAddrsEqual(addr, clients[2].host.Addrs()) {
-		t.Fatalf("Client 2 addr does not match expected addr. Got %v, expected %v", addr, clients[2].host.Addrs())
-	}
-
-	for i := range clients {
-		clients[i].Close()
-	}
 }

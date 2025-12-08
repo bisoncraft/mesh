@@ -43,6 +43,9 @@ const (
 	// privateKeyFileName is the name of the file that contains the private key
 	// for the tatanka node.
 	privateKeyFileName = "p.key"
+
+	// forwardRelayProtocol is the protocol used to forward a relay message between two tatanka nodes.
+	forwardRelayProtocol = "/tatanka/forward-relay/1.0.0"
 )
 
 // Config is the configuration for the tatanka node
@@ -170,15 +173,9 @@ func (t *TatankaNode) Run(ctx context.Context) error {
 	}
 
 	t.pushStreamManager = newPushStreamManager(t.config.Logger, func(client peer.ID, timestamp time.Time, connected bool) {
-		var addrs []ma.Multiaddr
-		if connected {
-			addrs = t.node.Peerstore().Addrs(client)
-		}
-
 		err := t.gossipSub.publishClientConnectionMessage(ctx, &clientConnectionUpdate{
 			clientID:   client,
 			reporterID: t.node.ID(),
-			addrs:      addrs,
 			timestamp:  timestamp.UnixMilli(),
 			connected:  connected,
 		})
@@ -273,10 +270,11 @@ func getOrCreatePrivateKey(filePath string) (crypto.PrivKey, error) {
 func (t *TatankaNode) setupStreamHandlers() {
 	t.setStreamHandler(protocols.PostBondsProtocol, t.handlePostBonds, requireNoPermission)
 	t.setStreamHandler(protocols.DiscoveryProtocol, t.handleDiscovery, requireAny(t.isManifestPeer, t.requireBonds))
+	t.setStreamHandler(forwardRelayProtocol, t.handleForwardRelay, t.isManifestPeer)
 	t.setStreamHandler(protocols.ClientSubscribeProtocol, t.handleClientSubscribe, t.requireBonds)
 	t.setStreamHandler(protocols.ClientPublishProtocol, t.handleClientPublish, t.requireBonds)
 	t.setStreamHandler(protocols.ClientPushProtocol, t.handleClientPush, t.requireBonds)
-	t.setStreamHandler(protocols.ClientAddrProtocol, t.handleClientAddr, t.requireBonds)
+	t.setStreamHandler(protocols.ClientRelayMessageProtocol, t.handleClientRelayMessage, t.requireBonds)
 }
 
 // discoverPeers queries the given peer for the list of other tatanka nodes that

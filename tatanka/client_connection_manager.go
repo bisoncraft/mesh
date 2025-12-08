@@ -5,13 +5,11 @@ import (
 
 	"github.com/decred/slog"
 	"github.com/libp2p/go-libp2p/core/peer"
-	ma "github.com/multiformats/go-multiaddr"
 )
 
 // clientConnectionInfo contains information about a client's connection to
 // a tatanka node.
 type clientConnectionInfo struct {
-	addrs     []ma.Multiaddr
 	connected bool
 	timestamp int64
 }
@@ -53,29 +51,28 @@ func (c *clientConnectionManager) updateClientConnectionInfo(update *clientConne
 	}
 
 	c.clientConnectionInfo[update.clientID][update.reporterID] = &clientConnectionInfo{
-		addrs:     update.addrs,
 		connected: update.connected,
 		timestamp: update.timestamp,
 	}
 }
 
-// getAddrForClient returns the addresses of a client that are reachable from the
-// tatanka node. This can be used to share the client's address with other clients
-// that want to connect directly to the client.
-func (c *clientConnectionManager) getAddrForClient(client peer.ID) []ma.Multiaddr {
+// getTatankaPeersForClient returns the tatanka peer IDs that have reported
+// that the client is connected to them.
+func (c *clientConnectionManager) getTatankaPeersForClient(client peer.ID) []peer.ID {
 	c.mtx.RLock()
 	defer c.mtx.RUnlock()
 
-	addrs, ok := c.clientConnectionInfo[client]
-	if !ok {
+	reporters := c.clientConnectionInfo[client]
+	if len(reporters) == 0 {
 		return nil
 	}
 
-	for _, addrInfo := range addrs {
-		if addrInfo.connected {
-			return addrInfo.addrs
+	peers := make([]peer.ID, 0, len(reporters))
+	for reporterID, info := range reporters {
+		if info != nil && info.connected {
+			peers = append(peers, reporterID)
 		}
 	}
 
-	return nil
+	return peers
 }

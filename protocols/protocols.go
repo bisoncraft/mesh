@@ -17,9 +17,13 @@ const (
 	// to *receive* messages from the server.
 	ClientPushProtocol = "/tatanka/push/1.0.0"
 
-	// ClientAddrProtocol is used by the client to get the address of another
-	// client.
-	ClientAddrProtocol = "/tatanka/addrs/1.0.0"
+	// ClientRelayMessageProtocol is used by a client to send a message to another
+	// client through the mesh and receive a response.
+	ClientRelayMessageProtocol = "/tatanka/client-relay-message/1.0.0"
+
+	// TatankaRelayMessageProtocol is used by a tatanka node to deliver a relay
+	// message to a client on behalf of another client.
+	TatankaRelayMessageProtocol = "/tatanka/tatanka-relay-message/1.0.0"
 
 	// DiscoveryProtocol is used by clients and other tatanka nodes to query the
 	// other tatanka nodes that the node is connected to.

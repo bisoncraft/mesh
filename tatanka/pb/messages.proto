@@ -8,8 +8,27 @@ option go_package = "github.com/martonp/tatanka-mesh/tatanka/pb";
 message ClientConnectionMsg {
   bytes id = 1;           // peer.ID serialized as bytes
   bytes reporter_id = 2;  // peer.ID serialized as bytes
-  repeated bytes addrs = 3; // multiaddrs serialized as bytes
-  bool connected = 4;
-  int64 timestamp = 5;
+  bool connected = 3;
+  int64 timestamp = 4;
 }
 
+message TatankaForwardRelayRequest {
+  bytes initiator_id = 1; // peer.ID serialized as bytes
+  bytes counterparty_id = 2; // peer.ID serialized as bytes
+  bytes message = 3;
+}
+
+message TatankaForwardRelayResponse {
+  oneof response {
+    bytes success = 1;
+    ClientNotFound client_not_found = 2;
+    ClientRejected client_rejected = 3;
+    string error = 4;
+  }
+
+  message ClientNotFound {
+  }
+
+  message ClientRejected {
+  }
+}

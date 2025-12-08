@@ -24,6 +24,18 @@ message Success {
 message UnauthorizedError {
 }
 
+// CounterpartyNotFoundError is returned during a client initiate relay request
+// to indicate that the relay was unable to be setup because the counterparty
+// was not found.
+message CounterpartyNotFoundError {
+}
+
+// CounterpartyRejectedError is returned during a client initiate relay request
+// to indicate that the relay was unable to be setup because the counterparty
+// rejected the relay request.
+message CounterpartyRejectedError {
+}
+
 // PostBondError is a type containing specific error information for the
 // PostBonds protocol.
 message PostBondError {
@@ -35,6 +47,8 @@ message Error {
     UnauthorizedError unauthorized = 1;
     PostBondError post_bond_error = 2;
     string message = 3;
+    CounterpartyNotFoundError cp_not_found_error = 4;
+    CounterpartyRejectedError cp_rejected_error = 5;
   }
 }
 
@@ -108,3 +122,34 @@ message PeerInfo {
 message DiscoveryResponse {
   repeated PeerInfo peers = 1;
 }
+
+// ClientRelayMessageRequest is a client originating request to send a
+// message to another client.
+message ClientRelayMessageRequest {
+  bytes peerID = 1; // peer.ID serialized as bytes
+  bytes message = 2;
+}
+
+// ClientRelayMessageResponse is the response to a ClientRelayMessageRequest.
+message ClientRelayMessageResponse {
+  oneof response {
+    bytes message = 1;
+    Error error = 2;
+  }
+}
+
+// TatankaRelayMessageRequest is a tatanka node originating request to a client
+// to notify them that another client is sending them a message.
+message TatankaRelayMessageRequest {
+  bytes peerID = 1; // peer.ID serialized as bytes
+  bytes message = 2;
+}
+
+// TatankaRelayMessageResponse is the response to a TatankaRelayMessageRequest.
+message TatankaRelayMessageResponse {
+  oneof response {
+    bytes message = 1;
+    Error error = 2;
+  }
+}
+

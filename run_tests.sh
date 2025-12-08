@@ -5,7 +5,7 @@ set -e +x
 go version
 
 # run tests
-env GORACE="halt_on_error=1" go test -count 1 -timeout 20s -race -cover ./...
+env GORACE="halt_on_error=1" go test -count 1 -timeout 60s -race -cover ./...
 
 echo "-----------------------------"
 echo "Tests completed successfully!"

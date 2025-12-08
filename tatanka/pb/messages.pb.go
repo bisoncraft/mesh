@@ -26,9 +26,8 @@ type ClientConnectionMsg struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Id            []byte                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`                                   // peer.ID serialized as bytes
 	ReporterId    []byte                 `protobuf:"bytes,2,opt,name=reporter_id,json=reporterId,proto3" json:"reporter_id,omitempty"` // peer.ID serialized as bytes
-	Addrs         [][]byte               `protobuf:"bytes,3,rep,name=addrs,proto3" json:"addrs,omitempty"`                             // multiaddrs serialized as bytes
-	Connected     bool                   `protobuf:"varint,4,opt,name=connected,proto3" json:"connected,omitempty"`
-	Timestamp     int64                  `protobuf:"varint,5,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
+	Connected     bool                   `protobuf:"varint,3,opt,name=connected,proto3" json:"connected,omitempty"`
+	Timestamp     int64                  `protobuf:"varint,4,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -77,13 +76,6 @@ func (x *ClientConnectionMsg) GetReporterId() []byte {
 	return nil
 }
 
-func (x *ClientConnectionMsg) GetAddrs() [][]byte {
-	if x != nil {
-		return x.Addrs
-	}
-	return nil
-}
-
 func (x *ClientConnectionMsg) GetConnected() bool {
 	if x != nil {
 		return x.Connected
@@ -98,18 +90,276 @@ func (x *ClientConnectionMsg) GetTimestamp() int64 {
 	return 0
 }
 
+type TatankaForwardRelayRequest struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	InitiatorId    []byte                 `protobuf:"bytes,1,opt,name=initiator_id,json=initiatorId,proto3" json:"initiator_id,omitempty"`          // peer.ID serialized as bytes
+	CounterpartyId []byte                 `protobuf:"bytes,2,opt,name=counterparty_id,json=counterpartyId,proto3" json:"counterparty_id,omitempty"` // peer.ID serialized as bytes
+	Message        []byte                 `protobuf:"bytes,3,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *TatankaForwardRelayRequest) Reset() {
+	*x = TatankaForwardRelayRequest{}
+	mi := &file_messages_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TatankaForwardRelayRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TatankaForwardRelayRequest) ProtoMessage() {}
+
+func (x *TatankaForwardRelayRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_messages_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TatankaForwardRelayRequest.ProtoReflect.Descriptor instead.
+func (*TatankaForwardRelayRequest) Descriptor() ([]byte, []int) {
+	return file_messages_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *TatankaForwardRelayRequest) GetInitiatorId() []byte {
+	if x != nil {
+		return x.InitiatorId
+	}
+	return nil
+}
+
+func (x *TatankaForwardRelayRequest) GetCounterpartyId() []byte {
+	if x != nil {
+		return x.CounterpartyId
+	}
+	return nil
+}
+
+func (x *TatankaForwardRelayRequest) GetMessage() []byte {
+	if x != nil {
+		return x.Message
+	}
+	return nil
+}
+
+type TatankaForwardRelayResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Types that are valid to be assigned to Response:
+	//
+	//	*TatankaForwardRelayResponse_Success
+	//	*TatankaForwardRelayResponse_ClientNotFound_
+	//	*TatankaForwardRelayResponse_ClientRejected_
+	//	*TatankaForwardRelayResponse_Error
+	Response      isTatankaForwardRelayResponse_Response `protobuf_oneof:"response"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TatankaForwardRelayResponse) Reset() {
+	*x = TatankaForwardRelayResponse{}
+	mi := &file_messages_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TatankaForwardRelayResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TatankaForwardRelayResponse) ProtoMessage() {}
+
+func (x *TatankaForwardRelayResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_messages_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TatankaForwardRelayResponse.ProtoReflect.Descriptor instead.
+func (*TatankaForwardRelayResponse) Descriptor() ([]byte, []int) {
+	return file_messages_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *TatankaForwardRelayResponse) GetResponse() isTatankaForwardRelayResponse_Response {
+	if x != nil {
+		return x.Response
+	}
+	return nil
+}
+
+func (x *TatankaForwardRelayResponse) GetSuccess() []byte {
+	if x != nil {
+		if x, ok := x.Response.(*TatankaForwardRelayResponse_Success); ok {
+			return x.Success
+		}
+	}
+	return nil
+}
+
+func (x *TatankaForwardRelayResponse) GetClientNotFound() *TatankaForwardRelayResponse_ClientNotFound {
+	if x != nil {
+		if x, ok := x.Response.(*TatankaForwardRelayResponse_ClientNotFound_); ok {
+			return x.ClientNotFound
+		}
+	}
+	return nil
+}
+
+func (x *TatankaForwardRelayResponse) GetClientRejected() *TatankaForwardRelayResponse_ClientRejected {
+	if x != nil {
+		if x, ok := x.Response.(*TatankaForwardRelayResponse_ClientRejected_); ok {
+			return x.ClientRejected
+		}
+	}
+	return nil
+}
+
+func (x *TatankaForwardRelayResponse) GetError() string {
+	if x != nil {
+		if x, ok := x.Response.(*TatankaForwardRelayResponse_Error); ok {
+			return x.Error
+		}
+	}
+	return ""
+}
+
+type isTatankaForwardRelayResponse_Response interface {
+	isTatankaForwardRelayResponse_Response()
+}
+
+type TatankaForwardRelayResponse_Success struct {
+	Success []byte `protobuf:"bytes,1,opt,name=success,proto3,oneof"`
+}
+
+type TatankaForwardRelayResponse_ClientNotFound_ struct {
+	ClientNotFound *TatankaForwardRelayResponse_ClientNotFound `protobuf:"bytes,2,opt,name=client_not_found,json=clientNotFound,proto3,oneof"`
+}
+
+type TatankaForwardRelayResponse_ClientRejected_ struct {
+	ClientRejected *TatankaForwardRelayResponse_ClientRejected `protobuf:"bytes,3,opt,name=client_rejected,json=clientRejected,proto3,oneof"`
+}
+
+type TatankaForwardRelayResponse_Error struct {
+	Error string `protobuf:"bytes,4,opt,name=error,proto3,oneof"`
+}
+
+func (*TatankaForwardRelayResponse_Success) isTatankaForwardRelayResponse_Response() {}
+
+func (*TatankaForwardRelayResponse_ClientNotFound_) isTatankaForwardRelayResponse_Response() {}
+
+func (*TatankaForwardRelayResponse_ClientRejected_) isTatankaForwardRelayResponse_Response() {}
+
+func (*TatankaForwardRelayResponse_Error) isTatankaForwardRelayResponse_Response() {}
+
+type TatankaForwardRelayResponse_ClientNotFound struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TatankaForwardRelayResponse_ClientNotFound) Reset() {
+	*x = TatankaForwardRelayResponse_ClientNotFound{}
+	mi := &file_messages_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TatankaForwardRelayResponse_ClientNotFound) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TatankaForwardRelayResponse_ClientNotFound) ProtoMessage() {}
+
+func (x *TatankaForwardRelayResponse_ClientNotFound) ProtoReflect() protoreflect.Message {
+	mi := &file_messages_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TatankaForwardRelayResponse_ClientNotFound.ProtoReflect.Descriptor instead.
+func (*TatankaForwardRelayResponse_ClientNotFound) Descriptor() ([]byte, []int) {
+	return file_messages_proto_rawDescGZIP(), []int{2, 0}
+}
+
+type TatankaForwardRelayResponse_ClientRejected struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TatankaForwardRelayResponse_ClientRejected) Reset() {
+	*x = TatankaForwardRelayResponse_ClientRejected{}
+	mi := &file_messages_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TatankaForwardRelayResponse_ClientRejected) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TatankaForwardRelayResponse_ClientRejected) ProtoMessage() {}
+
+func (x *TatankaForwardRelayResponse_ClientRejected) ProtoReflect() protoreflect.Message {
+	mi := &file_messages_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TatankaForwardRelayResponse_ClientRejected.ProtoReflect.Descriptor instead.
+func (*TatankaForwardRelayResponse_ClientRejected) Descriptor() ([]byte, []int) {
+	return file_messages_proto_rawDescGZIP(), []int{2, 1}
+}
+
 var File_messages_proto protoreflect.FileDescriptor
 
 const file_messages_proto_rawDesc = "" +
 	"\n" +
-	"\x0emessages.proto\x12\x02pb\"\x98\x01\n" +
+	"\x0emessages.proto\x12\x02pb\"\x82\x01\n" +
 	"\x13ClientConnectionMsg\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\fR\x02id\x12\x1f\n" +
 	"\vreporter_id\x18\x02 \x01(\fR\n" +
-	"reporterId\x12\x14\n" +
-	"\x05addrs\x18\x03 \x03(\fR\x05addrs\x12\x1c\n" +
-	"\tconnected\x18\x04 \x01(\bR\tconnected\x12\x1c\n" +
-	"\ttimestamp\x18\x05 \x01(\x03R\ttimestampB,Z*github.com/martonp/tatanka-mesh/tatanka/pbb\x06proto3"
+	"reporterId\x12\x1c\n" +
+	"\tconnected\x18\x03 \x01(\bR\tconnected\x12\x1c\n" +
+	"\ttimestamp\x18\x04 \x01(\x03R\ttimestamp\"\x82\x01\n" +
+	"\x1aTatankaForwardRelayRequest\x12!\n" +
+	"\finitiator_id\x18\x01 \x01(\fR\vinitiatorId\x12'\n" +
+	"\x0fcounterparty_id\x18\x02 \x01(\fR\x0ecounterpartyId\x12\x18\n" +
+	"\amessage\x18\x03 \x01(\fR\amessage\"\xb8\x02\n" +
+	"\x1bTatankaForwardRelayResponse\x12\x1a\n" +
+	"\asuccess\x18\x01 \x01(\fH\x00R\asuccess\x12Z\n" +
+	"\x10client_not_found\x18\x02 \x01(\v2..pb.TatankaForwardRelayResponse.ClientNotFoundH\x00R\x0eclientNotFound\x12Y\n" +
+	"\x0fclient_rejected\x18\x03 \x01(\v2..pb.TatankaForwardRelayResponse.ClientRejectedH\x00R\x0eclientRejected\x12\x16\n" +
+	"\x05error\x18\x04 \x01(\tH\x00R\x05error\x1a\x10\n" +
+	"\x0eClientNotFound\x1a\x10\n" +
+	"\x0eClientRejectedB\n" +
+	"\n" +
+	"\bresponseB,Z*github.com/martonp/tatanka-mesh/tatanka/pbb\x06proto3"
 
 var (
 	file_messages_proto_rawDescOnce sync.Once
@@ -123,16 +373,22 @@ func file_messages_proto_rawDescGZIP() []byte {
 	return file_messages_proto_rawDescData
 }
 
-var file_messages_proto_msgTypes = make([]protoimpl.MessageInfo, 1)
+var file_messages_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
 var file_messages_proto_goTypes = []any{
-	(*ClientConnectionMsg)(nil), // 0: pb.ClientConnectionMsg
+	(*ClientConnectionMsg)(nil),                        // 0: pb.ClientConnectionMsg
+	(*TatankaForwardRelayRequest)(nil),                 // 1: pb.TatankaForwardRelayRequest
+	(*TatankaForwardRelayResponse)(nil),                // 2: pb.TatankaForwardRelayResponse
+	(*TatankaForwardRelayResponse_ClientNotFound)(nil), // 3: pb.TatankaForwardRelayResponse.ClientNotFound
+	(*TatankaForwardRelayResponse_ClientRejected)(nil), // 4: pb.TatankaForwardRelayResponse.ClientRejected
 }
 var file_messages_proto_depIdxs = []int32{
-	0, // [0:0] is the sub-list for method output_type
-	0, // [0:0] is the sub-list for method input_type
-	0, // [0:0] is the sub-list for extension type_name
-	0, // [0:0] is the sub-list for extension extendee
-	0, // [0:0] is the sub-list for field type_name
+	3, // 0: pb.TatankaForwardRelayResponse.client_not_found:type_name -> pb.TatankaForwardRelayResponse.ClientNotFound
+	4, // 1: pb.TatankaForwardRelayResponse.client_rejected:type_name -> pb.TatankaForwardRelayResponse.ClientRejected
+	2, // [2:2] is the sub-list for method output_type
+	2, // [2:2] is the sub-list for method input_type
+	2, // [2:2] is the sub-list for extension type_name
+	2, // [2:2] is the sub-list for extension extendee
+	0, // [0:2] is the sub-list for field type_name
 }
 
 func init() { file_messages_proto_init() }
@@ -140,13 +396,19 @@ func file_messages_proto_init() {
 	if File_messages_proto != nil {
 		return
 	}
+	file_messages_proto_msgTypes[2].OneofWrappers = []any{
+		(*TatankaForwardRelayResponse_Success)(nil),
+		(*TatankaForwardRelayResponse_ClientNotFound_)(nil),
+		(*TatankaForwardRelayResponse_ClientRejected_)(nil),
+		(*TatankaForwardRelayResponse_Error)(nil),
+	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_messages_proto_rawDesc), len(file_messages_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   1,
+			NumMessages:   5,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

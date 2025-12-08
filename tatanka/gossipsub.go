@@ -11,7 +11,6 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	protocolsPb "github.com/martonp/tatanka-mesh/protocols/pb"
 	pb "github.com/martonp/tatanka-mesh/tatanka/pb"
-	ma "github.com/multiformats/go-multiaddr"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/protobuf/proto"
 )
@@ -29,7 +28,6 @@ const (
 type clientConnectionUpdate struct {
 	clientID   peer.ID
 	reporterID peer.ID
-	addrs      []ma.Multiaddr
 	timestamp  int64
 	connected  bool
 }
@@ -45,40 +43,18 @@ func newClientConnectionUpdateFromPb(msg *pb.ClientConnectionMsg) (*clientConnec
 		return nil, fmt.Errorf("failed to parse reporter ID: %w", err)
 	}
 
-	var addrs []ma.Multiaddr
-	if msg.Addrs != nil {
-		addrs = make([]ma.Multiaddr, len(msg.Addrs))
-		for i, addrBytes := range msg.Addrs {
-			addr, err := ma.NewMultiaddrBytes(addrBytes)
-			if err != nil {
-				return nil, fmt.Errorf("failed to parse multiaddr: %w", err)
-			}
-			addrs[i] = addr
-		}
-	}
-
 	return &clientConnectionUpdate{
 		clientID:   clientID,
 		reporterID: reporterID,
-		addrs:      addrs,
 		timestamp:  msg.Timestamp,
 		connected:  msg.Connected,
 	}, nil
 }
 
 func (c *clientConnectionUpdate) toPb() *pb.ClientConnectionMsg {
-	var addrBytes [][]byte
-	if c.addrs != nil {
-		addrBytes = make([][]byte, len(c.addrs))
-		for i, addr := range c.addrs {
-			addrBytes[i] = addr.Bytes()
-		}
-	}
-
 	return &pb.ClientConnectionMsg{
 		Id:         []byte(c.clientID),
 		ReporterId: []byte(c.reporterID),
-		Addrs:      addrBytes,
 		Timestamp:  c.timestamp,
 		Connected:  c.connected,
 	}

@@ -8,7 +8,9 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/martonp/tatanka-mesh/bond"
 	"github.com/martonp/tatanka-mesh/codec"
+	"github.com/martonp/tatanka-mesh/protocols"
 	protocolsPb "github.com/martonp/tatanka-mesh/protocols/pb"
+	"github.com/martonp/tatanka-mesh/tatanka/pb"
 	ma "github.com/multiformats/go-multiaddr"
 )
 
@@ -146,49 +148,6 @@ func (t *TatankaNode) handleClientPublish(s network.Stream) {
 	}
 }
 
-// handleClientAddr handles a request by a client to get the addresses of another
-// client. This will allow them to initiate p2p communication with that client.
-func (t *TatankaNode) handleClientAddr(s network.Stream) {
-	defer func() { _ = s.Close() }()
-
-	client := s.Conn().RemotePeer()
-
-	sendErrorResponse := func(err error) {
-		responseMessage := pbResponseError(err)
-		if werr := codec.WriteLengthPrefixedMessage(s, responseMessage); werr != nil {
-			t.log.Errorf("Failed to write length prefixed message: %v.", werr)
-		}
-	}
-
-	requestMessage := &protocolsPb.ClientAddrRequest{}
-	if err := codec.ReadLengthPrefixedMessage(s, requestMessage); err != nil {
-		sendErrorResponse(fmt.Errorf("failed to read/unmarshal addr request message: %w", err))
-		return
-	}
-
-	requestedPeerID, err := peer.IDFromBytes(requestMessage.Id)
-	if err != nil {
-		sendErrorResponse(fmt.Errorf("failed to parse peer ID from request: %w", err))
-		return
-	}
-
-	addr := t.clientConnectionManager.getAddrForClient(requestedPeerID)
-	if addr == nil {
-		sendErrorResponse(fmt.Errorf("peer not found"))
-		return
-	}
-
-	addrBytes := make([][]byte, len(addr))
-	for i, a := range addr {
-		addrBytes[i] = a.Bytes()
-	}
-
-	responseMessage := pbResponseClientAddr(addrBytes)
-	if err := codec.WriteLengthPrefixedMessage(s, responseMessage); err != nil {
-		t.log.Errorf("Failed to write addr response message to client %s: %v.", client.ShortString(), err)
-	}
-}
-
 func (t *TatankaNode) handlePostBonds(s network.Stream) {
 	defer func() { _ = s.Close() }()
 
@@ -238,6 +197,189 @@ func (t *TatankaNode) handlePostBonds(s network.Stream) {
 	if err := codec.WriteLengthPrefixedMessage(s, successResponse); err != nil {
 		t.log.Errorf("Failed to write post bond success response: %v.", err)
 	}
+}
+
+// relayMessageToCounterparty sends a relay message to a counterparty client and
+// returns the response payload or a protocol error.
+func (t *TatankaNode) relayMessageToCounterparty(counterpartyID, initiatorID peer.ID, message []byte) (respData []byte, protoErr *protocolsPb.Error, err error) {
+	counterpartyStream, err := t.node.NewStream(context.Background(), counterpartyID, protocols.TatankaRelayMessageProtocol)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer func() { _ = counterpartyStream.Close() }()
+
+	req := &protocolsPb.TatankaRelayMessageRequest{
+		PeerID:  []byte(initiatorID),
+		Message: message,
+	}
+	if err := codec.WriteLengthPrefixedMessage(counterpartyStream, req); err != nil {
+		return nil, nil, err
+	}
+
+	counterpartyResp := &protocolsPb.TatankaRelayMessageResponse{}
+	if err := codec.ReadLengthPrefixedMessage(counterpartyStream, counterpartyResp); err != nil {
+		return nil, nil, err
+	}
+
+	if errResp := counterpartyResp.GetError(); errResp != nil {
+		return nil, errResp, nil
+	}
+
+	return counterpartyResp.GetMessage(), nil, nil
+}
+
+// handleClientRelayMessage processes a client relay message request and returns
+// the counterparty's response payload or an error, then closes the stream.
+func (t *TatankaNode) handleClientRelayMessage(s network.Stream) {
+	defer func() { _ = s.Close() }()
+
+	client := s.Conn().RemotePeer()
+
+	requestMessage := &protocolsPb.ClientRelayMessageRequest{}
+	if err := codec.ReadLengthPrefixedMessage(s, requestMessage); err != nil {
+		t.log.Debugf("Failed to read/unmarshal relay message request from client %s: %v.", client.ShortString(), err)
+		return
+	}
+
+	counterpartyID, err := peer.IDFromBytes(requestMessage.PeerID)
+	if err != nil {
+		t.log.Debugf("Failed to parse counterparty ID from request: %v.", err)
+		return
+	}
+
+	writeResponse := func(resp *protocolsPb.ClientRelayMessageResponse) {
+		if err := codec.WriteLengthPrefixedMessage(s, resp); err != nil {
+			t.log.Warnf("Failed to write relay message response to client %s: %v.", client.ShortString(), err)
+		}
+	}
+
+	if t.node.Network().Connectedness(counterpartyID) == network.Connected {
+		respData, protoErr, err := t.relayMessageToCounterparty(counterpartyID, client, requestMessage.Message)
+		if err != nil {
+			writeResponse(pbClientRelayMessageErrorMessage("failed to contact counterparty client"))
+			return
+		}
+		if protoErr != nil {
+			switch {
+			case protoErr.GetCpRejectedError() != nil:
+				writeResponse(pbClientRelayMessageCounterpartyRejected())
+			case protoErr.GetCpNotFoundError() != nil:
+				writeResponse(pbClientRelayMessageCounterpartyNotFound())
+			case protoErr.GetMessage() != "":
+				writeResponse(pbClientRelayMessageErrorMessage(protoErr.GetMessage()))
+			default:
+				writeResponse(pbClientRelayMessageErrorMessage("counterparty relay failed"))
+			}
+			return
+		}
+
+		writeResponse(pbClientRelayMessageSuccess(respData))
+		return
+	}
+
+	// Counterparty is not directly connected; forward the request to a tatanka node that has the counterparty connected.
+	tatankaPeers := t.clientConnectionManager.getTatankaPeersForClient(counterpartyID)
+	if len(tatankaPeers) == 0 {
+		t.log.Debugf("No tatanka peers found for counterparty %s.", counterpartyID.ShortString())
+		writeResponse(pbClientRelayMessageCounterpartyNotFound())
+		return
+	}
+
+	tatankaPeer := tatankaPeers[0]
+	forwardStream, err := t.node.NewStream(context.Background(), tatankaPeer, forwardRelayProtocol)
+	if err != nil {
+		t.log.Warnf("Failed to open forward relay stream to tatanka peer %s: %v", tatankaPeer.ShortString(), err)
+		writeResponse(pbClientRelayMessageErrorMessage("failed to contact counterparty node"))
+		return
+	}
+	defer func() { _ = forwardStream.Close() }()
+
+	forwardReq := &pb.TatankaForwardRelayRequest{
+		InitiatorId:    []byte(client),
+		CounterpartyId: []byte(counterpartyID),
+		Message:        requestMessage.Message,
+	}
+	if err := codec.WriteLengthPrefixedMessage(forwardStream, forwardReq); err != nil {
+		t.log.Warnf("Failed to write forward relay request to tatanka peer %s: %v", tatankaPeer.ShortString(), err)
+		writeResponse(pbClientRelayMessageErrorMessage("failed to forward relay request"))
+		return
+	}
+
+	forwardResp := &pb.TatankaForwardRelayResponse{}
+	if err := codec.ReadLengthPrefixedMessage(forwardStream, forwardResp); err != nil {
+		t.log.Warnf("Failed to read forward relay response from tatanka peer %s: %v", tatankaPeer.ShortString(), err)
+		writeResponse(pbClientRelayMessageErrorMessage("failed to receive response from counterparty node"))
+		return
+	}
+
+	if errMsg := forwardResp.GetError(); errMsg != "" {
+		writeResponse(pbClientRelayMessageErrorMessage(errMsg))
+		return
+	}
+	if forwardResp.GetClientNotFound() != nil {
+		writeResponse(pbClientRelayMessageCounterpartyNotFound())
+		return
+	}
+	if forwardResp.GetClientRejected() != nil {
+		writeResponse(pbClientRelayMessageCounterpartyRejected())
+		return
+	}
+
+	writeResponse(pbClientRelayMessageSuccess(forwardResp.GetSuccess()))
+}
+
+// handleForwardRelay handles a request from another tatanka node to forward a relay message to a client.
+func (t *TatankaNode) handleForwardRelay(s network.Stream) {
+	defer func() { _ = s.Close() }()
+
+	peerID := s.Conn().RemotePeer()
+
+	requestMessage := &pb.TatankaForwardRelayRequest{}
+	if err := codec.ReadLengthPrefixedMessage(s, requestMessage); err != nil {
+		t.log.Warnf("Failed to read/unmarshal forward relay request message from peer %s: %v.", peerID.ShortString(), err)
+		return
+	}
+
+	counterpartyID, err := peer.IDFromBytes(requestMessage.CounterpartyId)
+	if err != nil {
+		t.log.Warnf("Failed to parse counterparty ID from request: %v.", err)
+		return
+	}
+
+	writeResponse := func(resp *pb.TatankaForwardRelayResponse) {
+		if err := codec.WriteLengthPrefixedMessage(s, resp); err != nil {
+			t.log.Warnf("Failed to write forward relay response to peer %s: %v", peerID.ShortString(), err)
+		}
+	}
+
+	// If the counterparty is not connected to us, return an error. Currently only one hop forwarding
+	// is supported.
+	if t.node.Network().Connectedness(counterpartyID) != network.Connected {
+		t.log.Warnf("Unable to forward relay request to counterparty %s because they are not connected to us.", counterpartyID.ShortString())
+		writeResponse(pbTatankaForwardRelayClientNotFound())
+		return
+	}
+
+	respData, protoErr, err := t.relayMessageToCounterparty(counterpartyID, peer.ID(requestMessage.InitiatorId), requestMessage.Message)
+	if err != nil {
+		writeResponse(pbTatankaForwardRelayError("failed to contact counterparty client"))
+		return
+	}
+	if protoErr != nil {
+		switch {
+		case protoErr.GetCpRejectedError() != nil:
+			writeResponse(pbTatankaForwardRelayClientRejected())
+		case protoErr.GetCpNotFoundError() != nil:
+			writeResponse(pbTatankaForwardRelayClientNotFound())
+		case protoErr.GetMessage() != "":
+			writeResponse(pbTatankaForwardRelayError(protoErr.GetMessage()))
+		default:
+			writeResponse(pbTatankaForwardRelayError("counterparty relay failed"))
+		}
+		return
+	}
+
+	writeResponse(pbTatankaForwardRelaySuccess(respData))
 }
 
 // --- Protobuf Helper Functions ---
@@ -335,6 +477,78 @@ func pbResponseSuccess() *protocolsPb.Response {
 	return &protocolsPb.Response{
 		Response: &protocolsPb.Response_Success{
 			Success: &protocolsPb.Success{},
+		},
+	}
+}
+
+func pbClientRelayMessageSuccess(message []byte) *protocolsPb.ClientRelayMessageResponse {
+	return &protocolsPb.ClientRelayMessageResponse{
+		Response: &protocolsPb.ClientRelayMessageResponse_Message{
+			Message: message,
+		},
+	}
+}
+
+func pbClientRelayMessageError(err *protocolsPb.Error) *protocolsPb.ClientRelayMessageResponse {
+	return &protocolsPb.ClientRelayMessageResponse{
+		Response: &protocolsPb.ClientRelayMessageResponse_Error{
+			Error: err,
+		},
+	}
+}
+
+func pbClientRelayMessageErrorMessage(message string) *protocolsPb.ClientRelayMessageResponse {
+	return pbClientRelayMessageError(&protocolsPb.Error{
+		Error: &protocolsPb.Error_Message{
+			Message: message,
+		},
+	})
+}
+
+func pbClientRelayMessageCounterpartyNotFound() *protocolsPb.ClientRelayMessageResponse {
+	return pbClientRelayMessageError(&protocolsPb.Error{
+		Error: &protocolsPb.Error_CpNotFoundError{
+			CpNotFoundError: &protocolsPb.CounterpartyNotFoundError{},
+		},
+	})
+}
+
+func pbClientRelayMessageCounterpartyRejected() *protocolsPb.ClientRelayMessageResponse {
+	return pbClientRelayMessageError(&protocolsPb.Error{
+		Error: &protocolsPb.Error_CpRejectedError{
+			CpRejectedError: &protocolsPb.CounterpartyRejectedError{},
+		},
+	})
+}
+
+func pbTatankaForwardRelaySuccess(message []byte) *pb.TatankaForwardRelayResponse {
+	return &pb.TatankaForwardRelayResponse{
+		Response: &pb.TatankaForwardRelayResponse_Success{
+			Success: message,
+		},
+	}
+}
+
+func pbTatankaForwardRelayClientNotFound() *pb.TatankaForwardRelayResponse {
+	return &pb.TatankaForwardRelayResponse{
+		Response: &pb.TatankaForwardRelayResponse_ClientNotFound_{
+			ClientNotFound: &pb.TatankaForwardRelayResponse_ClientNotFound{},
+		},
+	}
+}
+
+func pbTatankaForwardRelayClientRejected() *pb.TatankaForwardRelayResponse {
+	return &pb.TatankaForwardRelayResponse{
+		Response: &pb.TatankaForwardRelayResponse_ClientRejected_{
+			ClientRejected: &pb.TatankaForwardRelayResponse_ClientRejected{},
+		},
+	}
+}
+
+func pbTatankaForwardRelayError(message string) *pb.TatankaForwardRelayResponse {
+	return &pb.TatankaForwardRelayResponse{
+		Response: &pb.TatankaForwardRelayResponse_Error{
+			Error: message,
 		},
 	}
 }

@@ -8,20 +8,9 @@ import (
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/peer"
 	pb "github.com/martonp/tatanka-mesh/tatanka/pb"
-	ma "github.com/multiformats/go-multiaddr"
 )
 
 func TestClientConnectionUpdateRoundTrip(t *testing.T) {
-	// Create sample multiaddrs
-	addr1, err := ma.NewMultiaddr("/ip4/127.0.0.1/tcp/1234")
-	if err != nil {
-		t.Fatalf("Failed to create multiaddr1: %v", err)
-	}
-	addr2, err := ma.NewMultiaddr("/ip6/::1/tcp/5678")
-	if err != nil {
-		t.Fatalf("Failed to create multiaddr2: %v", err)
-	}
-
 	// Create valid peer IDs from key pairs
 	_, clientPub, err := crypto.GenerateKeyPair(crypto.Ed25519, -1)
 	if err != nil {
@@ -45,7 +34,6 @@ func TestClientConnectionUpdateRoundTrip(t *testing.T) {
 	original := &clientConnectionUpdate{
 		clientID:   clientID,
 		reporterID: reporterID,
-		addrs:      []ma.Multiaddr{addr1, addr2},
 		timestamp:  time.Now().UnixMilli(),
 		connected:  true,
 	}
@@ -66,7 +54,6 @@ func TestClientConnectionUpdateRoundTrip(t *testing.T) {
 	originalEmpty := &clientConnectionUpdate{
 		clientID:   clientID,
 		reporterID: reporterID,
-		addrs:      nil,
 		timestamp:  time.Now().UnixMilli(),
 		connected:  false,
 	}
@@ -97,16 +84,5 @@ func TestClientConnectionUpdateRoundTrip(t *testing.T) {
 	_, err = newClientConnectionUpdateFromPb(badPb)
 	if err == nil {
 		t.Error("Expected error for invalid reporter ID")
-	}
-
-	// Test invalid addr bytes
-	badPb = &pb.ClientConnectionMsg{
-		Id:         []byte(clientID),
-		ReporterId: []byte(reporterID),
-		Addrs:      [][]byte{[]byte("invalid addr")},
-	}
-	_, err = newClientConnectionUpdateFromPb(badPb)
-	if err == nil {
-		t.Error("Expected error for invalid multiaddr")
 	}
 }
