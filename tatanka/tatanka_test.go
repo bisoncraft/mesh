@@ -83,7 +83,7 @@ func newTestNode(t *testing.T, ctx context.Context, h host.Host, dataDir string,
 
 // testClient simulates a client that connects to a TatankaNode.
 type testClient struct {
-	t          *testing.T
+	log        slog.Logger
 	host       host.Host
 	nodeID     peer.ID
 	pushStream network.Stream
@@ -100,14 +100,18 @@ type relayRequest struct {
 // newTestClient creates a new test client connected to a mesh node.
 // It establishes the long-running push stream and starts listening for
 // messages.
-func newTestClient(t *testing.T, ctx context.Context, h host.Host, nodeID peer.ID) (*testClient, error) {
+func newTestClient(ctx context.Context, h host.Host, nodeID peer.ID) (*testClient, error) {
+	logBackend := slog.NewBackend(os.Stdout)
+	log := logBackend.Logger(h.ID().ShortString())
+	log.SetLevel(slog.LevelDebug)
+
 	stream, err := h.NewStream(ctx, nodeID, protocols.ClientPushProtocol)
 	if err != nil {
 		return nil, err
 	}
 
 	tc := &testClient{
-		t:          t,
+		log:        log,
 		host:       h,
 		nodeID:     nodeID,
 		pushStream: stream,
@@ -131,7 +135,7 @@ func (tc *testClient) readPushMessages() {
 		// Read 4-byte length prefix
 		if _, err := io.ReadFull(tc.pushStream, lengthBuf); err != nil {
 			if !errors.Is(err, io.EOF) && !errors.Is(err, context.Canceled) && !errors.Is(err, io.ErrClosedPipe) {
-				tc.t.Logf("Error reading message length from client %s: %v", tc.nodeID.ShortString(), err)
+				tc.log.Errorf("Error reading message length from client %s: %v", tc.nodeID.ShortString(), err)
 			}
 
 			return
@@ -140,20 +144,20 @@ func (tc *testClient) readPushMessages() {
 		// Decode length (big-endian)
 		msgLen := uint32(lengthBuf[0])<<24 | uint32(lengthBuf[1])<<16 | uint32(lengthBuf[2])<<8 | uint32(lengthBuf[3])
 		if msgLen == 0 || msgLen > 10*1024*1024 { // Sanity check: max 10MB
-			tc.t.Logf("Invalid message length %d", msgLen)
+			tc.log.Errorf("Invalid message length %d", msgLen)
 			return
 		}
 
 		// Read the protobuf message
 		data := make([]byte, msgLen)
 		if _, err := io.ReadFull(tc.pushStream, data); err != nil {
-			tc.t.Logf("Error reading message data from client %s: %v", tc.nodeID.ShortString(), err)
+			tc.log.Errorf("Error reading message data from client %s: %v", tc.nodeID.ShortString(), err)
 			return
 		}
 
 		msg := &protocolsPb.PushMessage{}
 		if err := proto.Unmarshal(data, msg); err != nil {
-			tc.t.Logf("Error unmarshaling push message from client %s: %v", tc.nodeID.ShortString(), err)
+			tc.log.Errorf("Error unmarshaling push message from client %s: %v", tc.nodeID.ShortString(), err)
 			continue
 		}
 
@@ -169,7 +173,7 @@ func (tc *testClient) readPushMessages() {
 		select {
 		case ch <- msg:
 		default:
-			tc.t.Logf("Warning: message buffer full for topic %s, dropping message", msg.Topic)
+			tc.log.Errorf("Warning: message buffer full for topic %s, dropping message", msg.Topic)
 		}
 	}
 }
@@ -362,7 +366,7 @@ func (tc *testClient) handleIncomingRelay(s network.Stream) {
 	select {
 	case tc.relays <- relayRequest{stream: s, req: req}:
 	default:
-		tc.t.Logf("relay channel full, closing stream")
+		tc.log.Infof("relay channel full, closing stream")
 		_ = s.Close()
 	}
 }
@@ -420,7 +424,7 @@ func fullyConnectedMeshWithClients(ctx context.Context, t *testing.T, numMeshNod
 		if _, err := mnet.ConnectPeers(clientHosts[i].ID(), meshHosts[nodeIdx].ID()); err != nil {
 			t.Fatalf("Failed to connect client %d to node %d: %v", i, nodeIdx, err)
 		}
-		clients[i], err = newTestClient(t, ctx, clientHost, meshHosts[nodeIdx].ID())
+		clients[i], err = newTestClient(ctx, clientHost, meshHosts[nodeIdx].ID())
 		if err != nil {
 			t.Fatalf("Failed to create client %d: %v", i, err)
 		}
@@ -835,6 +839,11 @@ func TestClientSubscriptionAndBroadcast(t *testing.T) {
 		// Small delay between iterations
 		time.Sleep(50 * time.Millisecond)
 	}
+
+	// Terminate clients.
+	for idx := range clients {
+		clients[idx].Close()
+	}
 }
 
 func TestClientSubscriptionEvents(t *testing.T) {
@@ -907,4 +916,9 @@ func TestClientSubscriptionEvents(t *testing.T) {
 		t.Fatalf("Subscribe failed: %v", err)
 	}
 	verifyEvents([]*testClient{clients[0], clients[2]}, clients[3], true)
+
+	// Terminate clients.
+	for idx := range clients {
+		clients[idx].Close()
+	}
 }

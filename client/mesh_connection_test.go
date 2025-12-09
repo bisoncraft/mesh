@@ -61,6 +61,7 @@ func TestMeshConnection(t *testing.T) {
 	}
 
 	var attempts atomic.Int32
+	attemptsCh := make(chan struct{}, 10)
 	hostBFailureBondHandler := func(s network.Stream) {
 		defer func() { _ = s.Close() }()
 
@@ -120,6 +121,7 @@ func TestMeshConnection(t *testing.T) {
 		}
 
 		attempts.Add(1)
+		attemptsCh <- struct{}{}
 	}
 
 	hostBSuccessBondHandler := func(s network.Stream) {
@@ -367,6 +369,12 @@ func TestMeshConnection(t *testing.T) {
 		t.Fatal("Timed out waiting for a bond message")
 	}
 
+	select {
+	case <-attemptsCh:
+	case <-time.After(time.Second * 3):
+		t.Fatal("Timed out waiting for attempt signal")
+	}
+
 	err = meshConn.postBondInternal(ctx, bondReq)
 	if err == nil {
 		t.Fatal("Expected a post bond error")
@@ -382,6 +390,12 @@ func TestMeshConnection(t *testing.T) {
 		t.Fatal("Timed out waiting for a bond message")
 	}
 
+	select {
+	case <-attemptsCh:
+	case <-time.After(time.Second * 3):
+		t.Fatal("Timed out waiting for attempt signal")
+	}
+
 	// The third attempt to post bond should succeed.
 	err = meshConn.postBondInternal(ctx, bondReq)
 	if err != nil {
@@ -392,6 +406,12 @@ func TestMeshConnection(t *testing.T) {
 	case <-hostBReceivedMsgs:
 	case <-time.After(time.Second * 3):
 		t.Fatal("Timed out waiting for a bond message")
+	}
+
+	select {
+	case <-attemptsCh:
+	case <-time.After(time.Second * 3):
+		t.Fatal("Timed out waiting for attempt signal")
 	}
 
 	hostB.SetStreamHandler(protocols.PostBondsProtocol, hostBSuccessBondHandler)
