@@ -55,6 +55,15 @@ type Client struct {
 	connections    map[peer.ID]*meshConnection
 }
 
+// PeerID returns the peer ID of the client. If the client has not yet been
+// initialized, an empty string is returned.
+func (c *Client) PeerID() peer.ID {
+	if c.host == nil {
+		return ""
+	}
+	return c.host.ID()
+}
+
 // Ensure the client implements the network.Notifiee interface.
 var _ network.Notifiee = (*Client)(nil)
 
@@ -120,6 +129,11 @@ func (c *Client) Broadcast(ctx context.Context, topic string, data []byte) error
 	}
 
 	return meshConn.broadcast(ctx, topic, data)
+}
+
+// Topics returns the list of topics the client is currently subscribed to.
+func (c *Client) Topics() []string {
+	return c.topicRegistry.fetchTopics()
 }
 
 // Subscribe subscribes the client to the provided topic.

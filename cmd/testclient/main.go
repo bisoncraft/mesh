@@ -87,21 +87,34 @@ func initLogRotator(dir string) (*rotator.Rotator, error) {
 }
 
 // generateIdentity generates or loads the client's identity private key.
-func generateIdentity() (crypto.PrivKey, error) {
-	pkPath := filepath.Join(defaultAppDataDir(), "priv.pem")
+func generateIdentity(appDataDir string) (crypto.PrivKey, error) {
+	if err := os.MkdirAll(appDataDir, 0700); err != nil {
+		return nil, fmt.Errorf("failed to create app data dir: %w", err)
+	}
+
+	pkPath := filepath.Join(appDataDir, "priv.pem")
 
 	var priv crypto.PrivKey
 	data, err := os.ReadFile(pkPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			// If no private key file exists for the client's identity, generate one for the session.
+			// If no private key file exists for the client's identity, generate one and persist it.
 			priv, _, err = crypto.GenerateKeyPair(crypto.Ed25519, -1)
 			if err != nil {
 				return nil, fmt.Errorf("failed to generate key pair: %w", err)
 			}
 
+			enc, err := crypto.MarshalPrivateKey(priv)
+			if err != nil {
+				return nil, fmt.Errorf("failed to marshal private key: %w", err)
+			}
+			if err := os.WriteFile(pkPath, enc, 0600); err != nil {
+				return nil, fmt.Errorf("failed to write private key: %w", err)
+			}
+
 			return priv, nil
 		}
+		return nil, fmt.Errorf("failed to read private key: %w", err)
 	}
 
 	priv, err = crypto.UnmarshalPrivateKey(data)
@@ -113,18 +126,24 @@ func generateIdentity() (crypto.PrivKey, error) {
 }
 
 func main() {
+	args := os.Args[1:]
+	defAppDataDir := defaultAppDataDir()
+	defConfigFile := defaultConfigFile()
+
 	cfg := Config{
-		AppDataDir: defaultAppDataDir(),
-		ConfigFile: defaultConfigFile(),
+		AppDataDir: defAppDataDir,
+		ConfigFile: defConfigFile,
 		LogLevel:   "debug",
 		NodeAddr:   "",
 		ClientPort: client.DefaultClientPort,
 		WebPort:    client.DefaultWebPort,
 	}
 
-	// Parse command-line flags (overrides file values)
+	// Parse command-line flags (overrides file values). We parse twice:
+	// first to learn appdata/configfile overrides, then load INI, then parse
+	// again so flags take precedence over the INI file.
 	parser := flags.NewParser(&cfg, flags.Default)
-	if _, err := parser.Parse(); err != nil {
+	if _, err := parser.ParseArgs(args); err != nil {
 		if e, ok := err.(*flags.Error); ok && e.Type == flags.ErrHelp {
 			os.Exit(0)
 		}
@@ -132,9 +151,24 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Load config file if exists (base values, overridden by flags)
+	// If appdata was overridden but configfile wasn't explicitly overridden,
+	// move the default config file location under the overridden appdata dir.
+	if cfg.ConfigFile == defConfigFile && cfg.AppDataDir != defAppDataDir {
+		cfg.ConfigFile = filepath.Join(cfg.AppDataDir, "testclient.conf")
+	}
+
+	// Load config file if exists (base values, overridden by flags).
 	if err := loadConfigFile(parser, &cfg); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to load config file: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Parse flags again to override any config file values.
+	if _, err := parser.ParseArgs(args); err != nil {
+		if e, ok := err.(*flags.Error); ok && e.Type == flags.ErrHelp {
+			os.Exit(0)
+		}
+		fmt.Fprintf(os.Stderr, "Failed to parse flags: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -146,20 +180,19 @@ func main() {
 	defer func() { _ = logRotator.Close() }()
 
 	// Setup logger to write to both stdout and log file
-	logStream := make(chan string, 100)
-	logWriter := io.MultiWriter(os.Stdout, client.NewLogStreamBackend(logStream), logRotator)
+	logWriter := io.MultiWriter(os.Stdout, logRotator)
 	backend := slog.NewBackend(logWriter)
 	log := backend.Logger("testclient")
 	level, ok := slog.LevelFromString(cfg.LogLevel)
 	if !ok {
-		fmt.Fprintf(os.Stderr, "Invalid debug level: %s\n", cfg.LogLevel)
+		fmt.Fprintf(os.Stderr, "Invalid log level: %s\n", cfg.LogLevel)
 		os.Exit(1)
 	}
 	log.SetLevel(level)
 
 	log.Infof("Using app data directory: %s", cfg.AppDataDir)
 
-	priv, err := generateIdentity()
+	priv, err := generateIdentity(cfg.AppDataDir)
 	if err != nil {
 		log.Errorf("Failed to generate identity: %v", err)
 		os.Exit(1)
@@ -171,7 +204,6 @@ func main() {
 		ClientPort: cfg.ClientPort,
 		WebPort:    cfg.WebPort,
 		Logger:     log,
-		LogStream:  logStream,
 	}
 
 	tc, err := client.NewClient(tcCfg)

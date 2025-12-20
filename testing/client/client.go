@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -36,7 +38,6 @@ type Config struct {
 	ClientPort int
 	WebPort    int
 	Logger     slog.Logger
-	LogStream  chan string
 }
 
 // Client represents a tatanka test client.
@@ -45,9 +46,7 @@ type Client struct {
 	https         *http.Server
 	tatankaClient *tmc.Client
 	log           slog.Logger
-
-	logSubsMtx sync.RWMutex
-	logSubs    map[string]chan string
+	events        *eventStore
 }
 
 func (c *Client) route() {
@@ -59,9 +58,15 @@ func (c *Client) route() {
 	r.Post("/unsubscribe", c.unsubscribe)
 	r.Post("/bond/add", c.addBond)
 	r.Get("/bond/post", c.postBond)
-	r.Get("/logs", c.streamLogs)
+	r.Get("/identity", c.identity)
+	r.Get("/subscriptions", c.subscriptions)
+	r.Get("/events", c.getEvents)
+	r.Get("/stream/events", c.streamEvents)
 
-	r.Handle("/", http.FileServer(http.FS(index)))
+	// UI related endpoints.
+	r.Get("/", c.serveUIIndexFromDist)
+	r.Handle("/assets/*", http.HandlerFunc(c.serveUIDistAsset))
+	r.Get("/*", c.serveUIIndexFromDist)
 
 	c.https = &http.Server{
 		Addr:    fmt.Sprintf(":%d", c.cfg.WebPort),
@@ -71,9 +76,9 @@ func (c *Client) route() {
 
 func NewClient(cfg *Config) (*Client, error) {
 	c := &Client{
-		cfg:     cfg,
-		log:     cfg.Logger,
-		logSubs: make(map[string]chan string),
+		cfg:    cfg,
+		log:    cfg.Logger,
+		events: newEventStore(),
 	}
 
 	tcCfg := &tmc.Config{
@@ -95,14 +100,53 @@ func NewClient(cfg *Config) (*Client, error) {
 	return c, nil
 }
 
-func (c *Client) handleSubscribe(evt tmc.TopicEvent) {
+func (c *Client) identity(w http.ResponseWriter, r *http.Request) {
+	peerID := c.tatankaClient.PeerID()
+	resp := map[string]any{"peer_id": ""}
+	if peerID != "" {
+		resp["peer_id"] = peerID.String()
+	}
+	if err := writeResponse(w, http.StatusOK, resp); err != nil {
+		c.log.Errorf("Failed to write identity response: %v", err)
+	}
+}
+
+func (c *Client) subscriptions(w http.ResponseWriter, r *http.Request) {
+	topics := c.tatankaClient.Topics()
+	if err := writeResponse(w, http.StatusOK, topics); err != nil {
+		c.log.Errorf("Failed to write subscriptions response: %v", err)
+	}
+}
+
+func (c Client) handleTopicEvent(topic string, evt tmc.TopicEvent) {
 	switch evt.Type {
 	case tmc.TopicEventData:
-		c.log.Infof("Received event data for peer %s with data: %s", evt.Peer.String(), hex.Dump(evt.Data))
+		b64 := base64.StdEncoding.EncodeToString(evt.Data)
+
+		// Store and stream typed event for the UI.
+		c.events.add(Event{
+			Type:    EventTypeData,
+			Topic:   topic,
+			Peer:    evt.Peer.String(),
+			DataB64: b64,
+		})
+		c.log.Infof("topic=%s event=data peer=%s data=%s", topic, evt.Peer.String(), hex.Dump(evt.Data))
 	case tmc.TopicEventPeerSubscribed:
-		c.log.Infof("Received subscription event for peer %s", evt.Peer.String())
+		c.events.add(Event{
+			Type:  EventTypePeerSubscribed,
+			Topic: topic,
+			Peer:  evt.Peer.String(),
+		})
+		c.log.Infof("topic=%s event=peer_subscribed peer=%s", topic, evt.Peer.String())
+	case tmc.TopicEventPeerUnsubscribed:
+		c.events.add(Event{
+			Type:  EventTypePeerUnsubscribed,
+			Topic: topic,
+			Peer:  evt.Peer.String(),
+		})
+		c.log.Infof("topic=%s event=peer_unsubscribed peer=%s", topic, evt.Peer.String())
 	default:
-		c.log.Errorf("Unexpected event type received: %T", evt.Type)
+		c.log.Errorf("topic=%s event=unexpected type=%T", topic, evt.Type)
 	}
 }
 
@@ -120,7 +164,7 @@ func (c *Client) broadcast(w http.ResponseWriter, r *http.Request) {
 
 	data, err := base64.StdEncoding.DecodeString(payload.Data)
 	if err != nil {
-		c.log.Error("Failed to decode payload data: %v", err)
+		c.log.Errorf("Failed to decode payload data: %v", err)
 		writeErrorResponse(w, http.StatusBadRequest, "failed to decode payload data")
 		return
 	}
@@ -128,9 +172,17 @@ func (c *Client) broadcast(w http.ResponseWriter, r *http.Request) {
 	err = c.tatankaClient.Broadcast(ctx, payload.Topic, data)
 	if err != nil {
 		c.log.Errorf("Failed to broadcast message: %v", err)
-		writeErrorResponse(w, http.StatusBadRequest, "failed to broadcast message")
+		writeErrorResponse(w, http.StatusInternalServerError, "failed to broadcast message")
 		return
 	}
+
+	// Record outgoing broadcast so the UI can reload sent messages after refresh.
+	c.events.add(Event{
+		Type:    EventTypeBroadcast,
+		Topic:   payload.Topic,
+		Peer:    "self",
+		DataB64: payload.Data,
+	})
 
 	c.log.Infof("Broadcasted message on topic %s", payload.Topic)
 
@@ -149,13 +201,20 @@ func (c *Client) subscribe(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), defaultTimeout)
 	defer cancel()
 
-	err = c.tatankaClient.Subscribe(ctx, payload.Topic, c.handleSubscribe)
+	err = c.tatankaClient.Subscribe(ctx, payload.Topic, func(evt tmc.TopicEvent) {
+		c.handleTopicEvent(payload.Topic, evt)
+	})
 	if err != nil {
 		c.log.Errorf("Failed to subscribe to topic %s: %v", payload.Topic, err)
-		writeErrorResponse(w, http.StatusBadRequest, "failed to subscribe to topic")
+		writeErrorResponse(w, http.StatusInternalServerError, "failed to subscribe to topic")
 		return
 	}
 
+	c.events.add(Event{
+		Type:  EventTypeSubscribed,
+		Topic: payload.Topic,
+		Peer:  "self",
+	})
 	c.log.Infof("Subscribed to topic %s", payload.Topic)
 
 	writeStatusResponse(w, http.StatusOK)
@@ -176,10 +235,15 @@ func (c *Client) unsubscribe(w http.ResponseWriter, r *http.Request) {
 	err = c.tatankaClient.Unsubscribe(ctx, payload.Topic)
 	if err != nil {
 		c.log.Errorf("Failed to unsubscribe from topic %s: %v", payload.Topic, err)
-		writeErrorResponse(w, http.StatusBadRequest, "failed to unsubscribe from topic")
+		writeErrorResponse(w, http.StatusInternalServerError, "failed to unsubscribe from topic")
 		return
 	}
 
+	c.events.add(Event{
+		Type:  EventTypeUnsubscribed,
+		Topic: payload.Topic,
+		Peer:  "self",
+	})
 	c.log.Infof("Unsubscribed from topic %s", payload.Topic)
 
 	writeStatusResponse(w, http.StatusOK)
@@ -214,24 +278,35 @@ func (c *Client) postBond(w http.ResponseWriter, r *http.Request) {
 	err := c.tatankaClient.PostBond(ctx)
 	if err != nil {
 		c.log.Errorf("Failed to post bond: %v", err)
-		writeErrorResponse(w, http.StatusBadRequest, "failed to post bond")
+		writeErrorResponse(w, http.StatusInternalServerError, "failed to post bond")
 		return
 	}
 
 	writeStatusResponse(w, http.StatusOK)
 }
 
-func (c *Client) streamLogs(w http.ResponseWriter, r *http.Request) {
+func (c *Client) getEvents(w http.ResponseWriter, r *http.Request) {
+	afterID := parseAfterID(r)
+	events := c.events.listSince(afterID)
+	if err := writeResponse(w, http.StatusOK, events); err != nil {
+		c.log.Errorf("Failed to write events response: %v", err)
+	}
+}
+
+func parseAfterID(r *http.Request) uint64 {
+	if v := r.URL.Query().Get("after"); v != "" {
+		if n, err := strconv.ParseUint(v, 10, 64); err == nil {
+			return n
+		}
+	}
+	return 0
+}
+
+func (c *Client) streamEvents(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("X-Accel-Buffering", "no")
 	w.Header().Set("Connection", "keep-alive")
-
-	sub := make(chan string, 10)
-
-	c.logSubsMtx.RLock()
-	c.logSubs[r.RemoteAddr] = sub
-	c.logSubsMtx.RUnlock()
 
 	rc := http.NewResponseController(w)
 	_, err := fmt.Fprint(w, "data: connected\n\n")
@@ -241,37 +316,73 @@ func (c *Client) streamLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	rc.Flush()
 
-	ticker := time.NewTicker(10 * time.Second)
+	if _, err := fmt.Fprint(w, "data: connected\n\n"); err != nil {
+		return
+	}
+	rc.Flush()
+
+	// Determine replay point.
+	var afterID uint64
+	if v := r.Header.Get("Last-Event-ID"); v != "" {
+		if n, err := strconv.ParseUint(strings.TrimSpace(v), 10, 64); err == nil {
+			afterID = n
+		}
+	}
+	if afterID == 0 {
+		afterID = parseAfterID(r)
+	}
+
+	// Replay stored events first.
+	for _, e := range c.events.listSince(afterID) {
+		if err := writeSSEEvent(w, e); err != nil {
+			return
+		}
+		rc.Flush()
+		afterID = e.ID
+	}
+
+	// Then stream live events.
+	ch, cancel := c.events.subscribe()
+	defer cancel()
+
+	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
 
 	for {
 		select {
-		case logLine, ok := <-sub:
+		case e, ok := <-ch:
 			if !ok {
 				return
 			}
-
-			if _, err := fmt.Fprintf(w, "data: %s\n\n", logLine); err != nil {
-				c.log.Errorf("Failed to write to stream: %v", err)
+			if e.ID <= afterID {
+				continue
+			}
+			if err := writeSSEEvent(w, e); err != nil {
 				return
 			}
 			rc.Flush()
+			afterID = e.ID
 
 		case <-ticker.C:
-			if _, err := fmt.Fprint(w, "data: ping\n\n"); err != nil {
-				c.log.Errorf("Failed to write to stream: %v", err)
+			if _, err := fmt.Fprint(w, ": ping\n\n"); err != nil {
 				return
 			}
 			rc.Flush()
 
 		case <-r.Context().Done():
-			c.logSubsMtx.Lock()
-			delete(c.logSubs, r.RemoteAddr)
-			c.logSubsMtx.Unlock()
-
 			return
 		}
 	}
+}
+
+func writeSSEEvent(w http.ResponseWriter, e Event) error {
+	js, err := encodeEventJSON(e)
+	if err != nil {
+		return err
+	}
+	// SSE format: include id so the browser can reconnect with Last-Event-ID.
+	_, err = fmt.Fprintf(w, "id: %d\nevent: tatanka\ndata: %s\n\n", e.ID, js)
+	return err
 }
 
 func (c *Client) Run(ctx context.Context, bonds []*bond.BondParams) {
@@ -282,24 +393,6 @@ func (c *Client) Run(ctx context.Context, bonds []*bond.BondParams) {
 
 	go func() {
 		defer wg.Done()
-
-		for {
-			select {
-			case <-ctx.Done():
-				for _, sub := range c.logSubs {
-					close(sub)
-				}
-
-				return
-			case msg := <-c.cfg.LogStream:
-				for _, sub := range c.logSubs {
-					sub <- msg
-				}
-			}
-		}
-	}()
-
-	go func() {
 		c.log.Infof("Tatanka client listening on: %d", c.cfg.ClientPort)
 		err := c.tatankaClient.Run(ctx, bonds)
 		if err != nil {
@@ -310,18 +403,11 @@ func (c *Client) Run(ctx context.Context, bonds []*bond.BondParams) {
 		defer cancel()
 
 		_ = c.https.Shutdown(ctx)
-
-		wg.Done()
 	}()
 
 	go func() {
-		switch c.cfg.ClientPort {
-		case DefaultClientPort:
-			c.log.Infof("Web interface available on: http://localhost:%d", c.cfg.WebPort)
-		default:
-			c.log.Infof("Web interface available on: http://localhost:%d?clientport=%d", c.cfg.WebPort, c.cfg.ClientPort)
-		}
-
+		defer wg.Done()
+		c.log.Infof("Web interface available on: %d", c.cfg.WebPort)
 		if err := c.https.ListenAndServe(); err != nil {
 			if !errors.Is(err, http.ErrServerClosed) {
 				c.log.Errorf("Failed to start server: %v", err)
