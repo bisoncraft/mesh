@@ -4,11 +4,14 @@ go 1.24.9
 
 require (
 	github.com/decred/slog v1.2.0
+	github.com/go-chi/chi/v5 v5.2.3
+	github.com/go-chi/cors v1.2.2
 	github.com/jessevdk/go-flags v1.6.1
 	github.com/jrick/logrotate v1.1.2
 	github.com/libp2p/go-libp2p v0.44.0
 	github.com/libp2p/go-libp2p-pubsub v0.15.0
 	github.com/multiformats/go-multiaddr v0.16.0
+	github.com/prometheus/client_golang v1.22.0
 	golang.org/x/sync v0.16.0
 	google.golang.org/protobuf v1.36.6
 )
@@ -75,7 +78,6 @@ require (
 	github.com/pion/transport/v3 v3.0.7 // indirect
 	github.com/pion/turn/v4 v4.0.2 // indirect
 	github.com/pion/webrtc/v4 v4.1.2 // indirect
-	github.com/prometheus/client_golang v1.22.0 // indirect
 	github.com/prometheus/client_model v0.6.2 // indirect
 	github.com/prometheus/common v0.64.0 // indirect
 	github.com/prometheus/procfs v0.16.1 // indirect

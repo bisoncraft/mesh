@@ -200,14 +200,19 @@ func (c *Client) handlePushMessage(msg *protocolsPb.PushMessage) {
 	handlerFunc(event)
 }
 
-// postBond posts the client's bond.
-func (c *Client) postBond(ctx context.Context) error {
+// PostBond posts the client's bond.
+func (c *Client) PostBond(ctx context.Context) error {
 	meshConn := c.primaryMeshConn.Load()
 	if meshConn == nil {
 		return errNoMeshConnection
 	}
 
 	return meshConn.postBond(ctx)
+}
+
+// AddBond adds the provided bond parameters to the client.
+func (c *Client) AddBond(params []*bond.BondParams) {
+	c.bondInfo.AddBonds(params, time.Now())
 }
 
 // maintainConnection maintains a mesh connection to the provided remote peer ID.
