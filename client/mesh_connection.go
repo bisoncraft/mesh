@@ -29,7 +29,7 @@ type meshConnection struct {
 	host              host.Host
 	handleMessage     func(*protocolsPb.PushMessage)
 	fetchTopics       func() []string
-	setMeshConnection func(*meshConnection)
+	setMeshConnection func(meshConn)
 	bondInfo          *bond.BondInfo
 	log               slog.Logger
 
@@ -37,7 +37,9 @@ type meshConnection struct {
 	cancelFunc    context.CancelFunc
 }
 
-func newMeshConnection(host host.Host, peerID peer.ID, logger slog.Logger, bondInfo *bond.BondInfo, fetchTopics func() []string, handleMessage func(*protocolsPb.PushMessage), setMeshConnection func(*meshConnection)) *meshConnection {
+var _ meshConn = (*meshConnection)(nil)
+
+func newMeshConnection(host host.Host, peerID peer.ID, logger slog.Logger, bondInfo *bond.BondInfo, fetchTopics func() []string, handleMessage func(*protocolsPb.PushMessage), setMeshConnection func(meshConn)) *meshConnection {
 	return &meshConnection{
 		host:              host,
 		peerID:            peerID,
@@ -47,6 +49,10 @@ func newMeshConnection(host host.Host, peerID peer.ID, logger slog.Logger, bondI
 		setMeshConnection: setMeshConnection,
 		bondInfo:          bondInfo,
 	}
+}
+
+func (m *meshConnection) remotePeerID() peer.ID {
+	return m.peerID
 }
 
 // subscribeTopics subscribes to all registered topics.

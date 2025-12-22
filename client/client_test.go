@@ -2,363 +2,330 @@ package client
 
 import (
 	"context"
-	"crypto/rand"
 	"errors"
-	"fmt"
-	"io"
 	"os"
-	"sync/atomic"
+	"sync"
 	"testing"
-	"time"
 
 	"github.com/decred/slog"
-	"github.com/libp2p/go-libp2p"
-	"github.com/libp2p/go-libp2p/core/crypto"
-	"github.com/libp2p/go-libp2p/core/host"
-	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
-	"github.com/martonp/tatanka-mesh/bond"
-	"github.com/martonp/tatanka-mesh/codec"
-	"github.com/martonp/tatanka-mesh/protocols"
 	protocolsPb "github.com/martonp/tatanka-mesh/protocols/pb"
-	"google.golang.org/protobuf/proto"
 )
 
-func createHost(t *testing.T, port int) (host.Host, string) {
-	priv, _, err := crypto.GenerateEd25519Key(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	addr := fmt.Sprintf("/ip4/127.0.0.1/tcp/%d", port)
-	host, err := libp2p.New(
-		libp2p.Identity(priv),
-		libp2p.ListenAddrStrings(addr),
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	return host, fmt.Sprintf("%s/p2p/%s", addr, host.ID().String())
+type relayMessageParams struct {
+	PeerID  peer.ID
+	Message []byte
 }
 
-func TestClient(t *testing.T) {
-	// Setup the remote peer.
-	remoteHostPort := 4567
-	remoteHost, remoteHostAddr := createHost(t, remoteHostPort)
-	defer func() { _ = remoteHost.Close() }()
+type broadcastParams struct {
+	Topic string
+	Data  []byte
+}
 
-	var remoteHostPushStream atomic.Pointer[network.Stream]
-	setPushStream := func(ps network.Stream) {
-		remoteHostPushStream.Store(&ps)
+type relayMessageReturnValue struct {
+	resp []byte
+	err  error
+}
+
+type tMeshConnection struct {
+	mu sync.Mutex
+
+	remotePeer peer.ID
+
+	broadcastCalls []broadcastParams
+	broadcastErr   error
+
+	subscribeCalls []string
+	subscribeErr   error
+
+	unsubscribeCalls []string
+	unsubscribeErr   error
+
+	postBondCalls []struct{}
+	postBondErr   error
+
+	KillCalls int
+}
+
+var _ meshConn = (*tMeshConnection)(nil)
+
+func (m *tMeshConnection) remotePeerID() peer.ID {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.remotePeer
+}
+
+func (m *tMeshConnection) broadcast(ctx context.Context, topic string, data []byte) error {
+	m.mu.Lock()
+	call := broadcastParams{
+		Topic: topic,
+		Data:  append([]byte(nil), data...),
 	}
-	getPushStream := func() network.Stream {
-		ps := remoteHostPushStream.Load()
-		if ps != nil {
-			return *ps
-		}
+	m.broadcastCalls = append(m.broadcastCalls, call)
+	m.mu.Unlock()
 
-		return nil
-	}
+	return m.broadcastErr
+}
 
-	remoteHostReceivedMsgs := make(chan proto.Message, 10)
-	remoteHostSubscribeHandler := func(s network.Stream) {
-		defer func() { _ = s.Close() }()
+func (m *tMeshConnection) subscribe(ctx context.Context, topic string) error {
+	m.mu.Lock()
+	m.subscribeCalls = append(m.subscribeCalls, topic)
+	m.mu.Unlock()
 
-		clientID := s.Conn().RemotePeer()
-		subscribeMessage := &protocolsPb.SubscribeRequest{}
-		if err := codec.ReadLengthPrefixedMessage(s, subscribeMessage); err != nil {
-			t.Fatalf("Failed to read/unmarshal subscribe message from client %s: %v", clientID, err)
+	return m.subscribeErr
+}
 
-			return
-		}
+func (m *tMeshConnection) unsubscribe(ctx context.Context, topic string) error {
+	m.mu.Lock()
+	m.unsubscribeCalls = append(m.unsubscribeCalls, topic)
+	m.mu.Unlock()
 
-		remoteHostReceivedMsgs <- subscribeMessage
-	}
+	return m.unsubscribeErr
+}
 
-	remoteHostPushHandler := func(s network.Stream) {
-		resp := &protocolsPb.Response{
-			Response: &protocolsPb.Response_Success{
-				Success: &protocolsPb.Success{},
-			},
-		}
+func (m *tMeshConnection) postBond(ctx context.Context) error {
+	m.mu.Lock()
+	m.postBondCalls = append(m.postBondCalls, struct{}{})
+	m.mu.Unlock()
 
-		err := codec.WriteLengthPrefixedMessage(s, resp)
-		if err != nil {
-			t.Fatalf("Failed to write message: %v", err)
-		}
+	return m.postBondErr
+}
 
-		setPushStream(s)
-	}
+func (m *tMeshConnection) kill() {}
 
-	remoteHostPublishHandler := func(s network.Stream) {
-		defer func() { _ = s.Close() }()
+func TestSubscribe(t *testing.T) {
+	ctx := context.Background()
 
-		clientID := s.Conn().RemotePeer()
-		publishMessage := &protocolsPb.PublishRequest{}
-		if err := codec.ReadLengthPrefixedMessage(s, publishMessage); err != nil {
-			if errors.Is(err, io.EOF) {
-				t.Fatalf("Failed to read push message from client %s: %v.", clientID, err)
-			}
-
-			return
-		}
-
-		remoteHostReceivedMsgs <- publishMessage
-	}
-
-	remoteHostPostBondHandler := func(s network.Stream) {
-		defer func() { _ = s.Close() }()
-
-		msg := &protocolsPb.PostBondRequest{}
-		if err := codec.ReadLengthPrefixedMessage(s, msg); err != nil {
-			if errors.Is(err, io.EOF) {
-				t.Fatalf("Failed to read message: %v", err)
-			}
-
-			return
-		}
-
-		bondResp := &protocolsPb.Response{
-			Response: &protocolsPb.Response_PostBondResponse{
-				PostBondResponse: &protocolsPb.PostBondResponse{
-					BondStrength: bond.MinRequiredBondStrength,
-				},
-			},
-		}
-
-		err := codec.WriteLengthPrefixedMessage(s, bondResp)
-		if err != nil {
-			t.Fatalf("Failed to write message: %v", err)
-		}
+	mc := &tMeshConnection{
+		remotePeer: peer.ID("peer"),
 	}
 
-	remoteHost.SetStreamHandler(protocols.ClientSubscribeProtocol, remoteHostSubscribeHandler)
-	remoteHost.SetStreamHandler(protocols.ClientPushProtocol, remoteHostPushHandler)
-	remoteHost.SetStreamHandler(protocols.ClientPublishProtocol, remoteHostPublishHandler)
-	remoteHost.SetStreamHandler(protocols.PostBondsProtocol, remoteHostPostBondHandler)
+	c := &Client{
+		cfg:           &Config{},
+		topicRegistry: newTopicRegistry(),
+		connections:   make(map[peer.ID]meshConn),
+	}
+	c.setPrimaryMeshConnection(mc)
 
-	remoteHostBroadcastMsg := func(topic string, data []byte, sender peer.ID) {
-		msg := &protocolsPb.PushMessage{
-			MessageType: protocolsPb.PushMessage_BROADCAST,
-			Topic:       topic,
-			Data:        []byte(data),
-			Sender:      []byte(sender),
-		}
-
-		pushStream := getPushStream()
-		if pushStream == nil {
-			t.Fatalf("Push stream is not initialized")
-		}
-
-		if err := codec.WriteLengthPrefixedMessage(pushStream, msg); err != nil {
-			if errors.Is(err, io.EOF) {
-				t.Fatalf("Failed to write push message: %v", err)
-			}
-		}
+	// Subscribe to a topic successfully.
+	err := c.Subscribe(ctx, "topic-1", func(TopicEvent) {})
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if got := len(mc.subscribeCalls); got != 1 {
+		t.Fatalf("expected 1 subscribe call, got %d", got)
+	}
+	if mc.subscribeCalls[0] != "topic-1" {
+		t.Fatalf("expected topic %q, got %q", "topic-1", mc.subscribeCalls[0])
 	}
 
-	// Setup the client.
+	// Subscribe to the same topic again should return ErrRedundantSubscription and not call mesh conn.
+	err = c.Subscribe(ctx, "topic-1", func(TopicEvent) {})
+	if !errors.Is(err, ErrRedundantSubscription) {
+		t.Fatalf("expected ErrRedundantSubscription, got %v", err)
+	}
+	if got := len(mc.subscribeCalls); got != 1 {
+		t.Fatalf("expected subscribe call count to remain 1, got %d", got)
+	}
+
+	// Subscribe to another topic when meshConn returns an error.
+	wantErr := errors.New("subscribe failed")
+	mc.subscribeErr = wantErr
+	err = c.Subscribe(ctx, "topic-2", func(TopicEvent) {})
+	if err == nil {
+		t.Fatalf("expected error, got nil")
+	}
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("expected error %v, got %v", wantErr, err)
+	}
+	if got := len(mc.subscribeCalls); got != 2 {
+		t.Fatalf("expected 2 subscribe calls, got %d", got)
+	}
+	if mc.subscribeCalls[1] != "topic-2" {
+		t.Fatalf("expected topic %q, got %q", "topic-2", mc.subscribeCalls[1])
+	}
+	if c.topicRegistry.isRegistered("topic-2") {
+		t.Fatalf("topic-2 should not be registered when subscribe returns an error")
+	}
+
+	// Unsubscribe from topic-1 with an error from meshConn.
+	wantUnsubErr := errors.New("unsubscribe failed")
+	mc.unsubscribeErr = wantUnsubErr
+	err = c.Unsubscribe(ctx, "topic-1")
+	if err == nil {
+		t.Fatalf("expected error, got nil")
+	}
+	if !errors.Is(err, wantUnsubErr) {
+		t.Fatalf("expected error %v, got %v", wantUnsubErr, err)
+	}
+	if got := len(mc.unsubscribeCalls); got != 1 {
+		t.Fatalf("expected 1 unsubscribe call, got %d", got)
+	}
+	if mc.unsubscribeCalls[0] != "topic-1" {
+		t.Fatalf("expected topic %q, got %q", "topic-1", mc.unsubscribeCalls[0])
+	}
+	if !c.topicRegistry.isRegistered("topic-1") {
+		t.Fatalf("topic-1 should remain registered when unsubscribe returns an error")
+	}
+
+	// Unsubscribe without error.
+	mc.unsubscribeErr = nil
+	err = c.Unsubscribe(ctx, "topic-1")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if got := len(mc.unsubscribeCalls); got != 2 {
+		t.Fatalf("expected 2 unsubscribe calls, got %d", got)
+	}
+	if mc.unsubscribeCalls[1] != "topic-1" {
+		t.Fatalf("expected topic %q, got %q", "topic-1", mc.unsubscribeCalls[1])
+	}
+	if c.topicRegistry.isRegistered("topic-1") {
+		t.Fatalf("topic-1 should be unregistered after successful unsubscribe")
+	}
+
+	// Unsubscribe again should be a no-op: no error and no mesh connection call.
+	err = c.Unsubscribe(ctx, "topic-1")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if got := len(mc.unsubscribeCalls); got != 2 {
+		t.Fatalf("expected unsubscribe call count to remain 2, got %d", got)
+	}
+}
+
+func TestPushMessage(t *testing.T) {
+	ctx := context.Background()
+
 	logBackend := slog.NewBackend(os.Stdout)
-	logger := logBackend.Logger("client")
-	logger.SetLevel(slog.LevelDebug)
+	logger := logBackend.Logger("client_test")
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	priv, _, err := crypto.GenerateKeyPair(crypto.Ed25519, -1)
-	if err != nil {
-		t.Fatalf("failed to generate key pair: %v", err)
+	mc := &tMeshConnection{
+		remotePeer: peer.ID("peer"),
 	}
 
-	clientPort := 5678
-	cfg := &Config{
-		Port:           clientPort,
-		RemotePeerAddr: remoteHostAddr,
-		PrivateKey:     priv,
-		Logger:         logger,
+	c := &Client{
+		cfg:           &Config{Logger: logger},
+		topicRegistry: newTopicRegistry(),
+		connections:   make(map[peer.ID]meshConn),
+		log:           logger,
+	}
+	c.setPrimaryMeshConnection(mc)
+
+	type handled struct {
+		topic string
+		ev    TopicEvent
+	}
+	handledCh := make(chan handled, 10)
+
+	handler1 := func(ev TopicEvent) { handledCh <- handled{topic: "topic-1", ev: ev} }
+	handler2 := func(ev TopicEvent) { handledCh <- handled{topic: "topic-2", ev: ev} }
+
+	if err := c.Subscribe(ctx, "topic-1", handler1); err != nil {
+		t.Fatalf("subscribe topic-1: %v", err)
+	}
+	if err := c.Subscribe(ctx, "topic-2", handler2); err != nil {
+		t.Fatalf("subscribe topic-2: %v", err)
 	}
 
-	client, err := NewClient(cfg)
-	if err != nil {
-		t.Fatal(err)
+	sender := peer.ID("sender-peer")
+
+	// BROADCAST on topic-1 should call handler1 with TopicEventData and data payload.
+	broadcastData := []byte("hello")
+	c.handlePushMessage(&protocolsPb.PushMessage{
+		MessageType: protocolsPb.PushMessage_BROADCAST,
+		Topic:       "topic-1",
+		Data:        broadcastData,
+		Sender:      []byte(sender),
+	})
+
+	// SUBSCRIBE on topic-2 should call handler2 with TopicEventPeerSubscribed.
+	c.handlePushMessage(&protocolsPb.PushMessage{
+		MessageType: protocolsPb.PushMessage_SUBSCRIBE,
+		Topic:       "topic-2",
+		Sender:      []byte(sender),
+	})
+
+	// UNSUBSCRIBE on topic-1 should call handler1 with TopicEventPeerUnsubscribed.
+	c.handlePushMessage(&protocolsPb.PushMessage{
+		MessageType: protocolsPb.PushMessage_UNSUBSCRIBE,
+		Topic:       "topic-1",
+		Sender:      []byte(sender),
+	})
+
+	// Validate exactly 3 handler invocations and that the correct handler was used per topic.
+	var got []handled
+	for range 3 {
+		select {
+		case h := <-handledCh:
+			got = append(got, h)
+		default:
+			t.Fatalf("expected 3 handled events, got %d", len(got))
+		}
 	}
 
-	go func() {
-		_ = client.Run(ctx, []*bond.BondParams{})
-	}()
-
-	// Wait briefly for initialization.
-	time.Sleep(time.Second)
-
-	pingTopic := "ping"
-
-	clientReceivedMsgs := make(chan TopicEvent, 10)
-	clientPingHandlerFunc := func(evt TopicEvent) {
-		clientReceivedMsgs <- evt
-	}
-
-	// Ensure the client can subscribe to a topic.
-	err = client.Subscribe(ctx, pingTopic, clientPingHandlerFunc)
-	if err != nil {
-		t.Fatalf("Unexpected error subscribing to topic %s, %v", pingTopic, err)
-	}
-
+	// Ensure no additional handler invocations occurred.
 	select {
-	case msg := <-remoteHostReceivedMsgs:
-		// Ensure the message received matches the sent topic.
-		subMsg, ok := msg.(*protocolsPb.SubscribeRequest)
-		if !ok {
-			t.Fatal("Received message is not a ClientSubscribeMessage")
-		}
-
-		if subMsg.Topic != pingTopic {
-			t.Fatalf("Expected %s, got %s", pingTopic, subMsg.Topic)
-		}
-
-	case <-time.After(time.Second * 3):
-		t.Fatal("Timed out waiting to receive client subscribe message")
+	case extra := <-handledCh:
+		t.Fatalf("unexpected extra handled event for topic %q: %+v", extra.topic, extra.ev)
+	default:
 	}
 
-	// Ensure the client can receive pushed messages.
-	remoteHostBroadcastMsg(pingTopic, []byte(pingTopic), remoteHost.ID())
-	select {
-	case pushedMsg := <-clientReceivedMsgs:
-		if pushedMsg.Type != TopicEventData {
-			t.Fatalf("Expected TopicEventData type, got %v", pushedMsg.Type)
+	// Helper to find the next event for a topic.
+	nextFor := func(topic string) (TopicEvent, bool) {
+		for i, h := range got {
+			if h.topic == topic {
+				ev := h.ev
+				got = append(got[:i], got[i+1:]...)
+				return ev, true
+			}
 		}
-
-		if string(pushedMsg.Data) != pingTopic {
-			t.Fatalf("Expected %s for data, got %s", "ping", string(pushedMsg.Data))
-		}
-
-	case <-time.After(time.Second * 3):
-		t.Fatal("Timed out waiting to receive pushed message")
+		return TopicEvent{}, false
 	}
 
-	echoTopic := "echo"
-
-	// Ensure the client can unsubscribe from a topic.
-	err = client.Subscribe(ctx, echoTopic, func(TopicEvent) {})
-	if err != nil {
-		t.Fatalf("Unexpected error subscribing to topic %s, %v", echoTopic, err)
+	ev, ok := nextFor("topic-1")
+	if !ok {
+		t.Fatalf("expected an event for topic-1")
+	}
+	if ev.Type != TopicEventData {
+		t.Fatalf("topic-1 first event: expected TopicEventData, got %v", ev.Type)
+	}
+	if string(ev.Data) != string(broadcastData) {
+		t.Fatalf("topic-1 first event: expected data %q, got %q", string(broadcastData), string(ev.Data))
+	}
+	if ev.Peer != sender {
+		t.Fatalf("topic-1 first event: expected peer %q, got %q", sender, ev.Peer)
 	}
 
-	select {
-	case msg := <-remoteHostReceivedMsgs:
-		// Ensure the message received matches the sent topic.
-		subMsg, ok := msg.(*protocolsPb.SubscribeRequest)
-		if !ok {
-			t.Fatal("Received message is not a ClientSubscribeMessage")
-		}
-
-		if subMsg.Topic != echoTopic {
-			t.Fatalf("Expected %s, got %s", pingTopic, subMsg.Topic)
-		}
-
-	case <-time.After(time.Second * 3):
-		t.Fatalf("Timed out waiting for unsubscription message from client")
+	ev, ok = nextFor("topic-2")
+	if !ok {
+		t.Fatalf("expected an event for topic-2")
+	}
+	if ev.Type != TopicEventPeerSubscribed {
+		t.Fatalf("topic-2 event: expected TopicEventPeerSubscribed, got %v", ev.Type)
+	}
+	if len(ev.Data) != 0 {
+		t.Fatalf("topic-2 event: expected empty data, got %q", string(ev.Data))
+	}
+	if ev.Peer != sender {
+		t.Fatalf("topic-2 event: expected peer %q, got %q", sender, ev.Peer)
 	}
 
-	topics := client.topicRegistry.fetchTopics()
-	if len(topics) != 2 {
-		t.Fatalf("Expected 2 subscribed topics, got %d", len(topics))
+	ev, ok = nextFor("topic-1")
+	if !ok {
+		t.Fatalf("expected a second event for topic-1")
+	}
+	if ev.Type != TopicEventPeerUnsubscribed {
+		t.Fatalf("topic-1 second event: expected TopicEventPeerUnsubscribed, got %v", ev.Type)
+	}
+	if len(ev.Data) != 0 {
+		t.Fatalf("topic-1 second event: expected empty data, got %q", string(ev.Data))
+	}
+	if ev.Peer != sender {
+		t.Fatalf("topic-1 second event: expected peer %q, got %q", sender, ev.Peer)
 	}
 
-	err = client.Unsubscribe(ctx, echoTopic)
-	if err != nil {
-		t.Fatalf("Unexpected error subscribing to topic %s, %v", echoTopic, err)
+	if len(got) != 0 {
+		t.Fatalf("unexpected extra handled events: %d", len(got))
 	}
-
-	select {
-	case msg := <-remoteHostReceivedMsgs:
-		// Ensure the message received matches the sent topic.
-		unsubMsg, ok := msg.(*protocolsPb.SubscribeRequest)
-		if !ok {
-			t.Fatal("Received message is not a ClientSubscribeMessage")
-		}
-
-		if unsubMsg.Topic != echoTopic {
-			t.Fatalf("Expected %s, got %s", echoTopic, unsubMsg.Topic)
-		}
-
-		if unsubMsg.Subscribe {
-			t.Fatal("Expected a false flag for an unsubscribe message")
-		}
-
-	case <-time.After(time.Second * 3):
-		t.Fatal("Timed out waiting for client unsubscribe message")
-	}
-
-	topics = client.topicRegistry.fetchTopics()
-	if len(topics) != 1 {
-		t.Fatalf("Expected a subscribed topic, got %d", len(topics))
-	}
-
-	// Ensure the client can broadcast a message.
-	err = client.Broadcast(ctx, pingTopic, []byte("pong"))
-	if err != nil {
-		t.Fatalf("Unexpected error broadcasting message: %v", err)
-	}
-
-	select {
-	case msg := <-remoteHostReceivedMsgs:
-		// Ensure the message received matches the sent topic.
-		pubMsg, ok := msg.(*protocolsPb.PublishRequest)
-		if !ok {
-			t.Fatal("Received message is not a ClientPublishMessage")
-		}
-
-		if pubMsg.Topic != pingTopic {
-			t.Fatalf("Expected %s, got %s", pingTopic, pubMsg.Topic)
-		}
-
-		if string(pubMsg.Data) != "pong" {
-			t.Fatalf("Expected %s for message data, got %s", "pong", string(pubMsg.Data))
-		}
-
-	case <-time.After(time.Second * 3):
-		t.Fatal("Timed out waiting for broadcasted client message")
-	}
-
-	// Sever the client connection to trigger a reconnection.
-	conns := client.host.Network().Conns()
-	for _, conn := range conns {
-		_ = conn.Close()
-	}
-
-	// Wait briefly for reconnection.
-	time.Sleep(time.Second * 2)
-
-	// Ensure the client reconnected successfully and resubscribed to its topics.
-	select {
-	case msg := <-remoteHostReceivedMsgs:
-		subMsg, ok := msg.(*protocolsPb.SubscribeRequest)
-		if !ok {
-			t.Fatal("Received message is not a ClientSubscribeMessage")
-		}
-
-		if subMsg.Topic != pingTopic {
-			t.Fatalf("Expected %s, got %s", pingTopic, subMsg.Topic)
-		}
-
-	case <-time.After(time.Second * 3):
-		t.Fatal("Timed out waiting for broadcasted client message")
-	}
-
-	// Ensure the client can receive pushed messages after reconnecting.
-	remoteHostBroadcastMsg(pingTopic, []byte(pingTopic), remoteHost.ID())
-
-	// Ensure the client can receive pushed messages.
-	select {
-	case pushedMsg := <-clientReceivedMsgs:
-		if string(pushedMsg.Data) != pingTopic {
-			t.Fatalf("Expected %s for data, got %s", pingTopic, string(pushedMsg.Data))
-		}
-
-	case <-time.After(time.Second * 3):
-		t.Fatal("Timed out waiting to receive client pushed message after reconnect")
-	}
-
-	cancel()
 }

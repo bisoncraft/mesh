@@ -3,7 +3,9 @@ package client
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"sync/atomic"
@@ -11,6 +13,9 @@ import (
 	"time"
 
 	"github.com/decred/slog"
+	"github.com/libp2p/go-libp2p"
+	"github.com/libp2p/go-libp2p/core/crypto"
+	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/martonp/tatanka-mesh/bond"
@@ -20,6 +25,24 @@ import (
 	ma "github.com/multiformats/go-multiaddr"
 	"google.golang.org/protobuf/proto"
 )
+
+func createHost(t *testing.T, port int) (host.Host, string) {
+	priv, _, err := crypto.GenerateEd25519Key(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	addr := fmt.Sprintf("/ip4/127.0.0.1/tcp/%d", port)
+	host, err := libp2p.New(
+		libp2p.Identity(priv),
+		libp2p.ListenAddrStrings(addr),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return host, fmt.Sprintf("%s/p2p/%s", addr, host.ID().String())
+}
 
 func TestMeshConnection(t *testing.T) {
 	// Create two hosts, A and B.
@@ -211,7 +234,7 @@ func TestMeshConnection(t *testing.T) {
 	}
 
 	readyCh := make(chan struct{}, 1)
-	setMeshConnection := func(*meshConnection) {
+	setMeshConnection := func(meshConn meshConn) {
 		readyCh <- struct{}{}
 	}
 

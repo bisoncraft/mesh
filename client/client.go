@@ -32,6 +32,8 @@ var (
 	ErrRedundantSubscription = errors.New("redundant subscription")
 
 	errNoMeshConnection = errors.New("no mesh connection established")
+
+	errPeerNoEncryptionKey = errors.New("peer reports no encryption key")
 )
 
 // Config represents a tatanka client configuration.
@@ -42,17 +44,30 @@ type Config struct {
 	Logger         slog.Logger
 }
 
+type meshConn interface {
+	broadcast(ctx context.Context, topic string, data []byte) error
+	subscribe(ctx context.Context, topic string) error
+	unsubscribe(ctx context.Context, topic string) error
+	postBond(ctx context.Context) error
+	kill()
+	remotePeerID() peer.ID
+}
+
+type meshConnHolder struct {
+	mc meshConn
+}
+
 // Client represents a tatanka client.
 type Client struct {
 	cfg             *Config
 	host            host.Host
-	primaryMeshConn atomic.Pointer[meshConnection]
+	primaryMeshConn atomic.Pointer[meshConnHolder]
 	topicRegistry   *topicRegistry
 	bondInfo        *bond.BondInfo
 	log             slog.Logger
 
 	connectionsMtx sync.RWMutex
-	connections    map[peer.ID]*meshConnection
+	connections    map[peer.ID]meshConn
 }
 
 // PeerID returns the peer ID of the client. If the client has not yet been
@@ -75,7 +90,7 @@ func (c *Client) Connected(net network.Network, conn network.Conn) {}
 
 func (c *Client) Disconnected(net network.Network, conn network.Conn) {
 	c.connectionsMtx.RLock()
-	meshConn, ok := c.connections[conn.RemotePeer()]
+	mc, ok := c.connections[conn.RemotePeer()]
 	if !ok {
 		c.connectionsMtx.RUnlock()
 		return
@@ -84,13 +99,13 @@ func (c *Client) Disconnected(net network.Network, conn network.Conn) {
 
 	// Unset the primary mesh connection if it has been disconnected.
 	pmc := c.primaryMeshConn.Load()
-	if pmc != nil {
-		if pmc.host.ID() == meshConn.host.ID() {
+	if pmc != nil && pmc.mc != nil {
+		if pmc.mc.remotePeerID() == conn.RemotePeer() {
 			c.primaryMeshConn.Store(nil)
 		}
 	}
 
-	meshConn.kill()
+	mc.kill()
 }
 
 // NewClient initializes a new tatanka client.
@@ -98,7 +113,7 @@ func NewClient(cfg *Config) (*Client, error) {
 	c := &Client{
 		cfg:           cfg,
 		topicRegistry: newTopicRegistry(),
-		connections:   make(map[peer.ID]*meshConnection),
+		connections:   make(map[peer.ID]meshConn),
 		bondInfo:      bond.NewBondInfo(),
 		log:           cfg.Logger,
 	}
@@ -117,18 +132,30 @@ func NewClient(cfg *Config) (*Client, error) {
 	return c, nil
 }
 
-func (c *Client) setPrimaryMeshConnection(mc *meshConnection) {
-	c.primaryMeshConn.Store(mc)
+func (c *Client) setPrimaryMeshConnection(mc meshConn) {
+	if mc == nil {
+		c.primaryMeshConn.Store(nil)
+		return
+	}
+	c.primaryMeshConn.Store(&meshConnHolder{mc: mc})
+}
+
+func (c *Client) primaryMeshConnection() (meshConn, error) {
+	holder := c.primaryMeshConn.Load()
+	if holder == nil || holder.mc == nil {
+		return nil, errNoMeshConnection
+	}
+	return holder.mc, nil
 }
 
 // Broadcast publishes the provided message bytes on a mesh topic.
 func (c *Client) Broadcast(ctx context.Context, topic string, data []byte) error {
-	meshConn := c.primaryMeshConn.Load()
-	if meshConn == nil {
-		return fmt.Errorf("failed to broadcast message: %w", errNoMeshConnection)
+	mc, err := c.primaryMeshConnection()
+	if err != nil {
+		return fmt.Errorf("failed to broadcast message: %w", err)
 	}
 
-	return meshConn.broadcast(ctx, topic, data)
+	return mc.broadcast(ctx, topic, data)
 }
 
 // Topics returns the list of topics the client is currently subscribed to.
@@ -144,12 +171,12 @@ func (c *Client) Subscribe(ctx context.Context, topic string, handlerFunc TopicH
 		return ErrRedundantSubscription
 	}
 
-	meshConn := c.primaryMeshConn.Load()
-	if meshConn == nil {
-		return errNoMeshConnection
+	mc, err := c.primaryMeshConnection()
+	if err != nil {
+		return err
 	}
 
-	err := meshConn.subscribe(ctx, topic)
+	err = mc.subscribe(ctx, topic)
 	if err != nil {
 		return err
 	}
@@ -168,12 +195,12 @@ func (c *Client) Unsubscribe(ctx context.Context, topic string) error {
 		return nil
 	}
 
-	meshConn := c.primaryMeshConn.Load()
-	if meshConn == nil {
-		return errNoMeshConnection
+	mc, err := c.primaryMeshConnection()
+	if err != nil {
+		return err
 	}
 
-	err := meshConn.unsubscribe(ctx, topic)
+	err = mc.unsubscribe(ctx, topic)
 	if err != nil {
 		return err
 	}
@@ -186,10 +213,9 @@ func (c *Client) Unsubscribe(ctx context.Context, topic string) error {
 
 // handlePushMessage processes incoming pushed messages. The messages are processed based on their topics.
 func (c *Client) handlePushMessage(msg *protocolsPb.PushMessage) {
-	hostID := c.host.ID()
 	handlerFunc, err := c.topicRegistry.fetchHandler(msg.Topic)
 	if err != nil {
-		c.log.Errorf("%s: %v", hostID, err)
+		c.log.Warnf("Failed to fetch handler for topic %s: %v", msg.Topic, err)
 		return
 	}
 
@@ -207,7 +233,7 @@ func (c *Client) handlePushMessage(msg *protocolsPb.PushMessage) {
 	case protocolsPb.PushMessage_UNSUBSCRIBE:
 		event.Type = TopicEventPeerUnsubscribed
 	default:
-		c.log.Warnf("%s: received push message with unknown type %v on topic %s", hostID, msg.GetMessageType(), msg.Topic)
+		c.log.Warnf("Received push message with unknown type %v on topic %s", msg.GetMessageType(), msg.Topic)
 		return
 	}
 
@@ -216,12 +242,11 @@ func (c *Client) handlePushMessage(msg *protocolsPb.PushMessage) {
 
 // PostBond posts the client's bond.
 func (c *Client) PostBond(ctx context.Context) error {
-	meshConn := c.primaryMeshConn.Load()
-	if meshConn == nil {
-		return errNoMeshConnection
+	mc, err := c.primaryMeshConnection()
+	if err != nil {
+		return err
 	}
-
-	return meshConn.postBond(ctx)
+	return mc.postBond(ctx)
 }
 
 // AddBond adds the provided bond parameters to the client.
@@ -289,8 +314,8 @@ func (c *Client) Run(ctx context.Context, bonds []*bond.BondParams) error {
 
 	c.host.Peerstore().AddAddrs(peerInfo.ID, peerInfo.Addrs, time.Hour)
 	c.bondInfo.AddBonds(bonds, time.Now())
-
 	wg := sync.WaitGroup{}
+
 	wg.Add(1)
 	go func() {
 		c.maintainConnection(ctx, peerInfo.ID)
