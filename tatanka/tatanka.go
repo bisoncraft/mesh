@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/pprof"
 	"os"
 	"path/filepath"
 	"sync"
@@ -185,17 +186,11 @@ func (t *TatankaNode) Run(ctx context.Context) error {
 	})
 
 	t.setupStreamHandlers()
-
-	metricsMux := http.NewServeMux()
-	metricsMux.Handle("/metrics", promhttp.Handler())
-
-	t.metricsServer = &http.Server{
-		Addr:    fmt.Sprintf(":%d", t.config.MetricsPort),
-		Handler: metricsMux,
-	}
+	t.setupObservability()
 
 	go func() {
-		t.log.Infof("Starting metrics server on :%d/metrics", t.config.MetricsPort)
+		t.log.Infof("Metrics available on :%d/metrics", t.config.MetricsPort)
+		t.log.Infof("Profiler available on :%d/debug/pprof", t.config.MetricsPort)
 		if err := t.metricsServer.ListenAndServe(); err != nil {
 			if !errors.Is(err, http.ErrServerClosed) {
 				t.log.Errorf("Failed to start metrics server: %v", err)
@@ -275,6 +270,22 @@ func (t *TatankaNode) setupStreamHandlers() {
 	t.setStreamHandler(protocols.ClientPublishProtocol, t.handleClientPublish, t.requireBonds)
 	t.setStreamHandler(protocols.ClientPushProtocol, t.handleClientPush, t.requireBonds)
 	t.setStreamHandler(protocols.ClientRelayMessageProtocol, t.handleClientRelayMessage, t.requireBonds)
+}
+
+func (t *TatankaNode) setupObservability() {
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", promhttp.Handler())
+
+	mux.HandleFunc("/debug/pprof/", pprof.Index)
+	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+
+	t.metricsServer = &http.Server{
+		Addr:    fmt.Sprintf(":%d", t.config.MetricsPort),
+		Handler: mux,
+	}
 }
 
 // discoverPeers queries the given peer for the list of other tatanka nodes that

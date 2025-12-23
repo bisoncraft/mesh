@@ -83,8 +83,29 @@ func TestMeshConnection(t *testing.T) {
 		hostBReceivedMsgs <- msg
 	}
 
+	receiveWithTimeout := func(ch <-chan proto.Message) proto.Message {
+		select {
+		case evt := <-ch:
+			return evt
+		case <-time.After(time.Second * 2):
+			t.Fatal("Timed out waiting for message")
+			return nil
+		}
+	}
+
 	var attempts atomic.Int32
 	attemptsCh := make(chan struct{}, 10)
+
+	receiveAttemptSignalWithTimeout := func(ch <-chan struct{}) {
+		select {
+		case <-ch:
+			return
+		case <-time.After(time.Second * 2):
+			t.Fatal("Timed out waiting for attempt signal")
+			return
+		}
+	}
+
 	hostBFailureBondHandler := func(s network.Stream) {
 		defer func() { _ = s.Close() }()
 
@@ -222,7 +243,7 @@ func TestMeshConnection(t *testing.T) {
 	logger := logBackend.Logger("meshconn")
 	logger.SetLevel(slog.LevelDebug)
 
-	pushedMessages := make(chan *protocolsPb.PushMessage, 10)
+	pushedMessages := make(chan proto.Message, 10)
 	handleMessage := func(msg *protocolsPb.PushMessage) {
 		pushedMessages <- msg
 	}
@@ -274,16 +295,18 @@ func TestMeshConnection(t *testing.T) {
 	}
 
 	// Ensure the handler func receives and processes pushed messages.
-	select {
-	case receivedMsg := <-pushedMessages:
-		if receivedMsg.Topic != pushMsg1.Topic {
-			t.Fatalf("Expected topic %s, got %s", pushMsg1.Topic, receivedMsg.Topic)
-		}
-		if string(receivedMsg.Data) != string(pushMsg1.Data) {
-			t.Fatalf("Expected data %s, got %s", string(pushMsg1.Data), string(receivedMsg.Data))
-		}
-	case <-time.After(time.Second * 3):
-		t.Fatal("Timed out waiting for pushed message")
+	msg := receiveWithTimeout(pushedMessages)
+
+	pushedMsg, ok := msg.(*protocolsPb.PushMessage)
+	if !ok {
+		t.Fatal("Received message is not a PushMessage")
+	}
+
+	if pushedMsg.Topic != pushMsg1.Topic {
+		t.Fatalf("Expected topic %s, got %s", pushMsg1.Topic, pushedMsg.Topic)
+	}
+	if string(pushedMsg.Data) != string(pushMsg1.Data) {
+		t.Fatalf("Expected data %s, got %s", string(pushMsg1.Data), string(pushedMsg.Data))
 	}
 
 	// Ensure the mesh connection can subscribe to a topic.
@@ -293,23 +316,19 @@ func TestMeshConnection(t *testing.T) {
 		t.Fatalf("Failed to subscribe to topic: %v", err)
 	}
 
-	select {
-	case msg := <-hostBReceivedMsgs:
-		subMsg, ok := msg.(*protocolsPb.SubscribeRequest)
-		if !ok {
-			t.Fatal("Received message is not a ClientSubscribeMessage")
-		}
+	msg = receiveWithTimeout(hostBReceivedMsgs)
 
-		if subMsg.Topic != testTopic {
-			t.Fatalf("Expected %s, got %s", testTopic, subMsg.Topic)
-		}
+	subMsg, ok := msg.(*protocolsPb.SubscribeRequest)
+	if !ok {
+		t.Fatal("Received message is not a ClientSubscribeMessage")
+	}
 
-		if !subMsg.Subscribe {
-			t.Fatal("Expected a true flag for an subscribe message")
-		}
+	if subMsg.Topic != testTopic {
+		t.Fatalf("Expected %s, got %s", testTopic, subMsg.Topic)
+	}
 
-	case <-time.After(time.Second * 3):
-		t.Fatal("Timed out waiting for a subscribe message")
+	if !subMsg.Subscribe {
+		t.Fatal("Expected a true flag for an subscribe message")
 	}
 
 	// Ensure the mesh connection can unsubscribe from a topic.
@@ -318,23 +337,19 @@ func TestMeshConnection(t *testing.T) {
 		t.Fatalf("Failed to unsubscribe from topic: %v", err)
 	}
 
-	select {
-	case msg := <-hostBReceivedMsgs:
-		unsubMsg, ok := msg.(*protocolsPb.SubscribeRequest)
-		if !ok {
-			t.Fatal("Received message is not a ClientSubscribeMessage")
-		}
+	msg = receiveWithTimeout(hostBReceivedMsgs)
 
-		if unsubMsg.Topic != testTopic {
-			t.Fatalf("Expected %s, got %s", testTopic, unsubMsg.Topic)
-		}
+	unsubMsg, ok := msg.(*protocolsPb.SubscribeRequest)
+	if !ok {
+		t.Fatal("Received message is not a ClientSubscribeMessage")
+	}
 
-		if unsubMsg.Subscribe {
-			t.Fatal("Expected a false flag for an subscribe message")
-		}
+	if unsubMsg.Topic != testTopic {
+		t.Fatalf("Expected %s, got %s", testTopic, unsubMsg.Topic)
+	}
 
-	case <-time.After(time.Second * 3):
-		t.Fatal("Timed out waiting for an unsubscribe message")
+	if unsubMsg.Subscribe {
+		t.Fatal("Expected a false flag for an subscribe message")
 	}
 
 	// Ensure the mesh connection can publish messages.
@@ -344,23 +359,19 @@ func TestMeshConnection(t *testing.T) {
 		t.Fatalf("Failed to broadcast message: %v", err)
 	}
 
-	select {
-	case msg := <-hostBReceivedMsgs:
-		pubMsg, ok := msg.(*protocolsPb.PublishRequest)
-		if !ok {
-			t.Fatal("Received message is not a PublishRequest")
-		}
+	msg = receiveWithTimeout(hostBReceivedMsgs)
 
-		if pubMsg.Topic != testTopic {
-			t.Fatalf("Expected %s, got %s", testTopic, pubMsg.Topic)
-		}
+	pubMsg, ok := msg.(*protocolsPb.PublishRequest)
+	if !ok {
+		t.Fatal("Received message is not a PublishRequest")
+	}
 
-		if !bytes.Equal(pubMsg.Data, data) {
-			t.Fatalf("Expected a %s as published message data, got %s", string(pubMsg.Data), string(data))
-		}
+	if pubMsg.Topic != testTopic {
+		t.Fatalf("Expected %s, got %s", testTopic, pubMsg.Topic)
+	}
 
-	case <-time.After(time.Second * 3):
-		t.Fatal("Timed out waiting for a published message")
+	if !bytes.Equal(pubMsg.Data, data) {
+		t.Fatalf("Expected a %s as published message data, got %s", string(pubMsg.Data), string(data))
 	}
 
 	// Ensure the mesh connection can post bonds.
@@ -377,26 +388,18 @@ func TestMeshConnection(t *testing.T) {
 		t.Fatal("Expected a post bond error")
 	}
 
-	select {
-	case msg := <-hostBReceivedMsgs:
-		bondMsg, ok := msg.(*protocolsPb.PostBondRequest)
-		if !ok {
-			t.Fatal("Received message is not a PostBondRequest")
-		}
+	msg = receiveWithTimeout(hostBReceivedMsgs)
 
-		if len(bondMsg.Bonds) != 1 {
-			t.Fatalf("Expected %d bond, got %d", 1, len(bondMsg.Bonds))
-		}
-
-	case <-time.After(time.Second * 3):
-		t.Fatal("Timed out waiting for a bond message")
+	bondMsg, ok := msg.(*protocolsPb.PostBondRequest)
+	if !ok {
+		t.Fatal("Received message is not a PostBondRequest")
 	}
 
-	select {
-	case <-attemptsCh:
-	case <-time.After(time.Second * 3):
-		t.Fatal("Timed out waiting for attempt signal")
+	if len(bondMsg.Bonds) != 1 {
+		t.Fatalf("Expected %d bond, got %d", 1, len(bondMsg.Bonds))
 	}
+
+	receiveAttemptSignalWithTimeout(attemptsCh)
 
 	err = meshConn.postBondInternal(ctx, bondReq)
 	if err == nil {
@@ -407,17 +410,8 @@ func TestMeshConnection(t *testing.T) {
 		t.Fatalf("Expected an invalid bond index error, got %v", err)
 	}
 
-	select {
-	case <-hostBReceivedMsgs:
-	case <-time.After(time.Second * 3):
-		t.Fatal("Timed out waiting for a bond message")
-	}
-
-	select {
-	case <-attemptsCh:
-	case <-time.After(time.Second * 3):
-		t.Fatal("Timed out waiting for attempt signal")
-	}
+	_ = receiveWithTimeout(hostBReceivedMsgs)
+	receiveAttemptSignalWithTimeout(attemptsCh)
 
 	// The third attempt to post bond should succeed.
 	err = meshConn.postBondInternal(ctx, bondReq)
@@ -425,17 +419,8 @@ func TestMeshConnection(t *testing.T) {
 		t.Fatal("Expected a successful post bond attempt")
 	}
 
-	select {
-	case <-hostBReceivedMsgs:
-	case <-time.After(time.Second * 3):
-		t.Fatal("Timed out waiting for a bond message")
-	}
-
-	select {
-	case <-attemptsCh:
-	case <-time.After(time.Second * 3):
-		t.Fatal("Timed out waiting for attempt signal")
-	}
+	_ = receiveWithTimeout(hostBReceivedMsgs)
+	receiveAttemptSignalWithTimeout(attemptsCh)
 
 	hostB.SetStreamHandler(protocols.PostBondsProtocol, hostBSuccessBondHandler)
 
@@ -469,16 +454,18 @@ func TestMeshConnection(t *testing.T) {
 	}
 
 	// Ensure the handler func receives and processes pushed messages.
-	select {
-	case receivedMsg := <-pushedMessages:
-		if receivedMsg.Topic != pushMsg2.Topic {
-			t.Fatalf("Expected topic %s, got %s", pushMsg2.Topic, receivedMsg.Topic)
-		}
-		if string(receivedMsg.Data) != string(pushMsg2.Data) {
-			t.Fatalf("Expected data %s, got %s", string(pushMsg2.Data), string(receivedMsg.Data))
-		}
-	case <-time.After(time.Second * 3):
-		t.Fatal("Timed out waiting for pushed message")
+	msg = receiveWithTimeout(pushedMessages)
+
+	pushedMsg, ok = msg.(*protocolsPb.PushMessage)
+	if !ok {
+		t.Fatal("Received message is not a PushMessage")
+	}
+
+	if pushedMsg.Topic != pushMsg2.Topic {
+		t.Fatalf("Expected topic %s, got %s", pushMsg2.Topic, pushedMsg.Topic)
+	}
+	if string(pushedMsg.Data) != string(pushMsg2.Data) {
+		t.Fatalf("Expected data %s, got %s", string(pushMsg2.Data), string(pushedMsg.Data))
 	}
 
 	meshConn.kill()
