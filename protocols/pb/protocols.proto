@@ -11,6 +11,7 @@ message Response {
     SubscriptionsResponse subscriptions_response = 3;
     ClientAddrResponse addr_response = 4;
     PostBondResponse post_bond_response = 5;
+    AvailableMeshNodesResponse available_mesh_nodes_response = 6;
   }
 }
 
@@ -145,5 +146,24 @@ message TatankaRelayMessageResponse {
     bytes message = 1;
     Error error = 2;
   }
+}
+
+// AvailableMeshNodesRequest is sent by a client to get a list of all mesh
+// nodes that the tatanka node is connected to.
+message AvailableMeshNodesRequest {
+  // Intentionally empty
+}
+
+// AvailableMeshNodesResponse contains a list of all whitelisted mesh nodes
+// that this tatanka node is connected to, including itself.
+message AvailableMeshNodesResponse {
+  repeated PeerInfo peers = 1;
+}
+
+// InitialSubscriptions is sent by the client as the first message when
+// establishing a push stream. It contains the list of topics the client
+// is currently subscribed to.
+message InitialSubscriptions {
+  repeated string topics = 1;
 }
 

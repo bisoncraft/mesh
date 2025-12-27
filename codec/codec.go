@@ -40,7 +40,7 @@ func ReadLengthPrefixedBytes(s network.Stream, timeout ...time.Duration) ([]byte
 		return nil, fmt.Errorf("message size %d exceeds max size %d", msgLen, MaxMessageSize)
 	}
 	if msgLen == 0 {
-		return nil, fmt.Errorf("message size is 0")
+		return nil, nil
 	}
 
 	data := make([]byte, msgLen)

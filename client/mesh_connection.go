@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"sync"
-	"time"
 
 	"github.com/decred/slog"
 	"github.com/libp2p/go-libp2p/core/host"
@@ -16,7 +15,12 @@ import (
 	"github.com/martonp/tatanka-mesh/codec"
 	"github.com/martonp/tatanka-mesh/protocols"
 	protocolsPb "github.com/martonp/tatanka-mesh/protocols/pb"
+	ma "github.com/multiformats/go-multiaddr"
 	"google.golang.org/protobuf/proto"
+)
+
+const (
+	maxPostBondRetries = 3
 )
 
 var (
@@ -25,29 +29,31 @@ var (
 
 // meshConnection represents a connection to a mesh peer.
 type meshConnection struct {
-	peerID            peer.ID
-	host              host.Host
-	handleMessage     func(*protocolsPb.PushMessage)
-	fetchTopics       func() []string
-	setMeshConnection func(meshConn)
-	bondInfo          *bond.BondInfo
-	log               slog.Logger
+	peerID        peer.ID
+	host          host.Host
+	handleMessage func(*protocolsPb.PushMessage)
+	fetchTopics   func() []string
+	bondInfo      *bond.BondInfo
+	log           slog.Logger
 
 	cancelFuncMtx sync.RWMutex
 	cancelFunc    context.CancelFunc
+
+	readyCh   chan struct{}
+	readyOnce sync.Once
 }
 
 var _ meshConn = (*meshConnection)(nil)
 
-func newMeshConnection(host host.Host, peerID peer.ID, logger slog.Logger, bondInfo *bond.BondInfo, fetchTopics func() []string, handleMessage func(*protocolsPb.PushMessage), setMeshConnection func(meshConn)) *meshConnection {
+func newMeshConnection(host host.Host, peerID peer.ID, logger slog.Logger, bondInfo *bond.BondInfo, fetchTopics func() []string, handleMessage func(*protocolsPb.PushMessage)) *meshConnection {
 	return &meshConnection{
-		host:              host,
-		peerID:            peerID,
-		log:               logger,
-		handleMessage:     handleMessage,
-		fetchTopics:       fetchTopics,
-		setMeshConnection: setMeshConnection,
-		bondInfo:          bondInfo,
+		host:          host,
+		peerID:        peerID,
+		log:           logger,
+		handleMessage: handleMessage,
+		fetchTopics:   fetchTopics,
+		bondInfo:      bondInfo,
+		readyCh:       make(chan struct{}, 1),
 	}
 }
 
@@ -55,24 +61,21 @@ func (m *meshConnection) remotePeerID() peer.ID {
 	return m.peerID
 }
 
-// subscribeTopics subscribes to all registered topics.
-func (m *meshConnection) subscribeTopics(ctx context.Context) error {
-	topics := m.fetchTopics()
-	if len(topics) == 0 {
-		// Nothing to do.
-		return nil
+func (m *meshConnection) waitReady(ctx context.Context) {
+	select {
+	case <-m.readyCh:
+		return
+	case <-ctx.Done():
+		return
 	}
+}
 
-	for _, topic := range topics {
-		err := m.subscribe(ctx, topic)
-		if err != nil {
-			return fmt.Errorf("failed to subscribe to topic %s: %w", topic, err)
-		}
-	}
-
-	m.log.Infof("%s: resubscribed to topics on reconnection", m.host.ID())
-
-	return nil
+// markReady signals that the connection attempt completed. Sends nil on success
+// or the error on failure. Only the first call has effect.
+func (m *meshConnection) markReady() {
+	m.readyOnce.Do(func() {
+		close(m.readyCh)
+	})
 }
 
 // run starts the mesh connection and maintains it until the context is done.
@@ -81,7 +84,7 @@ func (m *meshConnection) run(ctx context.Context) error {
 		return fmt.Errorf("%s: no handler function provided", m.host.ID())
 	}
 
-	err := m.host.Connect(ctx, m.host.Peerstore().PeerInfo(m.peerID))
+	err := m.host.Connect(ctx, peer.AddrInfo{ID: m.peerID})
 	if err != nil {
 		return fmt.Errorf("failed to connect to peer %s: %w", m.peerID, err)
 	}
@@ -101,18 +104,7 @@ func (m *meshConnection) run(ctx context.Context) error {
 		return fmt.Errorf("%s: connection does not have the minimum required bond strength to establish a push stream", m.host.ID())
 	}
 
-	hostID := m.host.ID()
-	if err := m.subscribeTopics(runCtx); err != nil {
-		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-			return fmt.Errorf("%s: failed to subscribe to topics on mesh connection: %w", hostID, err)
-		}
-
-		return nil
-	}
-
-	m.maintainPushStream(runCtx)
-
-	return nil
+	return m.runPushStream(runCtx)
 }
 
 // subscribe subscribes to the provided topic.
@@ -127,7 +119,7 @@ func (m *meshConnection) subscribe(ctx context.Context, topic string) error {
 		Topic:     topic,
 		Subscribe: true,
 	}
-	return codec.WriteLengthPrefixedMessage(s, req, writeTimeout)
+	return codec.WriteLengthPrefixedMessage(s, req)
 }
 
 // broadcast publishes the provided message bytes on a mesh topic.
@@ -157,7 +149,7 @@ func (m *meshConnection) unsubscribe(ctx context.Context, topic string) error {
 		Topic:     topic,
 		Subscribe: false,
 	}
-	return codec.WriteLengthPrefixedMessage(s, req, writeTimeout)
+	return codec.WriteLengthPrefixedMessage(s, req)
 }
 
 // postBondInternal posts the provided bond request.
@@ -258,69 +250,128 @@ func (m *meshConnection) kill() {
 	m.cancelFunc()
 }
 
-// maintainPushStream starts a push stream to the remote peer and listens for messages
-// on the stream. If the push stream is closed, the function will attempt to create
-// a new one, maintaining a connection to the remote peer. The function will block
-// until the context is done.
-func (m *meshConnection) maintainPushStream(ctx context.Context) {
-	reconnectTimer := time.NewTimer(0)
-	defer reconnectTimer.Stop()
+// fetchAvailableMeshNodes fetches the list of available mesh nodes from the
+// connected tatanka node.
+func (m *meshConnection) fetchAvailableMeshNodes(ctx context.Context) ([]peer.AddrInfo, error) {
+	s, err := m.host.NewStream(ctx, m.peerID, protocols.AvailableMeshNodesProtocol)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create stream: %w", err)
+	}
+	defer func() { _ = s.Close() }()
 
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-reconnectTimer.C:
-			stream, err := m.host.NewStream(ctx, m.peerID, protocols.ClientPushProtocol)
+	resp := &protocolsPb.Response{}
+	if err := codec.ReadLengthPrefixedMessage(s, resp); err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	switch v := resp.Response.(type) {
+	case *protocolsPb.Response_AvailableMeshNodesResponse:
+		meshNodesResp := v.AvailableMeshNodesResponse
+		peers := make([]peer.AddrInfo, 0, len(meshNodesResp.Peers))
+
+		for _, pbPeer := range meshNodesResp.Peers {
+			peerID, err := peer.IDFromBytes(pbPeer.Id)
 			if err != nil {
-				if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-					m.log.Errorf("%s: failed to create push stream to peer with ID %s: %v", m.host.ID(), m.peerID, err)
-					return
-				}
-
-				// Periodically retry to reconnect on stream failure.
-				reconnectTimer = time.NewTimer(time.Minute)
+				m.log.Warnf("Failed to parse peer ID: %v", err)
 				continue
 			}
 
-			// Process push stream response.
-			hostID := m.host.ID()
-			resp := &protocolsPb.Response{}
-			err = codec.ReadLengthPrefixedMessage(stream, resp)
-			if err != nil {
-				m.log.Errorf("%s: failed to read push stream response: %v", hostID, err)
-				return
-			}
-
-			switch v := resp.Response.(type) {
-			case *protocolsPb.Response_Success:
-				// ACK, no action needed.
-				m.log.Infof("%s: push stream established", hostID)
-
-			case *protocolsPb.Response_Error:
-				rErr := v.Error
-				switch v := rErr.GetError().(type) {
-				case *protocolsPb.Error_Unauthorized:
-					m.log.Errorf("%s: unauthorized, cannot establish push stream", hostID)
-					return
-
-				default:
-					m.log.Errorf("%s: unexpected push stream error response: %T", hostID, v)
-					return
+			addrs := make([]ma.Multiaddr, 0, len(pbPeer.Addrs))
+			for _, addrBytes := range pbPeer.Addrs {
+				addr, err := ma.NewMultiaddrBytes(addrBytes)
+				if err != nil {
+					m.log.Warnf("Failed to parse multiaddr: %v", err)
+					continue
 				}
-
-			default:
-				m.log.Errorf("%s: unexpected push stream response: %T", hostID, v)
-				return
+				addrs = append(addrs, addr)
 			}
 
-			// Setting the mesh connection indicates it is ready for use.
-			m.setMeshConnection(m)
+			peers = append(peers, peer.AddrInfo{ID: peerID, Addrs: addrs})
+		}
 
-			m.handlePushedData(ctx, stream)
+		return peers, nil
 
-			// Reset the reconnect timer  to trigger a reconnection.
-			reconnectTimer = time.NewTimer(0)
+	case *protocolsPb.Response_Error:
+		return nil, fmt.Errorf("error response: %v", v.Error)
+
+	default:
+		return nil, fmt.Errorf("unexpected response type: %T", v)
+	}
+}
+
+// openPushStream creates a new push stream to the remote peer, sends the initial
+// subscriptions, and waits for the server acknowledgement. Returns the stream on
+// success or an error on failure.
+func (m *meshConnection) openPushStream(ctx context.Context) (network.Stream, error) {
+	stream, err := m.host.NewStream(ctx, m.peerID, protocols.ClientPushProtocol)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create push stream: %w", err)
+	}
+
+	initialSubs := &protocolsPb.InitialSubscriptions{
+		Topics: m.fetchTopics(),
+	}
+	if err := codec.WriteLengthPrefixedMessage(stream, initialSubs); err != nil {
+		_ = stream.Close()
+		return nil, fmt.Errorf("failed to send initial subscriptions: %w", err)
+	}
+
+	resp := &protocolsPb.Response{}
+	if err := codec.ReadLengthPrefixedMessage(stream, resp); err != nil {
+		_ = stream.Close()
+		return nil, fmt.Errorf("failed to read push stream response: %w", err)
+	}
+
+	switch v := resp.Response.(type) {
+	case *protocolsPb.Response_Success:
+		m.log.Infof("%s: push stream established", m.host.ID())
+		return stream, nil
+
+	case *protocolsPb.Response_Error:
+		_ = stream.Close()
+		if v.Error.GetUnauthorized() != nil {
+			return nil, errors.New("unauthorized: cannot establish push stream")
+		}
+		return nil, fmt.Errorf("push stream error: %T", v.Error.GetError())
+
+	default:
+		_ = stream.Close()
+		return nil, fmt.Errorf("unexpected push stream response: %T", v)
+	}
+}
+
+// runPushStream establishes a push stream and listens for messages. It blocks
+// until the context is done or the push stream is closed.
+// - If the initial attempt to establish the push stream fails, it returns an error.
+// - If the push stream is closed, and the peer is no longer connected, it returns
+// an error.
+// - If the push stream is closed, and the peer is still connected, one attempt will
+// be made to reopen the stream, if that fails, it returns an error.
+func (m *meshConnection) runPushStream(ctx context.Context) error {
+	stream, err := m.openPushStream(ctx)
+	if err != nil {
+		return err
+	}
+
+	m.markReady()
+
+	for {
+		m.handlePushedData(ctx, stream)
+
+		if ctx.Err() != nil {
+			return nil
+		}
+
+		// If the peer is no longer connected, return an error.
+		if m.host.Network().Connectedness(m.peerID) != network.Connected {
+			return fmt.Errorf("peer %s disconnected", m.peerID.ShortString())
+		}
+
+		// Attempt to reopen the stream once.
+		m.log.Infof("%s: push stream closed, attempting to reopen", m.host.ID())
+		stream, err = m.openPushStream(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to reopen push stream: %w", err)
 		}
 	}
 }

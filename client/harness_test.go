@@ -26,7 +26,7 @@ func TestMain(m *testing.M) {
 }
 
 // fetchNodeAddressAtIndex fetches the the address of the test harness node running at the provided index.
-// The node address details are fetched from the saved test harness manifest. This should be called after
+// The node address details are fetched from the saved test harness whitelist. This should be called after
 // running the tatanka test harness.
 func fetchNodeAddressAtIndex(index int) (string, error) {
 	curUser, err := user.Current()
@@ -34,29 +34,36 @@ func fetchNodeAddressAtIndex(index int) (string, error) {
 		return "", fmt.Errorf("failed to resolve current user: %w", err)
 	}
 
-	manifestPath := fmt.Sprintf("%s/%s", curUser.HomeDir, ".tatanka-test/manifest.json")
-	manifest := struct {
-		BootstrapPeers []struct {
-			ID        string   `json:"id"`
-			Addresses []string `json:"addresses"`
-		} `json:"bootstrap_peers"`
+	whitelistPath := fmt.Sprintf("%s/%s", curUser.HomeDir, ".tatanka-test/whitelist.json")
+	whitelist := struct {
+		Peers []struct {
+			ID      string `json:"id"`
+			Address string `json:"address"`
+		} `json:"peers"`
 	}{}
 
-	data, err := os.ReadFile(manifestPath)
+	data, err := os.ReadFile(whitelistPath)
 	if err != nil {
 		return "", err
 	}
 
-	if err := json.Unmarshal(data, &manifest); err != nil {
+	if err := json.Unmarshal(data, &whitelist); err != nil {
 		return "", err
 	}
 
-	if len(manifest.BootstrapPeers) < index {
+	if index < 0 || index >= len(whitelist.Peers) {
 		return "", fmt.Errorf("no node found at provided index: %d", index)
 	}
 
-	node := manifest.BootstrapPeers[index]
-	addr := fmt.Sprintf("%s/p2p/%s", node.Addresses[0], node.ID)
+	node := whitelist.Peers[index]
+	if node.Address == "" {
+		return "", fmt.Errorf("peer at index %d missing address", index)
+	}
+	if node.ID == "" {
+		return "", fmt.Errorf("peer at index %d missing peer ID", index)
+	}
+
+	addr := fmt.Sprintf("%s/p2p/%s", node.Address, node.ID)
 
 	return addr, nil
 }
@@ -94,17 +101,17 @@ func TestClientIntegration(t *testing.T) {
 	}
 
 	c1Cfg := Config{
-		RemotePeerAddr: nodeAddr,
-		Port:           c1Port,
-		PrivateKey:     c1Priv,
-		Logger:         loggerC1,
+		RemotePeerAddrs: []string{nodeAddr},
+		Port:            c1Port,
+		PrivateKey:      c1Priv,
+		Logger:          loggerC1,
 	}
 
 	c2Cfg := Config{
-		RemotePeerAddr: nodeAddr,
-		Port:           c2Port,
-		PrivateKey:     c2Priv,
-		Logger:         loggerC2,
+		RemotePeerAddrs: []string{nodeAddr},
+		Port:            c2Port,
+		PrivateKey:      c2Priv,
+		Logger:          loggerC2,
 	}
 
 	// Create two clients (c1 & c2) and connect to the node.
@@ -259,12 +266,12 @@ func TestClientIntegration(t *testing.T) {
 	}
 
 	// Ensure the c1 and c2 can post bonds.
-	err = c1.postBond(ctx)
+	err = c1.PostBond(ctx)
 	if err != nil {
 		t.Fatalf("Unexpected error posting bonds for c1: %v", err)
 	}
 
-	err = c2.postBond(ctx)
+	err = c2.PostBond(ctx)
 	if err != nil {
 		t.Fatalf("Unexpected error posting bonds for c2: %v", err)
 	}

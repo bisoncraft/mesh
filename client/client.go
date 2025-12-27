@@ -4,15 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/decred/slog"
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
-	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/martonp/tatanka-mesh/bond"
 
@@ -21,10 +18,8 @@ import (
 )
 
 const (
-	defaultHost        = "0.0.0.0"
-	defaultPort        = 7565
-	writeTimeout       = 5 * time.Second
-	maxPostBondRetries = 3
+	defaultHost = "0.0.0.0"
+	defaultPort = 7565
 )
 
 var (
@@ -34,42 +29,27 @@ var (
 	ErrRedundantUnsubscription = errors.New("redundant unsubscription")
 	// errEmptyTopic indicates an empty topic name was provided.
 	errEmptyTopic = errors.New("topic name cannot be empty")
-
-	errPeerNoEncryptionKey = errors.New("peer reports no encryption key")
+	// errNoMeshConnection indicates that there is no mesh connection established.
+	errNoMeshConnection = errors.New("no mesh connection established")
 )
 
 // Config represents a tatanka client configuration.
 type Config struct {
-	Port           int
-	PrivateKey     crypto.PrivKey
-	RemotePeerAddr string
-	Logger         slog.Logger
-}
-
-type meshConn interface {
-	broadcast(ctx context.Context, topic string, data []byte) error
-	subscribe(ctx context.Context, topic string) error
-	unsubscribe(ctx context.Context, topic string) error
-	postBond(ctx context.Context) error
-	kill()
-	remotePeerID() peer.ID
-}
-
-type meshConnHolder struct {
-	mc meshConn
+	Port            int
+	PrivateKey      crypto.PrivKey
+	RemotePeerAddrs []string
+	Logger          slog.Logger
 }
 
 // Client represents a tatanka client.
 type Client struct {
-	cfg             *Config
-	host            host.Host
-	primaryMeshConn atomic.Pointer[meshConnHolder]
-	topicRegistry   *topicRegistry
-	bondInfo        *bond.BondInfo
-	log             slog.Logger
-
-	connectionsMtx sync.RWMutex
-	connections    map[peer.ID]meshConn
+	cfg           *Config
+	host          host.Host
+	topicRegistry *topicRegistry
+	bondInfo      *bond.BondInfo
+	log           slog.Logger
+	connFactory   meshConnFactory
+	connManager   *meshConnectionManager
 }
 
 // PeerID returns the peer ID of the client. If the client has not yet been
@@ -81,33 +61,15 @@ func (c *Client) PeerID() peer.ID {
 	return c.host.ID()
 }
 
-// Ensure the client implements the network.Notifiee interface.
-var _ network.Notifiee = (*Client)(nil)
-
-func (c *Client) Listen(net network.Network, maddr ma.Multiaddr) {}
-
-func (c *Client) ListenClose(net network.Network, maddr ma.Multiaddr) {}
-
-func (c *Client) Connected(net network.Network, conn network.Conn) {}
-
-func (c *Client) Disconnected(net network.Network, conn network.Conn) {
-	c.connectionsMtx.RLock()
-	mc, ok := c.connections[conn.RemotePeer()]
-	if !ok {
-		c.connectionsMtx.RUnlock()
-		return
+// ConnectedTatankaNodePeerID returns the peer ID of the currently connected
+// tatanka node. If no tatanka node connection is active, an empty string
+// is returned.
+func (c *Client) ConnectedTatankaNodePeerID() string {
+	mc, err := c.primaryMeshConnection()
+	if err != nil {
+		return ""
 	}
-	c.connectionsMtx.RUnlock()
-
-	// Unset the primary mesh connection if it has been disconnected.
-	pmc := c.primaryMeshConn.Load()
-	if pmc != nil && pmc.mc != nil {
-		if pmc.mc.remotePeerID() == conn.RemotePeer() {
-			c.primaryMeshConn.Store(nil)
-		}
-	}
-
-	mc.kill()
+	return mc.remotePeerID().String()
 }
 
 // NewClient initializes a new tatanka client.
@@ -115,7 +77,6 @@ func NewClient(cfg *Config) (*Client, error) {
 	c := &Client{
 		cfg:           cfg,
 		topicRegistry: newTopicRegistry(),
-		connections:   make(map[peer.ID]meshConn),
 		bondInfo:      bond.NewBondInfo(),
 		log:           cfg.Logger,
 	}
@@ -134,20 +95,11 @@ func NewClient(cfg *Config) (*Client, error) {
 	return c, nil
 }
 
-func (c *Client) setPrimaryMeshConnection(mc meshConn) {
-	if mc == nil {
-		c.primaryMeshConn.Store(nil)
-		return
-	}
-	c.primaryMeshConn.Store(&meshConnHolder{mc: mc})
-}
-
 func (c *Client) primaryMeshConnection() (meshConn, error) {
-	holder := c.primaryMeshConn.Load()
-	if holder == nil || holder.mc == nil {
-		return nil, errors.New("no mesh connection established")
+	if c.connManager == nil {
+		return nil, errNoMeshConnection
 	}
-	return holder.mc, nil
+	return c.connManager.primaryConnection()
 }
 
 // Broadcast publishes the provided message bytes on a mesh topic.
@@ -282,33 +234,33 @@ func (c *Client) AddBond(params []*bond.BondParams) {
 	c.bondInfo.AddBonds(params, time.Now())
 }
 
-// maintainConnection maintains a mesh connection to the provided remote peer ID.
-func (c *Client) maintainConnection(ctx context.Context, remotePeerID peer.ID) {
-	reconnectTimer := time.NewTimer(0)
-	defer reconnectTimer.Stop()
+// parseBootstrapAddrs parses a list of multiaddr strings into peer.AddrInfo.
+// Multiple addresses for the same peer ID are combined into a single AddrInfo.
+func parseBootstrapAddrs(addrs []string) ([]peer.AddrInfo, error) {
+	peerMap := make(map[peer.ID]*peer.AddrInfo)
 
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-reconnectTimer.C:
-			meshConn := newMeshConnection(c.host, remotePeerID, c.log, c.bondInfo, c.topicRegistry.fetchTopics, c.handlePushMessage, c.setPrimaryMeshConnection)
+	for _, addrStr := range addrs {
+		maddr, err := ma.NewMultiaddr(addrStr)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse address %q: %w", addrStr, err)
+		}
+		info, err := peer.AddrInfoFromP2pAddr(maddr)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse peer info from %q: %w", addrStr, err)
+		}
 
-			c.connectionsMtx.Lock()
-			c.connections[remotePeerID] = meshConn
-			c.connectionsMtx.Unlock()
-
-			err := meshConn.run(ctx)
-			if err != nil {
-				c.log.Error(err)
-				reconnectTimer = time.NewTimer(time.Minute)
-				continue
-			}
-
-			// Initially worked, but was disconnected. meshConn.kill was called.
-			reconnectTimer = time.NewTimer(0)
+		if existing, ok := peerMap[info.ID]; ok {
+			existing.Addrs = append(existing.Addrs, info.Addrs...)
+		} else {
+			peerMap[info.ID] = info
 		}
 	}
+
+	result := make([]peer.AddrInfo, 0, len(peerMap))
+	for _, info := range peerMap {
+		result = append(result, *info)
+	}
+	return result, nil
 }
 
 // Run starts the mesh client.
@@ -324,33 +276,31 @@ func (c *Client) Run(ctx context.Context, bonds []*bond.BondParams) error {
 	if err != nil {
 		return fmt.Errorf("failed to create host: %w", err)
 	}
+	defer func() { _ = c.host.Close() }()
 
-	// Ensure the client receives connection state notifications.
-	c.host.Network().Notify(c)
-
-	// TODO: take multiple peer addresses from the mesh and establish connections to
-	// them to failover to if the current peer becomes unreachable.
-	peerAddr, err := ma.NewMultiaddr(c.cfg.RemotePeerAddr)
+	bootstrapPeers, err := parseBootstrapAddrs(c.cfg.RemotePeerAddrs)
 	if err != nil {
-		return fmt.Errorf("failed to parse peer address: %w", err)
+		return err
 	}
 
-	peerInfo, err := peer.AddrInfoFromP2pAddr(peerAddr)
-	if err != nil {
-		return fmt.Errorf("failed parsing peer info from address: %w", err)
+	// Set default connection factory if not already set (tests may override).
+	if c.connFactory == nil {
+		c.connFactory = func(peerID peer.ID) meshConn {
+			return newMeshConnection(c.host, peerID, c.log, c.bondInfo, c.topicRegistry.fetchTopics, c.handlePushMessage)
+		}
 	}
 
-	c.host.Peerstore().AddAddrs(peerInfo.ID, peerInfo.Addrs, time.Hour)
+	// Create the connection manager.
+	c.connManager = newMeshConnectionManager(&meshConnectionManagerConfig{
+		host:           c.host,
+		log:            c.log,
+		connFactory:    c.connFactory,
+		bootstrapPeers: bootstrapPeers,
+	})
+
 	c.bondInfo.AddBonds(bonds, time.Now())
-	wg := sync.WaitGroup{}
 
-	wg.Add(1)
-	go func() {
-		c.maintainConnection(ctx, peerInfo.ID)
-		wg.Done()
-	}()
+	c.connManager.run(ctx)
 
-	wg.Wait()
-	_ = c.host.Close()
 	return nil
 }

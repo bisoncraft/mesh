@@ -9,7 +9,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/decred/slog"
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -24,17 +23,6 @@ type relayMessageParams struct {
 type broadcastParams struct {
 	Topic string
 	Data  []byte
-}
-
-// noMessageWithin verifies that no message is received on the channel within the timeout.
-// If a message is received, it fails the test with the provided error message.
-func noMessageWithin[T any](t *testing.T, ch <-chan T, timeout time.Duration, errMsg string) {
-	select {
-	case <-ch:
-		t.Fatal(errMsg)
-	case <-time.After(timeout):
-		// Expected: no message received
-	}
 }
 
 type relayMessageReturnValue struct {
@@ -59,10 +47,22 @@ type tMeshConnection struct {
 	postBondCalls []struct{}
 	postBondErr   error
 
+	fetchNodes []peer.AddrInfo
+
+	runErrCh chan error
+
 	KillCalls int
 }
 
 var _ meshConn = (*tMeshConnection)(nil)
+
+func newTMeshConnection(remotePeer peer.ID) *tMeshConnection {
+	return &tMeshConnection{
+		remotePeer: remotePeer,
+		runErrCh:   make(chan error, 1),
+		fetchNodes: []peer.AddrInfo{},
+	}
+}
 
 func (m *tMeshConnection) remotePeerID() peer.ID {
 	m.mu.Lock()
@@ -108,19 +108,52 @@ func (m *tMeshConnection) postBond(ctx context.Context) error {
 
 func (m *tMeshConnection) kill() {}
 
+func (m *tMeshConnection) run(ctx context.Context) error {
+	if m.runErrCh != nil {
+		select {
+		case err := <-m.runErrCh:
+			return err
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func (m *tMeshConnection) fetchAvailableMeshNodes(ctx context.Context) ([]peer.AddrInfo, error) {
+	m.mu.Lock()
+	nodes := append([]peer.AddrInfo(nil), m.fetchNodes...)
+	m.mu.Unlock()
+	return nodes, nil
+}
+
+func (m *tMeshConnection) waitReady(ctx context.Context) {
+}
+
+func (m *tMeshConnection) fail(err error) {
+	m.runErrCh <- err
+}
+
+// setTestMeshConnection sets up a mock mesh connection for testing.
+func (c *Client) setTestMeshConnection(mc meshConn) {
+	if c.connManager == nil {
+		c.connManager = &meshConnectionManager{}
+	}
+	c.connManager.setPrimaryConnection(mc)
+}
+
 func TestSubscribe(t *testing.T) {
 	ctx := context.Background()
 
-	mc := &tMeshConnection{
-		remotePeer: peer.ID("peer"),
-	}
+	mc := newTMeshConnection(randomPeerID())
 
 	c := &Client{
 		cfg:           &Config{},
 		topicRegistry: newTopicRegistry(),
-		connections:   make(map[peer.ID]meshConn),
 	}
-	c.setPrimaryMeshConnection(mc)
+	c.setTestMeshConnection(mc)
 
 	// Subscribe to a topic successfully.
 	err := c.Subscribe(ctx, "topic-1", func(TopicEvent) {})
@@ -215,17 +248,14 @@ func TestPushMessage(t *testing.T) {
 	logBackend := slog.NewBackend(os.Stdout)
 	logger := logBackend.Logger("client_test")
 
-	mc := &tMeshConnection{
-		remotePeer: peer.ID("peer"),
-	}
+	mc := newTMeshConnection(randomPeerID())
 
 	c := &Client{
 		cfg:           &Config{Logger: logger},
 		topicRegistry: newTopicRegistry(),
-		connections:   make(map[peer.ID]meshConn),
 		log:           logger,
 	}
-	c.setPrimaryMeshConnection(mc)
+	c.setTestMeshConnection(mc)
 
 	type handled struct {
 		topic string
@@ -351,17 +381,14 @@ func TestConcurrentBroadcasts(t *testing.T) {
 	logBackend := slog.NewBackend(os.Stdout)
 	logger := logBackend.Logger("client_test")
 
-	mc := &tMeshConnection{
-		remotePeer: peer.ID("peer"),
-	}
+	mc := newTMeshConnection(randomPeerID())
 
 	c := &Client{
 		cfg:           &Config{Logger: logger},
 		topicRegistry: newTopicRegistry(),
-		connections:   make(map[peer.ID]meshConn),
 		log:           logger,
 	}
-	c.setPrimaryMeshConnection(mc)
+	c.setTestMeshConnection(mc)
 
 	testTopic := "concurrent-broadcast-test"
 
@@ -439,17 +466,14 @@ func TestConcurrentSubscribeUnsubscribe(t *testing.T) {
 	logBackend := slog.NewBackend(os.Stdout)
 	logger := logBackend.Logger("client_test")
 
-	mc := &tMeshConnection{
-		remotePeer: peer.ID("peer"),
-	}
+	mc := newTMeshConnection(randomPeerID())
 
 	c := &Client{
 		cfg:           &Config{Logger: logger},
 		topicRegistry: newTopicRegistry(),
-		connections:   make(map[peer.ID]meshConn),
 		log:           logger,
 	}
-	c.setPrimaryMeshConnection(mc)
+	c.setTestMeshConnection(mc)
 
 	testTopic := "concurrent-test"
 	workers := 10
@@ -550,17 +574,14 @@ func TestMalformedInput(t *testing.T) {
 	logBackend := slog.NewBackend(os.Stdout)
 	logger := logBackend.Logger("client_test")
 
-	mc := &tMeshConnection{
-		remotePeer: peer.ID("peer"),
-	}
+	mc := newTMeshConnection(randomPeerID())
 
 	c := &Client{
 		cfg:           &Config{Logger: logger},
 		topicRegistry: newTopicRegistry(),
-		connections:   make(map[peer.ID]meshConn),
 		log:           logger,
 	}
-	c.setPrimaryMeshConnection(mc)
+	c.setTestMeshConnection(mc)
 
 	emptyTopic := ""
 

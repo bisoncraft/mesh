@@ -33,7 +33,7 @@ var (
 
 // Config represents the test client configuration.
 type Config struct {
-	NodeAddr   string
+	NodeAddr   []string
 	PrivateKey crypto.PrivKey
 	ClientPort int
 	WebPort    int
@@ -82,10 +82,10 @@ func NewClient(cfg *Config) (*Client, error) {
 	}
 
 	tcCfg := &tmc.Config{
-		Port:           cfg.ClientPort,
-		PrivateKey:     cfg.PrivateKey,
-		RemotePeerAddr: cfg.NodeAddr,
-		Logger:         cfg.Logger,
+		Port:            cfg.ClientPort,
+		PrivateKey:      cfg.PrivateKey,
+		RemotePeerAddrs: []string(cfg.NodeAddr),
+		Logger:          cfg.Logger,
 	}
 
 	tc, err := tmc.NewClient(tcCfg)
@@ -102,9 +102,16 @@ func NewClient(cfg *Config) (*Client, error) {
 
 func (c *Client) identity(w http.ResponseWriter, r *http.Request) {
 	peerID := c.tatankaClient.PeerID()
-	resp := map[string]any{"peer_id": ""}
+	tatankaNodePeerID := c.tatankaClient.ConnectedTatankaNodePeerID()
+	resp := map[string]any{
+		"peer_id":                "",
+		"connected_node_peer_id": "",
+	}
 	if peerID != "" {
 		resp["peer_id"] = peerID.String()
+	}
+	if tatankaNodePeerID != "" {
+		resp["connected_node_peer_id"] = tatankaNodePeerID
 	}
 	if err := writeResponse(w, http.StatusOK, resp); err != nil {
 		c.log.Errorf("Failed to write identity response: %v", err)

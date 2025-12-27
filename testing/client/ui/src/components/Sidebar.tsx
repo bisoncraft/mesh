@@ -10,8 +10,19 @@ export function Sidebar(props: {
   baseUrl: string
   streamStatus: string
   peerId?: string
+  connectedNode?: string
 }) {
-  const { topics, selected, onSelect, onUnsubscribe, onOpenSubscribe, baseUrl, streamStatus, peerId } = props
+  const {
+    topics,
+    selected,
+    onSelect,
+    onUnsubscribe,
+    onOpenSubscribe,
+    baseUrl,
+    streamStatus,
+    peerId,
+    connectedNode,
+  } = props
 
   return (
     <aside className="sidebar">
@@ -23,6 +34,28 @@ export function Sidebar(props: {
       </div>
 
       <div className="muted" style={{ fontSize: 12 }}>
+        <div className="kvRow">
+          <span className="kvKey">Tatanka node:</span>
+          <span className="kvValue mono truncate" title={connectedNode || ''}>
+            {connectedNode || ''}
+          </span>
+          <button
+            className="iconButton"
+            title="Copy connected node"
+            onClick={async () => {
+              if (!connectedNode) return
+              try {
+                await navigator.clipboard.writeText(connectedNode)
+              } catch {
+                // ignore
+              }
+            }}
+            disabled={!connectedNode}
+          >
+            ⧉
+          </button>
+        </div>
+        <br />
         <div className="kvRow">
           <span className="kvKey">Peer ID:</span>
           <span className="kvValue mono truncate" title={peerId || ''}>

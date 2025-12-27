@@ -6,8 +6,9 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
-	"io"
+	"net"
 	"os"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -26,503 +27,212 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// Test helpers
-
-func createHost(t *testing.T, port int) (host.Host, string) {
+// createHost creates a libp2p host listening on a dynamic TCP port.
+func createHost(t *testing.T) (host.Host, string) {
 	priv, _, err := crypto.GenerateEd25519Key(rand.Reader)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("crypto.GenerateEd25519Key: %v", err)
 	}
 
+	// Use port 0 for dynamic allocation.
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("net.Listen: %v", err)
+	}
+	port := l.Addr().(*net.TCPAddr).Port
+	l.Close() // Close listener after getting port.
+
 	addr := fmt.Sprintf("/ip4/127.0.0.1/tcp/%d", port)
-	host, err := libp2p.New(
+
+	h, err := libp2p.New(
 		libp2p.Identity(priv),
 		libp2p.ListenAddrStrings(addr),
 	)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("libp2p.New: %v", err)
 	}
 
-	return host, fmt.Sprintf("%s/p2p/%s", addr, host.ID().String())
+	return h, fmt.Sprintf("%s/p2p/%s", addr, h.ID().String())
 }
 
-func receiveWithTimeout(t *testing.T, ch <-chan proto.Message) proto.Message {
+func receiveWithTimeout[T any](t *testing.T, ch <-chan T, timeout time.Duration) T {
 	select {
-	case evt := <-ch:
-		return evt
-	case <-time.After(time.Second * 2):
-		t.Fatal("Timed out waiting for message")
-		return nil
-	}
-}
-
-func receiveAttemptSignalWithTimeout(t *testing.T, ch <-chan struct{}) {
-	select {
-	case <-ch:
-		return
-	case <-time.After(time.Second * 2):
-		t.Fatal("Timed out waiting for attempt signal")
-		return
+	case msg := <-ch:
+		return msg
+	case <-time.After(timeout):
+		t.Fatalf("Timed out waiting for message after %v", timeout)
+		return *new(T) // unreachable
 	}
 }
 
-func receiveReadySignalWithTimeout(t *testing.T, ch <-chan struct{}) {
-	select {
-	case <-ch:
-		return
-	case <-time.After(time.Second * 2):
-		t.Fatal("Timed out waiting for ready signal")
+func randomPeerID() peer.ID {
+	_, pub, err := crypto.GenerateKeyPair(crypto.Ed25519, -1)
+	if err != nil {
+		panic(err)
+	}
+	id, err := peer.IDFromPublicKey(pub)
+	if err != nil {
+		panic(err)
+	}
+	return id
+}
+
+// requireEventually asserts that the given condition function returns true within
+// the specified timeout. It polls the condition at the given tick interval.
+func requireEventually(t *testing.T, condition func() bool, timeout, tick time.Duration, msg string, args ...any) {
+	t.Helper()
+
+	deadline := time.Now().Add(timeout)
+
+	for time.Now().Before(deadline) {
+		if condition() {
+			return
+		}
+		time.Sleep(tick)
+	}
+
+	if condition() {
 		return
 	}
+
+	t.Fatalf("Condition failed after %v: %s", timeout, fmt.Sprintf(msg, args...))
 }
 
 type meshConnHarness struct {
-	hostA             host.Host
-	hostB             host.Host
-	hostBAddr         string
-	ctx               context.Context
-	cancel            context.CancelFunc
-	logger            slog.Logger
-	bondInfo          *bond.BondInfo
-	pushedMessages    chan proto.Message
-	hostBReceivedMsgs chan proto.Message
-	readyCh           chan struct{}
-	hostBPushStream   atomic.Pointer[network.Stream]
-	meshConn          *meshConnection
+	clientHost           host.Host
+	tatankaHost          host.Host
+	tatankaAddr          string
+	ctx                  context.Context
+	cancel               context.CancelFunc
+	logger               slog.Logger
+	clientReceived       chan *protocolsPb.PushMessage
+	publishReceived      chan *protocolsPb.PublishRequest
+	subscribeReceived    chan *protocolsPb.SubscribeRequest
+	postBondReceived     chan *protocolsPb.PostBondRequest
+	meshNodesResp        *protocolsPb.AvailableMeshNodesResponse
+	initialSubscriptions chan *protocolsPb.InitialSubscriptions
+	postBondResponses    []proto.Message
+	tatankaPushStream    atomic.Pointer[network.Stream]
+	meshConn             *meshConnection
+	runDone              chan error
 }
 
-func newMeshConnHarness(t *testing.T) *meshConnHarness {
-	hostAPort := 4455
-	hostA, _ := createHost(t, hostAPort)
+func newMeshConnHarness(t *testing.T, topics []string) *meshConnHarness {
+	clientHost, _ := createHost(t)
+	tatankaHost, tatankaAddr := createHost(t)
 
-	hostBPort := 4456
-	hostB, hostBAddr := createHost(t, hostBPort)
-
-	peerAddr, err := ma.NewMultiaddr(hostBAddr)
+	// Add tatanka address to client's peerstore
+	tatankaMultiaddr, err := ma.NewMultiaddr(tatankaAddr)
 	if err != nil {
-		t.Fatalf("Failed to parse remote peer address: %v", err)
+		t.Fatalf("Failed to parse tatanka multiaddr: %v", err)
 	}
-
-	peerInfo, err := peer.AddrInfoFromP2pAddr(peerAddr)
+	tatankaInfo, err := peer.AddrInfoFromP2pAddr(tatankaMultiaddr)
 	if err != nil {
-		t.Fatalf("Failed to parse peer info from address: %v", err)
+		t.Fatalf("Failed to parse tatanka peer info: %v", err)
 	}
-
-	hostA.Peerstore().AddAddrs(peerInfo.ID, peerInfo.Addrs, time.Minute*10)
+	clientHost.Peerstore().AddAddrs(tatankaInfo.ID, tatankaInfo.Addrs, 10*time.Minute)
 
 	logBackend := slog.NewBackend(os.Stdout)
-	logger := logBackend.Logger("meshconn")
+	logger := logBackend.Logger("meshconn-test")
 	logger.SetLevel(slog.LevelDebug)
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	pushedMessages := make(chan proto.Message, 10)
-	hostBReceivedMsgs := make(chan proto.Message, 10)
-	readyCh := make(chan struct{}, 1)
+	h := &meshConnHarness{
+		clientHost:           clientHost,
+		tatankaHost:          tatankaHost,
+		tatankaAddr:          tatankaAddr,
+		ctx:                  ctx,
+		cancel:               cancel,
+		logger:               logger,
+		clientReceived:       make(chan *protocolsPb.PushMessage, 10),
+		publishReceived:      make(chan *protocolsPb.PublishRequest, 10),
+		subscribeReceived:    make(chan *protocolsPb.SubscribeRequest, 10),
+		postBondReceived:     make(chan *protocolsPb.PostBondRequest, 10),
+		initialSubscriptions: make(chan *protocolsPb.InitialSubscriptions, 10),
+		runDone:              make(chan error, 1),
+	}
+
+	h.setupDefaultHandlers(t)
 
 	bondInfo := bond.NewBondInfo()
 	bondInfo.AddBonds([]*bond.BondParams{{
-		ID:       "placeholder",
-		Expiry:   time.Now().Add(time.Hour * 6),
-		Strength: bond.MinRequiredBondStrength}},
-		time.Now())
+		ID:       "test-bond",
+		Expiry:   time.Now().Add(6 * time.Hour),
+		Strength: bond.MinRequiredBondStrength,
+	}}, time.Now())
 
-	th := &meshConnHarness{
-		hostA:             hostA,
-		hostB:             hostB,
-		hostBAddr:         hostBAddr,
-		ctx:               ctx,
-		cancel:            cancel,
-		logger:            logger,
-		bondInfo:          bondInfo,
-		pushedMessages:    pushedMessages,
-		hostBReceivedMsgs: hostBReceivedMsgs,
-		readyCh:           readyCh,
-	}
-
-	// Set up default handlers
-	th.setupDefaultHandlers(t)
-
-	return th
-}
-
-func (th *meshConnHarness) setupDefaultHandlers(t *testing.T) {
-	th.hostA.SetStreamHandler(protocols.ClientPushProtocol, func(s network.Stream) {})
-
-	th.hostB.SetStreamHandler(protocols.ClientPushProtocol, func(s network.Stream) {
-		resp := &protocolsPb.Response{
-			Response: &protocolsPb.Response_Success{
-				Success: &protocolsPb.Success{},
-			},
-		}
-
-		err := codec.WriteLengthPrefixedMessage(s, resp)
-		if err != nil {
-			t.Fatalf("Failed to write message: %v", err)
-		}
-
-		th.hostBPushStream.Store(&s)
-	})
-
-	th.hostB.SetStreamHandler(protocols.ClientPublishProtocol, func(s network.Stream) {
-		defer func() { _ = s.Close() }()
-
-		pubMsg := &protocolsPb.PublishRequest{}
-		if err := codec.ReadLengthPrefixedMessage(s, pubMsg); err != nil {
-			if !errors.Is(err, io.EOF) {
-				t.Fatalf("Failed to read message: %v", err)
-			}
-			return
-		}
-
-		th.hostBReceivedMsgs <- pubMsg
-	})
-
-	th.hostB.SetStreamHandler(protocols.ClientSubscribeProtocol, func(s network.Stream) {
-		defer func() { _ = s.Close() }()
-
-		msg := &protocolsPb.SubscribeRequest{}
-		if err := codec.ReadLengthPrefixedMessage(s, msg); err != nil {
-			if !errors.Is(err, io.EOF) {
-				t.Fatalf("Failed to read message: %v", err)
-			}
-			return
-		}
-
-		th.hostBReceivedMsgs <- msg
-	})
-
-	th.hostB.SetStreamHandler(protocols.PostBondsProtocol, func(s network.Stream) {
-		defer func() { _ = s.Close() }()
-
-		msg := &protocolsPb.PostBondRequest{}
-		if err := codec.ReadLengthPrefixedMessage(s, msg); err != nil {
-			if !errors.Is(err, io.EOF) {
-				t.Fatalf("Failed to read message: %v", err)
-			}
-			return
-		}
-
-		bondResp := &protocolsPb.Response{
-			Response: &protocolsPb.Response_PostBondResponse{
-				PostBondResponse: &protocolsPb.PostBondResponse{
-					BondStrength: bond.MinRequiredBondStrength,
-				},
-			},
-		}
-
-		err := codec.WriteLengthPrefixedMessage(s, bondResp)
-		if err != nil {
-			t.Fatalf("Failed to write message: %v", err)
-		}
-	})
-}
-
-func (th *meshConnHarness) createMeshConnection() {
-	handleMessage := func(msg *protocolsPb.PushMessage) {
-		th.pushedMessages <- msg
-	}
-
-	fetchTopics := func() []string {
-		return []string{}
-	}
-
-	setMeshConnection := func(meshConn meshConn) {
-		th.readyCh <- struct{}{}
-	}
-
-	th.meshConn = newMeshConnection(
-		th.hostA,
-		th.hostB.ID(),
-		th.logger,
-		th.bondInfo,
-		fetchTopics,
-		handleMessage,
-		setMeshConnection,
+	h.meshConn = newMeshConnection(
+		h.clientHost,
+		h.tatankaHost.ID(),
+		h.logger,
+		bondInfo,
+		func() []string { return topics },
+		func(msg *protocolsPb.PushMessage) {
+			h.clientReceived <- msg
+		},
 	)
-}
 
-func (th *meshConnHarness) runMeshConnection(t *testing.T) {
 	go func() {
-		err := th.meshConn.run(th.ctx)
-		if err != nil {
-			t.Logf("mesh connection run error: %v", err)
-		}
+		h.runDone <- h.meshConn.run(h.ctx)
 	}()
 
-	receiveReadySignalWithTimeout(t, th.readyCh)
+	receiveWithTimeout(t, h.meshConn.readyCh, 2*time.Second)
+
+	return h
 }
 
-func (th *meshConnHarness) getHostBPushStream() network.Stream {
-	ps := th.hostBPushStream.Load()
-	if ps != nil {
-		return *ps
-	}
-	return nil
-}
+func (h *meshConnHarness) setupDefaultHandlers(t *testing.T) {
+	h.clientHost.SetStreamHandler(protocols.ClientPushProtocol, func(s network.Stream) {})
 
-func (th *meshConnHarness) cleanup() {
-	th.cancel()
-	_ = th.hostA.Close()
-	_ = th.hostB.Close()
-}
-
-// Tests
-
-func TestMeshConnectionPushMessages(t *testing.T) {
-	th := newMeshConnHarness(t)
-	defer th.cleanup()
-
-	th.createMeshConnection()
-	th.runMeshConnection(t)
-
-	pushStreamFromB := th.hostB.Network().ConnsToPeer(th.hostA.ID())[0].GetStreams()[0]
-	if pushStreamFromB == nil {
-		t.Fatalf("Expected an initialized push stream from B")
-	}
-
-	pushMsg := &protocolsPb.PushMessage{
-		Topic: "test1",
-		Data:  []byte("test1"),
-	}
-
-	err := codec.WriteLengthPrefixedMessage(pushStreamFromB, pushMsg)
-	if err != nil {
-		t.Fatalf("Failed to write push message: %v", err)
-	}
-
-	msg := receiveWithTimeout(t, th.pushedMessages)
-
-	pushedMsg, ok := msg.(*protocolsPb.PushMessage)
-	if !ok {
-		t.Fatal("Received message is not a PushMessage")
-	}
-
-	if pushedMsg.Topic != pushMsg.Topic {
-		t.Fatalf("Expected topic %s, got %s", pushMsg.Topic, pushedMsg.Topic)
-	}
-	if string(pushedMsg.Data) != string(pushMsg.Data) {
-		t.Fatalf("Expected data %s, got %s", string(pushMsg.Data), string(pushedMsg.Data))
-	}
-}
-
-func TestMeshConnectionSubscribeTopicsOnConnection(t *testing.T) {
-	th := newMeshConnHarness(t)
-	defer th.cleanup()
-
-	topics := []string{"topic1", "topic2", "topic3"}
-	var subscribeCount atomic.Int32
-
-	fetchTopics := func() []string {
-		return topics
-	}
-
-	handleMessage := func(msg *protocolsPb.PushMessage) {
-		th.pushedMessages <- msg
-	}
-
-	setMeshConnection := func(meshConn meshConn) {
-		th.readyCh <- struct{}{}
-	}
-
-	// Override the subscribe handler to count subscriptions
-	th.hostB.SetStreamHandler(protocols.ClientSubscribeProtocol, func(s network.Stream) {
-		defer func() { _ = s.Close() }()
-
-		msg := &protocolsPb.SubscribeRequest{}
-		if err := codec.ReadLengthPrefixedMessage(s, msg); err != nil {
-			if !errors.Is(err, io.EOF) {
-				t.Logf("Failed to read message: %v", err)
-			}
-			return
+	h.tatankaHost.SetStreamHandler(protocols.ClientPushProtocol, func(s network.Stream) {
+		initialSubs := &protocolsPb.InitialSubscriptions{}
+		if err := codec.ReadLengthPrefixedMessage(s, initialSubs); err != nil {
+			t.Fatalf("Failed to read initial subscriptions: %v", err)
 		}
+		h.initialSubscriptions <- initialSubs
 
-		if msg.Subscribe {
-			subscribeCount.Add(1)
+		resp := &protocolsPb.Response{
+			Response: &protocolsPb.Response_Success{Success: &protocolsPb.Success{}},
 		}
+		if err := codec.WriteLengthPrefixedMessage(s, resp); err != nil {
+			t.Fatalf("Failed to send push stream ack: %v", err)
+		}
+		h.tatankaPushStream.Store(&s)
 	})
 
-	th.meshConn = newMeshConnection(
-		th.hostA,
-		th.hostB.ID(),
-		th.logger,
-		th.bondInfo,
-		fetchTopics,
-		handleMessage,
-		setMeshConnection,
-	)
-
-	th.runMeshConnection(t)
-
-	// Give it time to process initial subscriptions
-	time.Sleep(100 * time.Millisecond)
-
-	count := subscribeCount.Load()
-	if count != int32(len(topics)) {
-		t.Fatalf("Expected %d subscriptions, got %d", len(topics), count)
-	}
-
-	// Close the push stream to force reconnection
-	pushStreamFromA := th.hostA.Network().ConnsToPeer(th.hostB.ID())[0].GetStreams()[0]
-	if pushStreamFromA == nil {
-		t.Fatalf("Expected an initialized push stream from A")
-	}
-
-	err := pushStreamFromA.Close()
-	if err != nil {
-		t.Fatalf("Unexpected error closing push stream: %v", err)
-	}
-
-	// Wait for reconnection
-	receiveReadySignalWithTimeout(t, th.readyCh)
-
-	// Give it time after reconnection
-	time.Sleep(100 * time.Millisecond)
-
-	// Verify subscriptions remain the same (subscribeTopics is only called once during run)
-	finalCount := subscribeCount.Load()
-	if finalCount != int32(len(topics)) {
-		t.Fatalf("Expected subscriptions to remain %d after reconnection, got %d", len(topics), finalCount)
-	}
-}
-
-func TestMeshConnectionSubscribe(t *testing.T) {
-	th := newMeshConnHarness(t)
-	defer th.cleanup()
-
-	th.createMeshConnection()
-	th.runMeshConnection(t)
-
-	testTopic := "test-topic"
-	err := th.meshConn.subscribe(th.ctx, testTopic)
-	if err != nil {
-		t.Fatalf("Failed to subscribe to topic: %v", err)
-	}
-
-	msg := receiveWithTimeout(t, th.hostBReceivedMsgs)
-
-	subMsg, ok := msg.(*protocolsPb.SubscribeRequest)
-	if !ok {
-		t.Fatal("Received message is not a SubscribeRequest")
-	}
-
-	if subMsg.Topic != testTopic {
-		t.Fatalf("Expected %s, got %s", testTopic, subMsg.Topic)
-	}
-
-	if !subMsg.Subscribe {
-		t.Fatal("Expected Subscribe flag to be true")
-	}
-}
-
-func TestMeshConnectionUnsubscribe(t *testing.T) {
-	th := newMeshConnHarness(t)
-	defer th.cleanup()
-
-	th.createMeshConnection()
-	th.runMeshConnection(t)
-
-	testTopic := "test-topic"
-	err := th.meshConn.unsubscribe(th.ctx, testTopic)
-	if err != nil {
-		t.Fatalf("Failed to unsubscribe from topic: %v", err)
-	}
-
-	msg := receiveWithTimeout(t, th.hostBReceivedMsgs)
-
-	unsubMsg, ok := msg.(*protocolsPb.SubscribeRequest)
-	if !ok {
-		t.Fatal("Received message is not a SubscribeRequest")
-	}
-
-	if unsubMsg.Topic != testTopic {
-		t.Fatalf("Expected %s, got %s", testTopic, unsubMsg.Topic)
-	}
-
-	if unsubMsg.Subscribe {
-		t.Fatal("Expected Subscribe flag to be false")
-	}
-}
-
-func TestMeshConnectionBroadcast(t *testing.T) {
-	th := newMeshConnHarness(t)
-	defer th.cleanup()
-
-	th.createMeshConnection()
-	th.runMeshConnection(t)
-
-	testTopic := "test-topic"
-	data := []byte("testing")
-
-	err := th.meshConn.broadcast(th.ctx, testTopic, data)
-	if err != nil {
-		t.Fatalf("Failed to broadcast message: %v", err)
-	}
-
-	msg := receiveWithTimeout(t, th.hostBReceivedMsgs)
-
-	pubMsg, ok := msg.(*protocolsPb.PublishRequest)
-	if !ok {
-		t.Fatal("Received message is not a PublishRequest")
-	}
-
-	if pubMsg.Topic != testTopic {
-		t.Fatalf("Expected %s, got %s", testTopic, pubMsg.Topic)
-	}
-
-	if !bytes.Equal(pubMsg.Data, data) {
-		t.Fatalf("Expected data %s, got %s", string(data), string(pubMsg.Data))
-	}
-}
-
-func TestMeshConnectionPostBondWithRetries(t *testing.T) {
-	th := newMeshConnHarness(t)
-	defer th.cleanup()
-
-	var attempts atomic.Int32
-	attemptsCh := make(chan struct{}, 10)
-
-	th.hostB.SetStreamHandler(protocols.PostBondsProtocol, func(s network.Stream) {
-		defer func() { _ = s.Close() }()
-
-		msg := &protocolsPb.PostBondRequest{}
-		if err := codec.ReadLengthPrefixedMessage(s, msg); err != nil {
-			if !errors.Is(err, io.EOF) {
-				t.Fatalf("Failed to read message: %v", err)
-			}
-			return
+	h.tatankaHost.SetStreamHandler(protocols.ClientPublishProtocol, func(s network.Stream) {
+		defer s.Close()
+		var msg protocolsPb.PublishRequest
+		if err := codec.ReadLengthPrefixedMessage(s, &msg); err != nil {
+			t.Fatalf("Publish read error: %v", err)
 		}
+		h.publishReceived <- &msg
+	})
 
-		th.hostBReceivedMsgs <- msg
+	h.tatankaHost.SetStreamHandler(protocols.ClientSubscribeProtocol, func(s network.Stream) {
+		defer s.Close()
+		var msg protocolsPb.SubscribeRequest
+		if err := codec.ReadLengthPrefixedMessage(s, &msg); err != nil {
+			t.Fatalf("Subscribe read error: %v", err)
+		}
+		h.subscribeReceived <- &msg
+	})
 
-		var bondResp proto.Message
-		switch attempts.Load() {
-		case 0:
-			bondResp = &protocolsPb.Response{
-				Response: &protocolsPb.Response_Error{
-					Error: &protocolsPb.Error{
-						Error: &protocolsPb.Error_Message{
-							Message: "failed to post bonds",
-						},
-					},
-				},
-			}
+	h.tatankaHost.SetStreamHandler(protocols.PostBondsProtocol, func(s network.Stream) {
+		defer s.Close()
+		var msg protocolsPb.PostBondRequest
+		if err := codec.ReadLengthPrefixedMessage(s, &msg); err != nil {
+			t.Fatalf("PostBond read error: %v", err)
+		}
+		h.postBondReceived <- &msg
 
-		case 1:
-			bondResp = &protocolsPb.Response{
-				Response: &protocolsPb.Response_Error{
-					Error: &protocolsPb.Error{
-						Error: &protocolsPb.Error_PostBondError{
-							PostBondError: &protocolsPb.PostBondError{
-								InvalidBondIndex: 0,
-							},
-						},
-					},
-				},
-			}
-
-		case 2:
-			bondResp = &protocolsPb.Response{
+		var resp proto.Message
+		if len(h.postBondResponses) > 0 {
+			resp = h.postBondResponses[0]
+			h.postBondResponses = h.postBondResponses[1:]
+		} else {
+			resp = &protocolsPb.Response{
 				Response: &protocolsPb.Response_PostBondResponse{
 					PostBondResponse: &protocolsPb.PostBondResponse{
 						BondStrength: bond.MinRequiredBondStrength,
@@ -530,113 +240,312 @@ func TestMeshConnectionPostBondWithRetries(t *testing.T) {
 				},
 			}
 		}
-
-		err := codec.WriteLengthPrefixedMessage(s, bondResp)
-		if err != nil {
-			t.Fatalf("Failed to write message: %v", err)
+		if err := codec.WriteLengthPrefixedMessage(s, resp); err != nil {
+			t.Fatalf("Failed to send post-bond response: %v", err)
 		}
-
-		attempts.Add(1)
-		attemptsCh <- struct{}{}
 	})
 
-	th.createMeshConnection()
+	h.tatankaHost.SetStreamHandler(protocols.AvailableMeshNodesProtocol, func(s network.Stream) {
+		defer s.Close()
 
-	bondReq, err := bond.PostBondReqFromBondInfo(th.meshConn.bondInfo)
+		resp := &protocolsPb.Response{
+			Response: &protocolsPb.Response_AvailableMeshNodesResponse{
+				AvailableMeshNodesResponse: h.meshNodesResp,
+			},
+		}
+		if err := codec.WriteLengthPrefixedMessage(s, resp); err != nil {
+			t.Fatalf("Failed to send available mesh nodes response: %v", err)
+		}
+	})
+}
+
+func (h *meshConnHarness) getTatankaPushStream() network.Stream {
+	ptr := h.tatankaPushStream.Load()
+	if ptr != nil {
+		return *ptr
+	}
+	return nil
+}
+
+func (h *meshConnHarness) cleanup() {
+	h.cancel()
+	_ = h.clientHost.Close()
+	_ = h.tatankaHost.Close()
+}
+
+func TestMeshConnection_PushMessages(t *testing.T) {
+	h := newMeshConnHarness(t, nil)
+	defer h.cleanup()
+
+	// Send a push message from tatanka → client
+	pushMsg := &protocolsPb.PushMessage{
+		Topic: "test-topic",
+		Data:  []byte("hello from tatanka"),
+	}
+
+	s := h.getTatankaPushStream()
+	if s == nil {
+		t.Fatal("tatanka push stream not established")
+	}
+
+	if err := codec.WriteLengthPrefixedMessage(s, pushMsg); err != nil {
+		t.Fatalf("Failed to send push message: %v", err)
+	}
+
+	received := receiveWithTimeout(t, h.clientReceived, 2*time.Second)
+
+	if received.Topic != pushMsg.Topic {
+		t.Errorf("expected topic %q, got %q", pushMsg.Topic, received.Topic)
+	}
+	if !bytes.Equal(received.Data, pushMsg.Data) {
+		t.Errorf("expected data %q, got %q", pushMsg.Data, received.Data)
+	}
+}
+func TestMeshConnection_Subscribe(t *testing.T) {
+	h := newMeshConnHarness(t, nil)
+	defer h.cleanup()
+
+	topic := "test-topic"
+	if err := h.meshConn.subscribe(h.ctx, topic); err != nil {
+		t.Fatalf("subscribe failed: %v", err)
+	}
+
+	sub := receiveWithTimeout(t, h.subscribeReceived, 2*time.Second)
+
+	if sub.Topic != topic || !sub.Subscribe {
+		t.Errorf("unexpected subscribe request: %+v", sub)
+	}
+}
+
+func TestMeshConnection_Unsubscribe(t *testing.T) {
+	h := newMeshConnHarness(t, nil)
+	defer h.cleanup()
+
+	topic := "test-topic"
+	if err := h.meshConn.unsubscribe(h.ctx, topic); err != nil {
+		t.Fatalf("unsubscribe failed: %v", err)
+	}
+
+	sub := receiveWithTimeout(t, h.subscribeReceived, 2*time.Second)
+
+	if sub.Topic != topic || sub.Subscribe {
+		t.Errorf("unexpected unsubscribe request: %+v", sub)
+	}
+}
+
+func TestMeshConnection_FetchAvailableMeshNodes(t *testing.T) {
+	h := newMeshConnHarness(t, nil)
+	defer h.cleanup()
+
+	peer1ID := randomPeerID()
+	peer2ID := randomPeerID()
+	addr1, _ := ma.NewMultiaddr("/ip4/127.0.0.1/tcp/4457")
+	addr2, _ := ma.NewMultiaddr("/ip4/127.0.0.1/tcp/4458")
+	addr3, _ := ma.NewMultiaddr("/ip4/127.0.0.1/tcp/4459")
+	addr4, _ := ma.NewMultiaddr("/ip4/127.0.0.1/tcp/4460")
+
+	h.meshNodesResp = &protocolsPb.AvailableMeshNodesResponse{
+		Peers: []*protocolsPb.PeerInfo{
+			{
+				Id:    []byte(peer1ID),
+				Addrs: [][]byte{addr1.Bytes(), addr2.Bytes()},
+			},
+			{
+				Id:    []byte(peer2ID),
+				Addrs: [][]byte{addr3.Bytes(), addr4.Bytes()},
+			},
+		},
+	}
+
+	expectedPeers := []peer.AddrInfo{
+		{ID: peer1ID, Addrs: []ma.Multiaddr{addr1, addr2}},
+		{ID: peer2ID, Addrs: []ma.Multiaddr{addr3, addr4}},
+	}
+
+	peers, err := h.meshConn.fetchAvailableMeshNodes(h.ctx)
+	if err != nil {
+		t.Fatalf("fetchAvailableMeshNodes failed: %v", err)
+	}
+
+	if len(peers) != len(expectedPeers) {
+		t.Fatalf("expected %d peers, got %d", len(expectedPeers), len(peers))
+	}
+
+	for i, expectedPeer := range expectedPeers {
+		actualPeer := peers[i]
+
+		if actualPeer.ID != expectedPeer.ID {
+			t.Errorf("peer %d: expected ID %s, got %s", i, expectedPeer.ID, actualPeer.ID)
+		}
+
+		if len(actualPeer.Addrs) != len(expectedPeer.Addrs) {
+			t.Errorf("peer %d: expected %d addresses, got %d", i, len(expectedPeer.Addrs), len(actualPeer.Addrs))
+			continue
+		}
+
+		for j, expectedAddr := range expectedPeer.Addrs {
+			actualAddr := actualPeer.Addrs[j]
+			if expectedAddr.String() != actualAddr.String() {
+				t.Errorf("peer %d, addr %d: expected %s, got %s", i, j, expectedAddr, actualAddr)
+			}
+		}
+	}
+}
+
+func TestMeshConnection_InitialSubscriptions(t *testing.T) {
+	expectedTopics := []string{"topic1", "topic2", "topic3"}
+	h := newMeshConnHarness(t, expectedTopics)
+	defer h.cleanup()
+
+	initialSubs := receiveWithTimeout(t, h.initialSubscriptions, 2*time.Second)
+
+	if len(initialSubs.Topics) != len(expectedTopics) {
+		t.Fatalf("expected %d topics, got %d", len(expectedTopics), len(initialSubs.Topics))
+	}
+
+	for i, expectedTopic := range expectedTopics {
+		if initialSubs.Topics[i] != expectedTopic {
+			t.Errorf("topic %d: expected %s, got %s", i, expectedTopic, initialSubs.Topics[i])
+		}
+	}
+}
+
+func TestMeshConnection_Broadcast(t *testing.T) {
+	h := newMeshConnHarness(t, nil)
+	defer h.cleanup()
+
+	topic := "test-topic"
+	data := []byte("testing")
+	if err := h.meshConn.broadcast(h.ctx, topic, data); err != nil {
+		t.Fatalf("broadcast failed: %v", err)
+	}
+
+	pub := receiveWithTimeout(t, h.publishReceived, 2*time.Second)
+
+	if pub.Topic != topic || !bytes.Equal(pub.Data, data) {
+		t.Errorf("expected topic %q data %q, got topic %q data %q",
+			topic, data, pub.Topic, pub.Data)
+	}
+}
+
+func TestMeshConnection_Reconnection(t *testing.T) {
+	h := newMeshConnHarness(t, nil)
+	defer h.cleanup()
+
+	// First test that if the push stream is closed, but the tatanka node is still
+	// connected, a new push stream is established.
+	s := h.getTatankaPushStream()
+	if s == nil {
+		t.Fatal("push stream not established")
+	}
+	s.Close()
+
+	newPushMsg := &protocolsPb.PushMessage{
+		Topic: "reconnect-test",
+		Data:  []byte("after reconnect"),
+	}
+
+	requireEventually(t, func() bool {
+		return h.getTatankaPushStream() != nil && s != h.getTatankaPushStream()
+	}, 10*time.Second, 100*time.Millisecond, "push stream not established after reconnect")
+
+	s = h.getTatankaPushStream()
+	if s == nil {
+		t.Fatal("no push stream after reconnect")
+	}
+	if err := codec.WriteLengthPrefixedMessage(s, newPushMsg); err != nil {
+		t.Fatalf("Failed to send push message after reconnect: %v", err)
+	}
+	received := receiveWithTimeout(t, h.clientReceived, 2*time.Second)
+	if received.Topic != newPushMsg.Topic || !bytes.Equal(received.Data, newPushMsg.Data) {
+		t.Errorf("reconnect test message mismatch")
+	}
+
+	// If the tatanka node disconnects, run should exit
+	err := h.tatankaHost.Network().ClosePeer(h.clientHost.ID())
+	if err != nil {
+		t.Fatalf("failed to close peer: %v", err)
+	}
+	requireEventually(t, func() bool {
+		select {
+		case err := <-h.runDone:
+			return err != nil && strings.Contains(err.Error(), "disconnected")
+		default:
+			return false
+		}
+	}, 10*time.Second, 100*time.Millisecond, "meshConnection.run did not exit after peer disconnect")
+}
+
+func TestMeshConnection_PostBondWithRetries(t *testing.T) {
+	h := newMeshConnHarness(t, nil)
+	defer h.cleanup()
+
+	// Set up responses for retry attempts
+	h.postBondResponses = []proto.Message{
+		// First attempt: fail with error message
+		&protocolsPb.Response{
+			Response: &protocolsPb.Response_Error{
+				Error: &protocolsPb.Error{
+					Error: &protocolsPb.Error_Message{
+						Message: "failed to post bonds",
+					},
+				},
+			},
+		},
+		// Second attempt: fail with invalid bond index
+		&protocolsPb.Response{
+			Response: &protocolsPb.Response_Error{
+				Error: &protocolsPb.Error{
+					Error: &protocolsPb.Error_PostBondError{
+						PostBondError: &protocolsPb.PostBondError{
+							InvalidBondIndex: 0,
+						},
+					},
+				},
+			},
+		},
+		// Third attempt: succeed
+		&protocolsPb.Response{
+			Response: &protocolsPb.Response_PostBondResponse{
+				PostBondResponse: &protocolsPb.PostBondResponse{
+					BondStrength: bond.MinRequiredBondStrength,
+				},
+			},
+		},
+	}
+
+	bondReq, err := bond.PostBondReqFromBondInfo(h.meshConn.bondInfo)
 	if err != nil {
 		t.Fatalf("Unexpected error creating post bond request: %v", err)
 	}
 
 	// First attempt should fail with error message
-	err = th.meshConn.postBondInternal(th.ctx, bondReq)
+	err = h.meshConn.postBondInternal(h.ctx, bondReq)
 	if err == nil {
 		t.Fatal("Expected a post bond error")
 	}
 
-	msg := receiveWithTimeout(t, th.hostBReceivedMsgs)
-	bondMsg, ok := msg.(*protocolsPb.PostBondRequest)
-	if !ok {
-		t.Fatal("Received message is not a PostBondRequest")
-	}
-
+	bondMsg := receiveWithTimeout(t, h.postBondReceived, 2*time.Second)
 	if len(bondMsg.Bonds) != 1 {
 		t.Fatalf("Expected %d bond, got %d", 1, len(bondMsg.Bonds))
 	}
 
-	receiveAttemptSignalWithTimeout(t, attemptsCh)
-
 	// Second attempt should fail with invalid bond index
-	err = th.meshConn.postBondInternal(th.ctx, bondReq)
+	err = h.meshConn.postBondInternal(h.ctx, bondReq)
 	if err == nil {
 		t.Fatal("Expected a post bond error")
 	}
-
 	if !errors.Is(err, errInvalidBondIndex) {
 		t.Fatalf("Expected an invalid bond index error, got %v", err)
 	}
 
-	_ = receiveWithTimeout(t, th.hostBReceivedMsgs)
-	receiveAttemptSignalWithTimeout(t, attemptsCh)
+	_ = receiveWithTimeout(t, h.postBondReceived, 2*time.Second)
 
 	// Third attempt should succeed
-	err = th.meshConn.postBondInternal(th.ctx, bondReq)
+	err = h.meshConn.postBondInternal(h.ctx, bondReq)
 	if err != nil {
 		t.Fatalf("Expected a successful post bond attempt, got %v", err)
 	}
 
-	_ = receiveWithTimeout(t, th.hostBReceivedMsgs)
-	receiveAttemptSignalWithTimeout(t, attemptsCh)
-}
-
-func TestMeshConnectionReconnection(t *testing.T) {
-	th := newMeshConnHarness(t)
-	defer th.cleanup()
-
-	th.createMeshConnection()
-	th.runMeshConnection(t)
-
-	// Verify initial connection
-	pushStreamFromA := th.hostA.Network().ConnsToPeer(th.hostB.ID())[0].GetStreams()[0]
-	if pushStreamFromA == nil {
-		t.Fatalf("Expected an initialized push stream from A")
-	}
-
-	// Close the push stream to force reconnection
-	err := pushStreamFromA.Close()
-	if err != nil {
-		t.Fatalf("Unexpected error closing push stream: %v", err)
-	}
-
-	// Wait for reconnection
-	receiveReadySignalWithTimeout(t, th.readyCh)
-
-	// Verify reconnection by sending a message
-	pushMsg := &protocolsPb.PushMessage{
-		Topic: "test-reconnect",
-		Data:  []byte("reconnect-test"),
-	}
-
-	pushStreamFromB := th.getHostBPushStream()
-	if pushStreamFromB == nil {
-		t.Fatalf("Expected an initialized push stream from B after reconnection")
-	}
-
-	err = codec.WriteLengthPrefixedMessage(pushStreamFromB, pushMsg)
-	if err != nil {
-		t.Fatalf("Failed to write push message: %v", err)
-	}
-
-	msg := receiveWithTimeout(t, th.pushedMessages)
-
-	pushedMsg, ok := msg.(*protocolsPb.PushMessage)
-	if !ok {
-		t.Fatal("Received message is not a PushMessage")
-	}
-
-	if pushedMsg.Topic != pushMsg.Topic {
-		t.Fatalf("Expected topic %s, got %s", pushMsg.Topic, pushedMsg.Topic)
-	}
-	if string(pushedMsg.Data) != string(pushMsg.Data) {
-		t.Fatalf("Expected data %s, got %s", string(pushMsg.Data), string(pushedMsg.Data))
-	}
+	_ = receiveWithTimeout(t, h.postBondReceived, 2*time.Second)
 }

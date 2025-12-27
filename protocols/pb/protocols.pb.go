@@ -82,6 +82,7 @@ type Response struct {
 	//	*Response_SubscriptionsResponse
 	//	*Response_AddrResponse
 	//	*Response_PostBondResponse
+	//	*Response_AvailableMeshNodesResponse
 	Response      isResponse_Response `protobuf_oneof:"response"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -169,6 +170,15 @@ func (x *Response) GetPostBondResponse() *PostBondResponse {
 	return nil
 }
 
+func (x *Response) GetAvailableMeshNodesResponse() *AvailableMeshNodesResponse {
+	if x != nil {
+		if x, ok := x.Response.(*Response_AvailableMeshNodesResponse); ok {
+			return x.AvailableMeshNodesResponse
+		}
+	}
+	return nil
+}
+
 type isResponse_Response interface {
 	isResponse_Response()
 }
@@ -193,6 +203,10 @@ type Response_PostBondResponse struct {
 	PostBondResponse *PostBondResponse `protobuf:"bytes,5,opt,name=post_bond_response,json=postBondResponse,proto3,oneof"`
 }
 
+type Response_AvailableMeshNodesResponse struct {
+	AvailableMeshNodesResponse *AvailableMeshNodesResponse `protobuf:"bytes,6,opt,name=available_mesh_nodes_response,json=availableMeshNodesResponse,proto3,oneof"`
+}
+
 func (*Response_Success) isResponse_Response() {}
 
 func (*Response_Error) isResponse_Response() {}
@@ -202,6 +216,8 @@ func (*Response_SubscriptionsResponse) isResponse_Response() {}
 func (*Response_AddrResponse) isResponse_Response() {}
 
 func (*Response_PostBondResponse) isResponse_Response() {}
+
+func (*Response_AvailableMeshNodesResponse) isResponse_Response() {}
 
 type Success struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -1312,17 +1328,149 @@ func (*TatankaRelayMessageResponse_Message) isTatankaRelayMessageResponse_Respon
 
 func (*TatankaRelayMessageResponse_Error) isTatankaRelayMessageResponse_Response() {}
 
+// AvailableMeshNodesRequest is sent by a client to get a list of all mesh
+// nodes that the tatanka node is connected to.
+type AvailableMeshNodesRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AvailableMeshNodesRequest) Reset() {
+	*x = AvailableMeshNodesRequest{}
+	mi := &file_protocols_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AvailableMeshNodesRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AvailableMeshNodesRequest) ProtoMessage() {}
+
+func (x *AvailableMeshNodesRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_protocols_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AvailableMeshNodesRequest.ProtoReflect.Descriptor instead.
+func (*AvailableMeshNodesRequest) Descriptor() ([]byte, []int) {
+	return file_protocols_proto_rawDescGZIP(), []int{21}
+}
+
+// AvailableMeshNodesResponse contains a list of all whitelisted mesh nodes
+// that this tatanka node is connected to, including itself.
+type AvailableMeshNodesResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Peers         []*PeerInfo            `protobuf:"bytes,1,rep,name=peers,proto3" json:"peers,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AvailableMeshNodesResponse) Reset() {
+	*x = AvailableMeshNodesResponse{}
+	mi := &file_protocols_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AvailableMeshNodesResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AvailableMeshNodesResponse) ProtoMessage() {}
+
+func (x *AvailableMeshNodesResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_protocols_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AvailableMeshNodesResponse.ProtoReflect.Descriptor instead.
+func (*AvailableMeshNodesResponse) Descriptor() ([]byte, []int) {
+	return file_protocols_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *AvailableMeshNodesResponse) GetPeers() []*PeerInfo {
+	if x != nil {
+		return x.Peers
+	}
+	return nil
+}
+
+// InitialSubscriptions is sent by the client as the first message when
+// establishing a push stream. It contains the list of topics the client
+// is currently subscribed to.
+type InitialSubscriptions struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Topics        []string               `protobuf:"bytes,1,rep,name=topics,proto3" json:"topics,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *InitialSubscriptions) Reset() {
+	*x = InitialSubscriptions{}
+	mi := &file_protocols_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *InitialSubscriptions) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*InitialSubscriptions) ProtoMessage() {}
+
+func (x *InitialSubscriptions) ProtoReflect() protoreflect.Message {
+	mi := &file_protocols_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use InitialSubscriptions.ProtoReflect.Descriptor instead.
+func (*InitialSubscriptions) Descriptor() ([]byte, []int) {
+	return file_protocols_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *InitialSubscriptions) GetTopics() []string {
+	if x != nil {
+		return x.Topics
+	}
+	return nil
+}
+
 var File_protocols_proto protoreflect.FileDescriptor
 
 const file_protocols_proto_rawDesc = "" +
 	"\n" +
-	"\x0fprotocols.proto\x12\x02pb\"\xbb\x02\n" +
+	"\x0fprotocols.proto\x12\x02pb\"\xa0\x03\n" +
 	"\bResponse\x12'\n" +
 	"\asuccess\x18\x01 \x01(\v2\v.pb.SuccessH\x00R\asuccess\x12!\n" +
 	"\x05error\x18\x02 \x01(\v2\t.pb.ErrorH\x00R\x05error\x12R\n" +
 	"\x16subscriptions_response\x18\x03 \x01(\v2\x19.pb.SubscriptionsResponseH\x00R\x15subscriptionsResponse\x12=\n" +
 	"\raddr_response\x18\x04 \x01(\v2\x16.pb.ClientAddrResponseH\x00R\faddrResponse\x12D\n" +
-	"\x12post_bond_response\x18\x05 \x01(\v2\x14.pb.PostBondResponseH\x00R\x10postBondResponseB\n" +
+	"\x12post_bond_response\x18\x05 \x01(\v2\x14.pb.PostBondResponseH\x00R\x10postBondResponse\x12c\n" +
+	"\x1davailable_mesh_nodes_response\x18\x06 \x01(\v2\x1e.pb.AvailableMeshNodesResponseH\x00R\x1aavailableMeshNodesResponseB\n" +
 	"\n" +
 	"\bresponse\"\t\n" +
 	"\aSuccess\"\x13\n" +
@@ -1385,7 +1533,12 @@ const file_protocols_proto_rawDesc = "" +
 	"\amessage\x18\x01 \x01(\fH\x00R\amessage\x12!\n" +
 	"\x05error\x18\x02 \x01(\v2\t.pb.ErrorH\x00R\x05errorB\n" +
 	"\n" +
-	"\bresponseB.Z,github.com/martonp/tatanka-mesh/protocols/pbb\x06proto3"
+	"\bresponse\"\x1b\n" +
+	"\x19AvailableMeshNodesRequest\"@\n" +
+	"\x1aAvailableMeshNodesResponse\x12\"\n" +
+	"\x05peers\x18\x01 \x03(\v2\f.pb.PeerInfoR\x05peers\".\n" +
+	"\x14InitialSubscriptions\x12\x16\n" +
+	"\x06topics\x18\x01 \x03(\tR\x06topicsB.Z,github.com/martonp/tatanka-mesh/protocols/pbb\x06proto3"
 
 var (
 	file_protocols_proto_rawDescOnce sync.Once
@@ -1400,7 +1553,7 @@ func file_protocols_proto_rawDescGZIP() []byte {
 }
 
 var file_protocols_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_protocols_proto_msgTypes = make([]protoimpl.MessageInfo, 21)
+var file_protocols_proto_msgTypes = make([]protoimpl.MessageInfo, 24)
 var file_protocols_proto_goTypes = []any{
 	(PushMessage_MessageType)(0),        // 0: pb.PushMessage.MessageType
 	(*Response)(nil),                    // 1: pb.Response
@@ -1424,6 +1577,9 @@ var file_protocols_proto_goTypes = []any{
 	(*ClientRelayMessageResponse)(nil),  // 19: pb.ClientRelayMessageResponse
 	(*TatankaRelayMessageRequest)(nil),  // 20: pb.TatankaRelayMessageRequest
 	(*TatankaRelayMessageResponse)(nil), // 21: pb.TatankaRelayMessageResponse
+	(*AvailableMeshNodesRequest)(nil),   // 22: pb.AvailableMeshNodesRequest
+	(*AvailableMeshNodesResponse)(nil),  // 23: pb.AvailableMeshNodesResponse
+	(*InitialSubscriptions)(nil),        // 24: pb.InitialSubscriptions
 }
 var file_protocols_proto_depIdxs = []int32{
 	2,  // 0: pb.Response.success:type_name -> pb.Success
@@ -1431,19 +1587,21 @@ var file_protocols_proto_depIdxs = []int32{
 	11, // 2: pb.Response.subscriptions_response:type_name -> pb.SubscriptionsResponse
 	13, // 3: pb.Response.addr_response:type_name -> pb.ClientAddrResponse
 	16, // 4: pb.Response.post_bond_response:type_name -> pb.PostBondResponse
-	3,  // 5: pb.Error.unauthorized:type_name -> pb.UnauthorizedError
-	6,  // 6: pb.Error.post_bond_error:type_name -> pb.PostBondError
-	4,  // 7: pb.Error.cp_not_found_error:type_name -> pb.CounterpartyNotFoundError
-	5,  // 8: pb.Error.cp_rejected_error:type_name -> pb.CounterpartyRejectedError
-	0,  // 9: pb.PushMessage.message_type:type_name -> pb.PushMessage.MessageType
-	14, // 10: pb.PostBondRequest.bonds:type_name -> pb.Bond
-	7,  // 11: pb.ClientRelayMessageResponse.error:type_name -> pb.Error
-	7,  // 12: pb.TatankaRelayMessageResponse.error:type_name -> pb.Error
-	13, // [13:13] is the sub-list for method output_type
-	13, // [13:13] is the sub-list for method input_type
-	13, // [13:13] is the sub-list for extension type_name
-	13, // [13:13] is the sub-list for extension extendee
-	0,  // [0:13] is the sub-list for field type_name
+	23, // 5: pb.Response.available_mesh_nodes_response:type_name -> pb.AvailableMeshNodesResponse
+	3,  // 6: pb.Error.unauthorized:type_name -> pb.UnauthorizedError
+	6,  // 7: pb.Error.post_bond_error:type_name -> pb.PostBondError
+	4,  // 8: pb.Error.cp_not_found_error:type_name -> pb.CounterpartyNotFoundError
+	5,  // 9: pb.Error.cp_rejected_error:type_name -> pb.CounterpartyRejectedError
+	0,  // 10: pb.PushMessage.message_type:type_name -> pb.PushMessage.MessageType
+	14, // 11: pb.PostBondRequest.bonds:type_name -> pb.Bond
+	7,  // 12: pb.ClientRelayMessageResponse.error:type_name -> pb.Error
+	7,  // 13: pb.TatankaRelayMessageResponse.error:type_name -> pb.Error
+	17, // 14: pb.AvailableMeshNodesResponse.peers:type_name -> pb.PeerInfo
+	15, // [15:15] is the sub-list for method output_type
+	15, // [15:15] is the sub-list for method input_type
+	15, // [15:15] is the sub-list for extension type_name
+	15, // [15:15] is the sub-list for extension extendee
+	0,  // [0:15] is the sub-list for field type_name
 }
 
 func init() { file_protocols_proto_init() }
@@ -1457,6 +1615,7 @@ func file_protocols_proto_init() {
 		(*Response_SubscriptionsResponse)(nil),
 		(*Response_AddrResponse)(nil),
 		(*Response_PostBondResponse)(nil),
+		(*Response_AvailableMeshNodesResponse)(nil),
 	}
 	file_protocols_proto_msgTypes[6].OneofWrappers = []any{
 		(*Error_Unauthorized)(nil),
@@ -1479,7 +1638,7 @@ func file_protocols_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_protocols_proto_rawDesc), len(file_protocols_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   21,
+			NumMessages:   24,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

@@ -45,7 +45,7 @@ type Config struct {
 	AppDataDir string            `short:"A" long:"appdata" description:"Path to application home directory."`
 	ConfigFile string            `short:"C" long:"configfile" description:"Path to configuration file."`
 	LogLevel   string            `short:"l" long:"loglevel" description:"Logging level {trace, debug, info, warn, error, critical}."`
-	NodeAddr   string            `long:"nodeaddr" description:"The address of the mesh node to connect to."`
+	NodeAddr   []string          `long:"nodeaddr" description:"The addresses of the mesh nodes to connect to. Can be specified multiple times."`
 	BondParams []*bondParamsFlag `long:"bondparams" description:"The test client bond params."`
 	ClientPort int               `long:"clientport" description:"The port to listen on for client connections"`
 	WebPort    int               `long:"webport" description:"The web interface port."`
@@ -134,7 +134,7 @@ func main() {
 		AppDataDir: defAppDataDir,
 		ConfigFile: defConfigFile,
 		LogLevel:   "debug",
-		NodeAddr:   "",
+		NodeAddr:   nil,
 		ClientPort: client.DefaultClientPort,
 		WebPort:    client.DefaultWebPort,
 	}

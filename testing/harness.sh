@@ -90,7 +90,7 @@ start_harness() {
   build_testclient
   build_testclient_ui
 
-  # Store bootstrap peers for the manifest file
+  # Store bootstrap peers for the whitelist file
   whitelist_peers=()
   node_peer_ids=()
   node_listen_ports=()

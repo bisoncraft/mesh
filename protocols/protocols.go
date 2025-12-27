@@ -29,4 +29,8 @@ const (
 	// This must be the first protocol to be opened after a client connects to a
 	// tatanka node.
 	PostBondsProtocol = "/tatanka/post-bonds/1.0.0"
+
+	// AvailableMeshNodesProtocol is used by a client to get a list of all
+	// tatanka nodes in the mesh that this node is connected to.
+	AvailableMeshNodesProtocol = "/tatanka/available-mesh-nodes/1.0.0"
 )

@@ -118,3 +118,55 @@ func (sm *subscriptionManager) removeClient(client peer.ID) {
 
 	delete(sm.clientSubscriptions, client)
 }
+
+// subscriptionChanges holds the result of a bulk subscription update.
+type subscriptionChanges struct {
+	subscribed   []string
+	unsubscribed []string
+}
+
+// bulkSubscribe replaces a client's subscriptions with the given topics.
+// It returns the list of newly subscribed topics and unsubscribed topics.
+func (sm *subscriptionManager) bulkSubscribe(client peer.ID, topics []string) subscriptionChanges {
+	newTopics := make(map[string]struct{}, len(topics))
+	for _, t := range topics {
+		newTopics[t] = struct{}{}
+	}
+
+	sm.mtx.Lock()
+	defer sm.mtx.Unlock()
+
+	var changes subscriptionChanges
+
+	if currentTopics, ok := sm.clientSubscriptions[client]; ok {
+		for topic := range currentTopics {
+			if _, stillSubscribed := newTopics[topic]; !stillSubscribed {
+				if topicMap, ok := sm.topicSubscriptions[topic]; ok {
+					delete(topicMap, client)
+					if len(topicMap) == 0 {
+						delete(sm.topicSubscriptions, topic)
+					}
+				}
+				changes.unsubscribed = append(changes.unsubscribed, topic)
+			}
+		}
+	}
+
+	if _, ok := sm.clientSubscriptions[client]; !ok {
+		sm.clientSubscriptions[client] = make(map[string]struct{})
+	}
+
+	for _, topic := range topics {
+		if _, alreadySubscribed := sm.clientSubscriptions[client][topic]; !alreadySubscribed {
+			if _, ok := sm.topicSubscriptions[topic]; !ok {
+				sm.topicSubscriptions[topic] = make(map[peer.ID]struct{})
+			}
+			sm.topicSubscriptions[topic][client] = struct{}{}
+			changes.subscribed = append(changes.subscribed, topic)
+		}
+	}
+
+	sm.clientSubscriptions[client] = newTopics
+
+	return changes
+}

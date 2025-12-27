@@ -27,7 +27,7 @@ func TestPushPermissions(t *testing.T) {
 	meshHost := mnet.Host(allPeers[0])
 	clientHost := mnet.Host(allPeers[1])
 
-	// Create a manifest with just the mesh node
+	// Create a whitelist with just the mesh node
 	mockWhitelist := &whitelist{
 		peers: []*peer.AddrInfo{{ID: meshHost.ID(), Addrs: meshHost.Addrs()}},
 	}
@@ -79,6 +79,11 @@ func TestPushPermissions(t *testing.T) {
 		t.Fatalf("Failed to create second stream: %v", err)
 	}
 	defer func() { _ = stream2.Close() }()
+
+	initialSubs := &protocolsPb.InitialSubscriptions{Topics: []string{"test-topic"}}
+	if err := codec.WriteLengthPrefixedMessage(stream2, initialSubs); err != nil {
+		t.Fatalf("Failed to send initial subscriptions: %v", err)
+	}
 
 	// Read the response
 	response2 := &protocolsPb.Response{}

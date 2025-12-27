@@ -17,22 +17,34 @@ export function ChatPage() {
   const [lastError, setLastError] = useState<string | null>(null)
   const [afterId, setAfterId] = useState<number>(0)
   const [peerId, setPeerId] = useState<string>('')
+  const [connectedNode, setConnectedNode] = useState<string>('')
 
   useEffect(() => {
     let cancelled = false
-    ;(async () => {
+    let timer: number | undefined
+
+    const loadIdentity = async () => {
       try {
         const id = await getIdentity()
         if (cancelled) return
         setPeerId(id.peer_id)
+        setConnectedNode(id.connected_node_peer_id || '')
       } catch {
         if (!cancelled) {
           setPeerId('')
+          setConnectedNode('')
         }
       }
-    })()
+    }
+
+    void loadIdentity()
+    timer = window.setInterval(loadIdentity, 1000)
+
     return () => {
       cancelled = true
+      if (timer !== undefined) {
+        window.clearInterval(timer)
+      }
     }
   }, [])
 
@@ -102,6 +114,7 @@ export function ChatPage() {
         baseUrl={baseUrl}
         streamStatus={streamStatus}
         peerId={peerId}
+        connectedNode={connectedNode}
       />
 
       <main className="main">

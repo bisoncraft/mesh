@@ -51,10 +51,36 @@ func pbPeerInfoToLibp2p(pbPeer *protocolsPb.PeerInfo) (peer.AddrInfo, error) {
 
 // handleClientPush is called when the client opens a push stream to the node.
 func (t *TatankaNode) handleClientPush(s network.Stream) {
+	client := s.Conn().RemotePeer()
+
+	var success bool
+	defer func() {
+		if !success {
+			_ = s.Close()
+		}
+	}()
+
+	initialSubs := &protocolsPb.InitialSubscriptions{}
+	if err := codec.ReadLengthPrefixedMessage(s, initialSubs); err != nil {
+		t.log.Errorf("Failed to read initial subscriptions from client %s: %v", client.ShortString(), err)
+		return
+	}
+
+	changes := t.subscriptionManager.bulkSubscribe(client, initialSubs.Topics)
+
+	for _, topic := range changes.subscribed {
+		t.publishClientSubscriptionEvent(client, topic, true)
+	}
+	for _, topic := range changes.unsubscribed {
+		t.publishClientSubscriptionEvent(client, topic, false)
+	}
+
 	if err := codec.WriteLengthPrefixedMessage(s, pbResponseSuccess()); err != nil {
 		t.log.Errorf("Failed to write success response: %v", err)
 		return
 	}
+
+	success = true
 
 	t.pushStreamManager.newPushStream(s)
 }
@@ -436,6 +462,43 @@ func (t *TatankaNode) handleWhitelist(s network.Stream) {
 	}
 }
 
+// handleAvailableMeshNodes handles a request from a client to get a list of
+// all mesh nodes that this tatanka node is connected to.
+func (t *TatankaNode) handleAvailableMeshNodes(s network.Stream) {
+	defer func() { _ = s.Close() }()
+
+	whitelist := t.getWhitelist()
+	peerStore := t.node.Peerstore()
+
+	var peers []*protocolsPb.PeerInfo
+
+	for _, p := range whitelist.peers {
+		// Include ourselves
+		if p.ID == t.node.ID() {
+			peers = append(peers, libp2pPeerInfoToPb(peer.AddrInfo{
+				ID:    t.node.ID(),
+				Addrs: t.node.Addrs(),
+			}))
+			continue
+		}
+
+		// Only include connected peers
+		if t.node.Network().Connectedness(p.ID) != network.Connected {
+			continue
+		}
+
+		addrs := peerStore.Addrs(p.ID)
+		peers = append(peers, libp2pPeerInfoToPb(peer.AddrInfo{
+			ID:    p.ID,
+			Addrs: addrs,
+		}))
+	}
+
+	if err := codec.WriteLengthPrefixedMessage(s, pbAvailableMeshNodesResponse(peers)); err != nil {
+		t.log.Warnf("Failed to write available mesh nodes response: %v", err)
+	}
+}
+
 // --- Protobuf Helper Functions ---
 
 func pbPushMessageSubscription(topic string, client peer.ID, subscribed bool) *protocolsPb.PushMessage {
@@ -512,6 +575,16 @@ func pbResponsePostBond(bondStrength uint32) *protocolsPb.Response {
 		Response: &protocolsPb.Response_PostBondResponse{
 			PostBondResponse: &protocolsPb.PostBondResponse{
 				BondStrength: bondStrength,
+			},
+		},
+	}
+}
+
+func pbAvailableMeshNodesResponse(peers []*protocolsPb.PeerInfo) *protocolsPb.Response {
+	return &protocolsPb.Response{
+		Response: &protocolsPb.Response_AvailableMeshNodesResponse{
+			AvailableMeshNodesResponse: &protocolsPb.AvailableMeshNodesResponse{
+				Peers: peers,
 			},
 		},
 	}

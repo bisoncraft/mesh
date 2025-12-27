@@ -51,20 +51,20 @@ func newTestNode(t *testing.T, ctx context.Context, h host.Host, dataDir string,
 	log := logBackend.Logger(h.ID().ShortString())
 	log.SetLevel(slog.LevelDebug)
 
-	// Write the manifest to the data directory.
-	manifestPath := filepath.Join(dataDir, "manifest.json")
-	manifestData, err := json.Marshal(whitelist.toFile())
+	// Write the whitelist to the data directory.
+	whitelistPath := filepath.Join(dataDir, "whitelist.json")
+	whitelistData, err := json.Marshal(whitelist.toFile())
 	if err != nil {
 		t.Fatalf("Failed to marshal whitelist: %v", err)
 	}
-	if err := os.WriteFile(manifestPath, manifestData, 0644); err != nil {
-		t.Fatalf("Failed to write manifest: %v", err)
+	if err := os.WriteFile(whitelistPath, whitelistData, 0644); err != nil {
+		t.Fatalf("Failed to write whitelist: %v", err)
 	}
 
 	n, err := NewTatankaNode(&Config{
 		Logger:        log,
 		DataDir:       dataDir,
-		WhitelistPath: filepath.Join(dataDir, "manifest.json"),
+		WhitelistPath: filepath.Join(dataDir, "whitelist.json"),
 	}, WithHost(h))
 	if err != nil {
 		t.Fatalf("Failed to create test node: %v", err)
@@ -112,6 +112,24 @@ func newTestClient(ctx context.Context, h host.Host, nodeID peer.ID) (*testClien
 	stream, err := h.NewStream(ctx, nodeID, protocols.ClientPushProtocol)
 	if err != nil {
 		return nil, err
+	}
+
+	// Send initial subscriptions (empty list).
+	initialSubs := &protocolsPb.InitialSubscriptions{Topics: nil}
+	if err := codec.WriteLengthPrefixedMessage(stream, initialSubs); err != nil {
+		_ = stream.Close()
+		return nil, fmt.Errorf("failed to send initial subscriptions: %w", err)
+	}
+
+	// Read the success response.
+	resp := &protocolsPb.Response{}
+	if err := codec.ReadLengthPrefixedMessage(stream, resp); err != nil {
+		_ = stream.Close()
+		return nil, fmt.Errorf("failed to read push stream response: %w", err)
+	}
+	if _, ok := resp.Response.(*protocolsPb.Response_Success); !ok {
+		_ = stream.Close()
+		return nil, fmt.Errorf("unexpected push stream response: %T", resp.Response)
 	}
 
 	tc := &testClient{
@@ -509,7 +527,7 @@ func TestProgressiveMeshStartup(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Define nodes and manifest
+	// Define nodes and whitelist
 	peerIDs := mesh.Peers()
 	h1 := mesh.Host(peerIDs[0])
 	h2 := mesh.Host(peerIDs[1])

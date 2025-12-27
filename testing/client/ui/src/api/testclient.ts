@@ -4,7 +4,7 @@ export function getBaseUrl(): string {
   return (import.meta as any).env?.VITE_TESTCLIENT_URL || ''
 }
 
-export type IdentityResponse = { peer_id: string }
+export type IdentityResponse = { peer_id: string; connected_node_peer_id?: string }
 export type SubscriptionsResponse = string[]
 
 async function postJson(path: string, body: unknown): Promise<void> {
