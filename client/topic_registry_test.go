@@ -16,9 +16,7 @@ func TestTopicRegistry(t *testing.T) {
 		pingHandlerSignals <- struct{}{}
 	}
 
-	tr.register(pingTopic, pingHandler)
-
-	if !tr.isRegistered(pingTopic) {
+	if !tr.register(pingTopic, pingHandler) {
 		t.Fatalf("Expected ping topic to be registered")
 	}
 
@@ -49,9 +47,7 @@ func TestTopicRegistry(t *testing.T) {
 	}
 
 	// Ensure the registry can unregister a topic.
-	tr.unregister(pingTopic)
-
-	if tr.isRegistered(pingTopic) {
+	if !tr.unregister(pingTopic) {
 		t.Fatalf("Expected ping topic to be unregistered")
 	}
 }

@@ -30,8 +30,10 @@ const (
 var (
 	// ErrRedundantSubscription indicates a redundant subscription has been made.
 	ErrRedundantSubscription = errors.New("redundant subscription")
-
-	errNoMeshConnection = errors.New("no mesh connection established")
+	// ErrRedundantUnsubscription indicates an unsubscription from a topic that is not subscribed.
+	ErrRedundantUnsubscription = errors.New("redundant unsubscription")
+	// errEmptyTopic indicates an empty topic name was provided.
+	errEmptyTopic = errors.New("topic name cannot be empty")
 
 	errPeerNoEncryptionKey = errors.New("peer reports no encryption key")
 )
@@ -143,13 +145,21 @@ func (c *Client) setPrimaryMeshConnection(mc meshConn) {
 func (c *Client) primaryMeshConnection() (meshConn, error) {
 	holder := c.primaryMeshConn.Load()
 	if holder == nil || holder.mc == nil {
-		return nil, errNoMeshConnection
+		return nil, errors.New("no mesh connection established")
 	}
 	return holder.mc, nil
 }
 
 // Broadcast publishes the provided message bytes on a mesh topic.
 func (c *Client) Broadcast(ctx context.Context, topic string, data []byte) error {
+	if topic == "" {
+		return errEmptyTopic
+	}
+
+	if data == nil {
+		return errors.New("data cannot be nil")
+	}
+
 	mc, err := c.primaryMeshConnection()
 	if err != nil {
 		return fmt.Errorf("failed to broadcast message: %w", err)
@@ -165,10 +175,12 @@ func (c *Client) Topics() []string {
 
 // Subscribe subscribes the client to the provided topic.
 func (c *Client) Subscribe(ctx context.Context, topic string, handlerFunc TopicHandler) error {
-	// Ensure the topic has not already been subscribed to.
-	registered := c.topicRegistry.isRegistered(topic)
-	if registered {
-		return ErrRedundantSubscription
+	if topic == "" {
+		return errEmptyTopic
+	}
+
+	if handlerFunc == nil {
+		return errors.New("handler function cannot be nil")
 	}
 
 	mc, err := c.primaryMeshConnection()
@@ -176,23 +188,27 @@ func (c *Client) Subscribe(ctx context.Context, topic string, handlerFunc TopicH
 		return err
 	}
 
-	err = mc.subscribe(ctx, topic)
-	if err != nil {
-		return err
+	if !c.topicRegistry.register(topic, handlerFunc) {
+		return ErrRedundantSubscription
 	}
 
-	// Register the subscribed topic with its handler.
-	c.topicRegistry.register(topic, handlerFunc)
+	err = mc.subscribe(ctx, topic)
+	if err != nil {
+		// Unregister the topic if subscription fails.
+		if !c.topicRegistry.unregister(topic) {
+			c.log.Warnf("Failed to unregister topic %s", topic)
+		}
+
+		return err
+	}
 
 	return nil
 }
 
 // Unsubscribe unsubscribes the client from the provided topic.
 func (c *Client) Unsubscribe(ctx context.Context, topic string) error {
-	// Ensure the topic is already subscribed to.
-	registered := c.topicRegistry.isRegistered(topic)
-	if !registered {
-		return nil
+	if topic == "" {
+		return errEmptyTopic
 	}
 
 	mc, err := c.primaryMeshConnection()
@@ -200,13 +216,25 @@ func (c *Client) Unsubscribe(ctx context.Context, topic string) error {
 		return err
 	}
 
-	err = mc.unsubscribe(ctx, topic)
+	// Fetch the handler for the topic before unregistering.
+	topicHandler, err := c.topicRegistry.fetchHandler(topic)
 	if err != nil {
-		return err
+		return ErrRedundantUnsubscription
 	}
 
-	// Remove unsubscribed topic.
-	c.topicRegistry.unregister(topic)
+	if !c.topicRegistry.unregister(topic) {
+		return ErrRedundantUnsubscription
+	}
+
+	err = mc.unsubscribe(ctx, topic)
+	if err != nil {
+		// Re-register the topic if unsubscription fails.
+		if !c.topicRegistry.register(topic, topicHandler) {
+			c.log.Warnf("Failed to re-register topic %s", topic)
+		}
+
+		return err
+	}
 
 	return nil
 }
@@ -323,6 +351,6 @@ func (c *Client) Run(ctx context.Context, bonds []*bond.BondParams) error {
 	}()
 
 	wg.Wait()
-
+	_ = c.host.Close()
 	return nil
 }

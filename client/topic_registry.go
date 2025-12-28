@@ -18,26 +18,31 @@ func newTopicRegistry() *topicRegistry {
 }
 
 // register tracks the provided topic and its corresponding handler.
-func (t *topicRegistry) register(topic string, handlerFunc TopicHandler) {
+// Returns true if registration succeeded, false if the topic was already registered.
+func (t *topicRegistry) register(topic string, handlerFunc TopicHandler) bool {
 	t.mtx.Lock()
+	defer t.mtx.Unlock()
+
+	if _, exists := t.topics[topic]; exists {
+		return false
+	}
+
 	t.topics[topic] = handlerFunc
-	t.mtx.Unlock()
+	return true
 }
 
 // unregister removes the provided topic from the registry.
-func (t *topicRegistry) unregister(topic string) {
+// Returns true if the topic was unregistered, false if it was not registered.
+func (t *topicRegistry) unregister(topic string) bool {
 	t.mtx.Lock()
+	defer t.mtx.Unlock()
+
+	if _, exists := t.topics[topic]; !exists {
+		return false
+	}
+
 	delete(t.topics, topic)
-	t.mtx.Unlock()
-}
-
-// isRegistered checks if the provided topic is registered or not.
-func (t *topicRegistry) isRegistered(topic string) bool {
-	t.mtx.RLock()
-	_, exists := t.topics[topic]
-	t.mtx.RUnlock()
-
-	return exists
+	return true
 }
 
 // fetchHandler returns the handler associated with the provided topic or an error if there is none.
