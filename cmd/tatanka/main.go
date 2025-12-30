@@ -19,14 +19,13 @@ var log slog.Logger
 
 // Config defines the configuration options for the Tatanka node.
 type Config struct {
-	AppDataDir   string `short:"A" long:"appdata" description:"Path to application home directory."`
-	ConfigFile   string `short:"C" long:"configfile" description:"Path to configuration file."`
-	DebugLevel   string `short:"d" long:"debuglevel" description:"Logging level {trace, debug, info, warn, error, critical}."`
-	ListenIP     string `long:"listenip" description:"IP address to listen on."`
-	ListenPort   int    `long:"listenport" description:"Port to listen on."`
-	MetricsPort  int    `long:"metricsport" description:"Port to scrape metrics and fetch profiles from."`
-	ManifestPath string `long:"manifestpath" description:"Path to local manifest file."`
-	ManifestURL  string `long:"manifesturl" description:"URL to remote manifest."`
+	AppDataDir    string `short:"A" long:"appdata" description:"Path to application home directory."`
+	ConfigFile    string `short:"C" long:"configfile" description:"Path to configuration file."`
+	DebugLevel    string `short:"d" long:"debuglevel" description:"Logging level {trace, debug, info, warn, error, critical}."`
+	ListenIP      string `long:"listenip" description:"IP address to listen on."`
+	ListenPort    int    `long:"listenport" description:"Port to listen on."`
+	MetricsPort   int    `long:"metricsport" description:"Port to scrape metrics and fetch profiles from."`
+	WhitelistPath string `long:"whitelistpath" description:"Path to local whitelist file."`
 }
 
 // initLogRotator initializes the logging rotater to write logs to logFile and
@@ -46,14 +45,13 @@ func initLogRotator(dir string) (*rotator.Rotator, error) {
 func main() {
 	// Default config values
 	cfg := Config{
-		AppDataDir:   defaultAppDataDir(),
-		ConfigFile:   defaultConfigFile(),
-		DebugLevel:   "info",
-		ListenIP:     "0.0.0.0",
-		ListenPort:   12345,
-		MetricsPort:  12355,
-		ManifestPath: "",
-		ManifestURL:  "",
+		AppDataDir:    defaultAppDataDir(),
+		ConfigFile:    defaultConfigFile(),
+		DebugLevel:    "info",
+		ListenIP:      "0.0.0.0",
+		ListenPort:    12345,
+		MetricsPort:   12355,
+		WhitelistPath: "",
 	}
 
 	// Parse command-line flags (overrides file values)
@@ -95,13 +93,12 @@ func main() {
 
 	// Create Tatanka config
 	tatankaCfg := &tatanka.Config{
-		DataDir:      cfg.AppDataDir,
-		Logger:       log,
-		ListenIP:     cfg.ListenIP,
-		ListenPort:   cfg.ListenPort,
-		MetricsPort:  cfg.MetricsPort,
-		ManifestPath: cfg.ManifestPath,
-		ManifestURL:  cfg.ManifestURL,
+		DataDir:       cfg.AppDataDir,
+		Logger:        log,
+		ListenIP:      cfg.ListenIP,
+		ListenPort:    cfg.ListenPort,
+		MetricsPort:   cfg.MetricsPort,
+		WhitelistPath: cfg.WhitelistPath,
 	}
 
 	// Create Tatanka node

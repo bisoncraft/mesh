@@ -47,9 +47,9 @@ func (t *TatankaNode) requireBonds(s network.Stream) error {
 	return nil
 }
 
-func (t *TatankaNode) isManifestPeer(s network.Stream) error {
+func (t *TatankaNode) isWhitelistPeer(s network.Stream) error {
 	peerID := s.Conn().RemotePeer()
-	if _, ok := t.manifest.allPeerIDs()[peerID]; !ok {
+	if _, ok := t.getWhitelist().allPeerIDs()[peerID]; !ok {
 		return errUnauthorized
 	}
 	return nil

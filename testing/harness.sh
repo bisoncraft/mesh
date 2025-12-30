@@ -10,7 +10,7 @@ TESTCLIENT_BIN=$TESTCLIENT_DIR/testclient
 TESTCLIENT_UI_DIR="$SCRIPT_DIR/client/ui"
 MAKEPRIVKEY_DIR="$SCRIPT_DIR/makeprivkey"
 MAKEPRIVKEY_BIN=$ROOT_DIR/makeprivkey
-MANIFEST_FILE=$ROOT_DIR/manifest.json
+WHITELIST_FILE=$ROOT_DIR/whitelist.json
 
 build_tatanka() {
   cd "$TATANKA_DIR"
@@ -46,14 +46,14 @@ generate_privkey() {
 
 create_config() {
   local node_dir=$1
-  local manifest_path=$2
+  local whitelist_path=$2
   local listen_port=$3
   local metrics_port=$4
   local config_path=$node_dir/tatanka.conf
 
   cat <<EOF > $config_path
 appdata=$node_dir
-manifestpath=$manifest_path
+whitelistpath=$whitelist_path
 listenport=$listen_port
 metricsport=$metrics_port
 EOF
@@ -91,7 +91,7 @@ start_harness() {
   build_testclient_ui
 
   # Store bootstrap peers for the manifest file
-  manifest_bootstrap=()
+  whitelist_peers=()
   node_peer_ids=()
   node_listen_ports=()
 
@@ -106,17 +106,17 @@ start_harness() {
     listen_port=$((12345 + i))
     metrics_port=$((12355 + i))
     node_listen_ports+=("$listen_port")
-    config_path=$(create_config $node_dir $MANIFEST_FILE $listen_port $metrics_port)
+    config_path=$(create_config $node_dir $WHITELIST_FILE $listen_port $metrics_port)
 
     addr="/ip4/127.0.0.1/tcp/$listen_port"
-    manifest_bootstrap+=("{\"id\": \"$peer_id\", \"addresses\": [\"$addr\"]}")
+    whitelist_peers+=("{\"id\": \"$peer_id\", \"address\": \"$addr\"}")
   done
 
-  # Create manifest file
-  bootstrap_json=$(printf ",%s" "${manifest_bootstrap[@]}")
-  bootstrap_json="${bootstrap_json:1}"  # Remove leading comma
-  manifest="{\"bootstrap_peers\": [$bootstrap_json], \"non_bootstrap_peers\": []}"
-  echo $manifest > $MANIFEST_FILE
+  # Create whitelist file
+  whitelist_json=$(printf ",%s" "${whitelist_peers[@]}")
+  whitelist_json="${whitelist_json:1}"  # Remove leading comma
+  whitelist="{\"peers\": [$whitelist_json]}"
+  echo $whitelist > $WHITELIST_FILE
 
   # Start tmux session and start nodes
   session_name="tatanka-test"

@@ -11,7 +11,6 @@ message Response {
     SubscriptionsResponse subscriptions_response = 3;
     ClientAddrResponse addr_response = 4;
     PostBondResponse post_bond_response = 5;
-    DiscoveryResponse discovery_response = 6;
   }
 }
 
@@ -116,11 +115,6 @@ message PostBondResponse {
 message PeerInfo {
   bytes id = 1;            // peer.ID serialized as bytes
   repeated bytes addrs = 2; // multiaddrs serialized as bytes
-}
-
-// DiscoveryResponse contains a list of peers for discovery.
-message DiscoveryResponse {
-  repeated PeerInfo peers = 1;
 }
 
 // ClientRelayMessageRequest is a client originating request to send a

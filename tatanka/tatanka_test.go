@@ -46,25 +46,25 @@ func (tbs *testBondStorage) bondStrength(peerID peer.ID) uint32 {
 	return tbs.score
 }
 
-func newTestNode(t *testing.T, ctx context.Context, h host.Host, dataDir string, manifest *manifest) *TatankaNode {
+func newTestNode(t *testing.T, ctx context.Context, h host.Host, dataDir string, whitelist *whitelist) *TatankaNode {
 	logBackend := slog.NewBackend(os.Stdout)
 	log := logBackend.Logger(h.ID().ShortString())
 	log.SetLevel(slog.LevelDebug)
 
 	// Write the manifest to the data directory.
 	manifestPath := filepath.Join(dataDir, "manifest.json")
-	manifestData, err := json.Marshal(manifest.toManifestFile())
+	manifestData, err := json.Marshal(whitelist.toFile())
 	if err != nil {
-		t.Fatalf("Failed to marshal manifest: %v", err)
+		t.Fatalf("Failed to marshal whitelist: %v", err)
 	}
 	if err := os.WriteFile(manifestPath, manifestData, 0644); err != nil {
 		t.Fatalf("Failed to write manifest: %v", err)
 	}
 
 	n, err := NewTatankaNode(&Config{
-		Logger:       log,
-		DataDir:      dataDir,
-		ManifestPath: filepath.Join(dataDir, "manifest.json"),
+		Logger:        log,
+		DataDir:       dataDir,
+		WhitelistPath: filepath.Join(dataDir, "manifest.json"),
 	}, WithHost(h))
 	if err != nil {
 		t.Fatalf("Failed to create test node: %v", err)
@@ -77,6 +77,10 @@ func newTestNode(t *testing.T, ctx context.Context, h host.Host, dataDir string,
 			t.Errorf("Failed to run test node: %v", err)
 		}
 	}()
+
+	if err := n.WaitReady(ctx); err != nil {
+		t.Fatalf("Failed to start test node: %v", err)
+	}
 
 	return n
 }
@@ -389,25 +393,22 @@ func fullyConnectedMeshWithClients(ctx context.Context, t *testing.T, numMeshNod
 		clientHosts[i] = mnet.Host(allPeers[numMeshNodes+i])
 	}
 
-	// Just make all mesh nodes bootstrap nodes.
-	bootstrapPeers := make([]*peer.AddrInfo, numMeshNodes)
+	whitelistPeers := make([]*peer.AddrInfo, numMeshNodes)
 	for i, h := range meshHosts {
-		bootstrapPeers[i] = &peer.AddrInfo{ID: h.ID(), Addrs: h.Addrs()}
+		whitelistPeers[i] = &peer.AddrInfo{ID: h.ID(), Addrs: h.Addrs()}
 	}
-	mockManifest := &manifest{
-		bootstrapPeers:    bootstrapPeers,
-		nonBootstrapPeers: []peer.ID{},
+	mockWhitelist := &whitelist{
+		peers: whitelistPeers,
 	}
 
 	runningNodes := make([]*TatankaNode, 0, numMeshNodes)
 	for i, h := range meshHosts {
 		dir := t.TempDir()
-		node := newTestNode(t, ctx, h, dir, mockManifest)
-		if err := linkNodeWithMesh(mnet, node, runningNodes, true); err != nil {
+		if err := linkNodeWithMesh(mnet, h, runningNodes, true); err != nil {
 			t.Fatalf("Failed to link node %d: %v", i, err)
 		}
+		node := newTestNode(t, ctx, h, dir, mockWhitelist)
 		runningNodes = append(runningNodes, node)
-		runMaintenance(ctx, node)
 	}
 
 	// Make sure the mesh is fully connected
@@ -435,19 +436,15 @@ func fullyConnectedMeshWithClients(ctx context.Context, t *testing.T, numMeshNod
 	return mnet, runningNodes, clients
 }
 
-// runMeshMaintenance simulates a single cycle of the node's maintenance loop.
-func runMaintenance(ctx context.Context, node *TatankaNode) {
-	node.refreshPeersFromBootstrap(ctx)
-	node.connectToPeers(ctx)
-}
-
 // checkFullyConnected verifies that all provided nodes are connected to each other.
-func checkFullyConnected(t *testing.T, nodes []*TatankaNode) {
+// Returns true if fully connected, false otherwise.
+func checkFullyConnected(t *testing.T, nodes []*TatankaNode) bool {
 	t.Helper()
 	if len(nodes) < 2 {
-		return
+		return true
 	}
 
+	fullyConnected := true
 	for i := 0; i < len(nodes); i++ {
 		for j := i + 1; j < len(nodes); j++ {
 			n1 := nodes[i]
@@ -456,37 +453,41 @@ func checkFullyConnected(t *testing.T, nodes []*TatankaNode) {
 			// Check n1 -> n2
 			connStatus1 := n1.node.Network().Connectedness(n2.node.ID())
 			if connStatus1 != network.Connected {
-				t.Errorf("Node %s is not connected to %s (status: %s)",
+				t.Logf("Node %s is not connected to %s (status: %s)",
 					n1.node.ID().ShortString(), n2.node.ID().ShortString(), connStatus1)
+				fullyConnected = false
 			}
 
 			// Check n2 -> n1
 			connStatus2 := n2.node.Network().Connectedness(n1.node.ID())
 			if connStatus2 != network.Connected {
-				t.Errorf("Node %s is not connected to %s (status: %s)",
+				t.Logf("Node %s is not connected to %s (status: %s)",
 					n2.node.ID().ShortString(), n1.node.ID().ShortString(), connStatus2)
+				fullyConnected = false
 			}
 		}
 	}
+
+	return fullyConnected
 }
 
 // linkNodeWithMesh links a node to the other running nodes. Linking mocks
 // the ability for a node to be reached from another node over the network.
-func linkNodeWithMesh(mesh mocknet.Mocknet, node *TatankaNode, runningNodes []*TatankaNode, link bool) error {
+func linkNodeWithMesh(mesh mocknet.Mocknet, host host.Host, runningNodes []*TatankaNode, link bool) error {
 	if len(runningNodes) == 0 {
 		return nil
 	}
 
 	for _, otherNode := range runningNodes {
 		if link {
-			if _, err := mesh.LinkPeers(node.node.ID(), otherNode.node.ID()); err != nil {
+			if _, err := mesh.LinkPeers(host.ID(), otherNode.node.ID()); err != nil {
 				return err
 			}
 		} else {
-			if err := mesh.DisconnectPeers(node.node.ID(), otherNode.node.ID()); err != nil {
+			if err := mesh.DisconnectPeers(host.ID(), otherNode.node.ID()); err != nil {
 				return err
 			}
-			if err := mesh.UnlinkPeers(node.node.ID(), otherNode.node.ID()); err != nil {
+			if err := mesh.UnlinkPeers(host.ID(), otherNode.node.ID()); err != nil {
 				return err
 			}
 		}
@@ -515,15 +516,13 @@ func TestProgressiveMeshStartup(t *testing.T) {
 	h3 := mesh.Host(peerIDs[2])
 	h4 := mesh.Host(peerIDs[3])
 	h5 := mesh.Host(peerIDs[4])
-	mockManifest := &manifest{
-		nonBootstrapPeers: []peer.ID{
-			h2.ID(),
-			h4.ID(),
-			h5.ID(),
-		},
-		bootstrapPeers: []*peer.AddrInfo{
+	mockWhitelist := &whitelist{
+		peers: []*peer.AddrInfo{
 			{ID: h1.ID(), Addrs: h1.Addrs()},
+			{ID: h2.ID()},
 			{ID: h3.ID(), Addrs: h3.Addrs()},
+			{ID: h4.ID()},
+			{ID: h5.ID()},
 		},
 	}
 
@@ -538,23 +537,26 @@ func TestProgressiveMeshStartup(t *testing.T) {
 
 		dir := t.TempDir()
 		t.Logf("--- Starting Node %d (%s) ---", nodeNum, nodeType)
-		node := newTestNode(t, ctx, host, dir, mockManifest)
-		err := linkNodeWithMesh(mesh, node, runningNodes, true)
+		err := linkNodeWithMesh(mesh, host, runningNodes, true)
 		if err != nil {
 			t.Fatal(err)
 		}
+		node := newTestNode(t, ctx, host, dir, mockWhitelist)
 		runningNodes = append(runningNodes, node)
-		runMaintenance(ctx, node)
 
 		// First node starts alone, others should be fully connected
 		if len(runningNodes) == 1 {
 			if len(node.node.Network().Peers()) != 0 {
 				t.Errorf("node %d should have 0 peers, but has %d", nodeNum, len(node.node.Network().Peers()))
+			} else {
+				t.Logf("Node %d is up. Connected to 0 peers.", nodeNum)
 			}
-			t.Logf("Node %d is up. Connected to 0 peers.", nodeNum)
 		} else {
-			checkFullyConnected(t, runningNodes)
-			t.Logf("Node %d is up. Mesh size: %d. Fully connected.", nodeNum, len(runningNodes))
+			if checkFullyConnected(t, runningNodes) {
+				t.Logf("Node %d is up. Mesh size: %d. Fully connected.", nodeNum, len(runningNodes))
+			} else {
+				t.Errorf("Node %d is up. Mesh size: %d. Not fully connected.", nodeNum, len(runningNodes))
+			}
 		}
 	}
 
@@ -566,64 +568,164 @@ func TestProgressiveMeshStartup(t *testing.T) {
 	startNode(5, h5, "Peer")
 }
 
-// TestDiscoveryProtocol tests the peer discovery mechanism where a node
-// shares its connected peers with a requesting node.
-func TestDiscoveryProtocol(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+// requireEventually asserts that the given condition function returns true within
+// the specified timeout. It polls the condition at the given tick interval.
+func requireEventually(t *testing.T, condition func() bool, timeout, tick time.Duration, msg string, args ...any) {
+	t.Helper()
+
+	deadline := time.Now().Add(timeout)
+
+	for time.Now().Before(deadline) {
+		if condition() {
+			return
+		}
+		time.Sleep(tick)
+	}
+
+	if condition() {
+		return
+	}
+
+	t.Fatalf("Condition failed after %v: %s", timeout, fmt.Sprintf(msg, args...))
+}
+
+func TestMeshRecovery(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	// Create a fully connected mesh of 4 nodes, but only three are listed in
-	// the manifest.
-	mesh, err := mocknet.FullMeshConnected(4)
+	// 1. Setup a standard 3-node mesh
+	const numPeers = 3
+	mesh, err := mocknet.WithNPeers(numPeers)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	peerIDs := mesh.Peers()
-	h1 := mesh.Host(peerIDs[0])
-	h2 := mesh.Host(peerIDs[1])
-	h3 := mesh.Host(peerIDs[2])
-	h4 := mesh.Host(peerIDs[3])
+	// Fully connected whitelist (no discovery required)
+	hosts := mesh.Hosts()
+	var whitelistPeers []*peer.AddrInfo
+	for _, h := range hosts {
+		whitelistPeers = append(whitelistPeers, &peer.AddrInfo{ID: h.ID(), Addrs: h.Addrs()})
+	}
+	mockWhitelist := &whitelist{peers: whitelistPeers}
 
-	mockManifest := &manifest{
-		nonBootstrapPeers: []peer.ID{
-			h1.ID(),
-			h2.ID(),
-			h3.ID(),
+	// Start the nodes
+	var nodes []*TatankaNode
+	for _, h := range hosts {
+		err := linkNodeWithMesh(mesh, h, nodes, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		node := newTestNode(t, ctx, h, t.TempDir(), mockWhitelist)
+		nodes = append(nodes, node)
+	}
+
+	// 2. Verify the mesh is fully connected
+	if !checkFullyConnected(t, nodes) {
+		t.Fatal("Initial mesh failed to connect")
+	}
+
+	// 3. Crash node 1
+	victim := nodes[1]
+	t.Logf("--- Simulating crash of Node 1 (%s) ---", victim.node.ID())
+	mesh.UnlinkPeers(victim.node.ID(), nodes[0].node.ID())
+	mesh.UnlinkPeers(victim.node.ID(), nodes[2].node.ID())
+	victim.node.Network().ClosePeer(nodes[0].node.ID())
+	victim.node.Network().ClosePeer(nodes[2].node.ID())
+
+	// 4. Verify the mesh is broken
+	requireEventually(t, func() bool {
+		return nodes[0].node.Network().Connectedness(victim.node.ID()) == network.NotConnected
+	}, 2*time.Second, 100*time.Millisecond, "Node 0 failed to detect Node 1 disconnect")
+
+	// 5. "Restart" Node 1 (Restore the links)
+	t.Log("--- Recovering Node 1 ---")
+	mesh.LinkPeers(victim.node.ID(), nodes[0].node.ID())
+	mesh.LinkPeers(victim.node.ID(), nodes[2].node.ID())
+
+	// 6. Verify Self-Healing
+	t.Log("Waiting for mesh self-healing...")
+	requireEventually(t, func() bool {
+		return checkFullyConnected(t, nodes)
+	}, 10*time.Second, 100*time.Millisecond, "Mesh failed to auto-heal after node recovery")
+}
+
+func TestWhitelistMismatch(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	// Start a 3 node mesh
+	const numPeers = 3
+	mesh, err := mocknet.WithNPeers(numPeers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hosts := mesh.Hosts()
+	h1, h2, h3 := hosts[0], hosts[1], hosts[2]
+
+	goodWhitelist := &whitelist{
+		peers: []*peer.AddrInfo{
+			{ID: h1.ID(), Addrs: h1.Addrs()},
+			{ID: h2.ID(), Addrs: h2.Addrs()},
+			{ID: h3.ID(), Addrs: h3.Addrs()},
 		},
 	}
 
-	n1 := newTestNode(t, ctx, h1, t.TempDir(), mockManifest)
-	newTestNode(t, ctx, h2, t.TempDir(), mockManifest)
-	n3 := newTestNode(t, ctx, h3, t.TempDir(), mockManifest)
-	newTestNode(t, ctx, h4, t.TempDir(), mockManifest)
-
-	time.Sleep(time.Second)
-
-	t.Logf("Setup complete. n1 is connected to %d peers", len(n1.node.Network().Peers()))
-
-	// Node 3 calls discover peers on node 1. Only the whitelisted peers
-	// in the manifest should be returned.
-	discoveredPeers, err := n3.discoverPeers(ctx, &peer.AddrInfo{ID: h1.ID()})
-	if err != nil {
-		t.Fatalf("Discovery failed: %v", err)
+	badWhitelist := &whitelist{
+		peers: []*peer.AddrInfo{
+			{ID: h1.ID(), Addrs: h1.Addrs()},
+			{ID: h2.ID(), Addrs: h2.Addrs()},
+			{ID: h3.ID(), Addrs: h3.Addrs()},
+			{ID: randomPeerID(), Addrs: nil},
+		},
 	}
-	if len(discoveredPeers) != 2 {
-		t.Fatalf("Expected 2 discovered peers, but got %d", len(discoveredPeers))
-	}
-	discoveredIDs := make(map[peer.ID]bool)
-	for _, p := range discoveredPeers {
-		discoveredIDs[p.ID] = true
-		if len(p.Addrs) == 0 {
-			t.Errorf("Discovered peer %s has no addresses", p.ID.ShortString())
+
+	// Start Nodes
+	// Node 1 & 2 get the Good Whitelist
+	// Node 3 gets the Bad Whitelist
+	var nodes []*TatankaNode
+	startNode := func(h host.Host, whitelist *whitelist) (*TatankaNode, context.CancelFunc) {
+		err = linkNodeWithMesh(mesh, h, nodes, true)
+		if err != nil {
+			t.Fatal(err)
 		}
+		ctx, cancel := context.WithCancel(ctx)
+		node := newTestNode(t, ctx, h, t.TempDir(), whitelist)
+		nodes = append(nodes, node)
+		return node, cancel
 	}
-	if !discoveredIDs[h2.ID()] {
-		t.Errorf("Expected to discover h2 (%s)", h2.ID().ShortString())
+	n1, _ := startNode(h1, goodWhitelist)
+	n2, _ := startNode(h2, goodWhitelist)
+	_, cancel3 := startNode(h3, badWhitelist)
+
+	// Check that node 1 and node2 are connected, but node 3 is not.
+	checkConnected := func(h1, h2 host.Host, expected network.Connectedness) bool {
+		return h1.Network().Connectedness(h2.ID()) == expected &&
+			h2.Network().Connectedness(h1.ID()) == expected
 	}
-	if !discoveredIDs[h3.ID()] {
-		t.Errorf("Expected to discover h3 (%s)", h3.ID().ShortString())
+	checkConnected(h1, h2, network.Connected)
+	checkConnected(h1, h3, network.NotConnected)
+	checkConnected(h2, h3, network.NotConnected)
+
+	// Shut down node 3, restart with the correct whitelist.
+	cancel3()
+	n3, _ := startNode(h3, goodWhitelist)
+
+	// Check that the mesh is fully connected.
+	if !checkFullyConnected(t, []*TatankaNode{n1, n2, n3}) {
+		t.Fatal("Mesh failed to connect after node 3 restart")
 	}
+}
+
+func randomPeerID() peer.ID {
+	_, pub, err := crypto.GenerateKeyPair(crypto.Ed25519, -1)
+	if err != nil {
+		panic(err)
+	}
+	id, err := peer.IDFromPublicKey(pub)
+	if err != nil {
+		panic(err)
+	}
+	return id
 }
 
 func TestClientRelay(t *testing.T) {
@@ -653,17 +755,7 @@ func TestClientRelay(t *testing.T) {
 		_, _, clients := fullyConnectedMeshWithClients(ctx, t, 1, 1, func(i int) int { return 0 })
 		initiator := clients[0]
 
-		// Generate a random peer ID not present.
-		_, pub, err := crypto.GenerateKeyPair(crypto.Ed25519, -1)
-		if err != nil {
-			t.Fatalf("failed generating peer key: %v", err)
-		}
-		missing, err := peer.IDFromPublicKey(pub)
-		if err != nil {
-			t.Fatalf("failed deriving peer ID: %v", err)
-		}
-
-		_, err = initiator.relayMessage(ctx, missing, []byte("hi"))
+		_, err := initiator.relayMessage(ctx, randomPeerID(), []byte("hi"))
 		if !errors.Is(err, errRelayNotFound) {
 			t.Fatalf("expected counterparty not found error, got %v", err)
 		}

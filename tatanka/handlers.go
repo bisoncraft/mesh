@@ -49,40 +49,6 @@ func pbPeerInfoToLibp2p(pbPeer *protocolsPb.PeerInfo) (peer.AddrInfo, error) {
 	}, nil
 }
 
-// handleDiscovery handles a discovery request. All tatanka nodes that the node
-// is connected to are shared with the requesting node.
-func (t *TatankaNode) handleDiscovery(s network.Stream) {
-	t.log.Infof("handleDiscovery called for stream %s", s.Conn().RemotePeer().ShortString())
-	defer func() { _ = s.Close() }()
-
-	peerStore := t.node.Network().Peerstore()
-	manifestPeerIDs := t.manifest.allPeerIDs()
-	pbPeers := make([]*protocolsPb.PeerInfo, 0, len(manifestPeerIDs))
-
-	for p := range manifestPeerIDs {
-		if p == t.node.ID() {
-			continue
-		}
-		if t.node.Network().Connectedness(p) != network.Connected {
-			continue
-		}
-
-		peerInfo := peerStore.PeerInfo(p)
-		if len(peerInfo.Addrs) == 0 {
-			continue
-		}
-
-		pbPeers = append(pbPeers, libp2pPeerInfoToPb(peerInfo))
-	}
-
-	response := pbDiscoveryResponse(pbPeers)
-	t.log.Infof("Writing discovery response to stream %s", s.Conn().RemotePeer().ShortString())
-	if err := codec.WriteLengthPrefixedMessage(s, response); err != nil {
-		t.log.Errorf("Failed to write discovery response: %v", err)
-		return
-	}
-}
-
 // handleClientPush is called when the client opens a push stream to the node.
 func (t *TatankaNode) handleClientPush(s network.Stream) {
 	if err := codec.WriteLengthPrefixedMessage(s, pbResponseSuccess()); err != nil {
@@ -382,17 +348,95 @@ func (t *TatankaNode) handleForwardRelay(s network.Stream) {
 	writeResponse(pbTatankaForwardRelaySuccess(respData))
 }
 
-// --- Protobuf Helper Functions ---
+// handleDiscovery handles a request from another tatanka node to discover
+// addresses for a target peer. If the target peer is not connected to us, we
+// send a not found response, otherwise we send the addresses of the target peer.
+func (t *TatankaNode) handleDiscovery(s network.Stream) {
+	defer func() { _ = s.Close() }()
 
-func pbDiscoveryResponse(peers []*protocolsPb.PeerInfo) *protocolsPb.Response {
-	return &protocolsPb.Response{
-		Response: &protocolsPb.Response_DiscoveryResponse{
-			DiscoveryResponse: &protocolsPb.DiscoveryResponse{
-				Peers: peers,
-			},
-		},
+	remotePeerID := s.Conn().RemotePeer()
+	requestMessage := &pb.DiscoveryRequest{}
+	if err := codec.ReadLengthPrefixedMessage(s, requestMessage); err != nil {
+		t.log.Warnf("Failed to read/unmarshal discovery request message from peer %s: %v.", remotePeerID.ShortString(), err)
+		return
+	}
+
+	targetPeerID, err := peer.IDFromBytes(requestMessage.Id)
+	if err != nil {
+		t.log.Warnf("Failed to parse target peer ID from request: %v.", err)
+		return
+	}
+
+	// Only share addresses for whitelist peers.
+	if _, ok := t.getWhitelist().allPeerIDs()[targetPeerID]; !ok {
+		t.log.Warnf("Tatanka peer %s attempted to discover addresses for non-whitelist peer %s.", remotePeerID.ShortString(), targetPeerID.ShortString())
+		if err := codec.WriteLengthPrefixedMessage(s, pbDiscoveryResponseNotFound()); err != nil {
+			t.log.Warnf("Failed to write discovery response to peer %s: %v.", remotePeerID.ShortString(), err)
+		}
+		return
+	}
+
+	if t.node.Network().Connectedness(targetPeerID) != network.Connected {
+		if err := codec.WriteLengthPrefixedMessage(s, pbDiscoveryResponseNotFound()); err != nil {
+			t.log.Warnf("Failed to write discovery response to peer %s: %v.", remotePeerID.ShortString(), err)
+		}
+		return
+	}
+
+	addrs := t.node.Peerstore().Addrs(targetPeerID)
+	if err := codec.WriteLengthPrefixedMessage(s, pbDiscoveryResponseSuccess(addrs)); err != nil {
+		t.log.Warnf("Failed to write discovery response to peer %s: %v.", remotePeerID.ShortString(), err)
 	}
 }
+
+// handleWhitelist handles a request from another tatanka node to verify the
+// whitelist alignment. The counterparty sends the list of peer IDs in their
+// whitelist. If they match with ours, we send a success response, otherwise
+// we send our whitelist peer IDs so the counterparty can see the difference.
+func (t *TatankaNode) handleWhitelist(s network.Stream) {
+	defer func() { _ = s.Close() }()
+
+	remotePeerID := s.Conn().RemotePeer()
+
+	req := &pb.WhitelistRequest{}
+	if err := codec.ReadLengthPrefixedMessage(s, req); err != nil {
+		t.log.Warnf("Failed to read whitelist request from %s: %v", remotePeerID.ShortString(), err)
+		return
+	}
+
+	whitelist := t.getWhitelist()
+	localPeerIDs := whitelist.allPeerIDs()
+	var mismatch bool
+
+	// Check if the incoming peer IDs are in the local whitelist.
+	for _, idBytes := range req.PeerIDs {
+		id, err := peer.IDFromBytes(idBytes)
+		if err != nil {
+			mismatch = true
+			break
+		}
+		if _, ok := localPeerIDs[id]; !ok {
+			mismatch = true
+			break
+		}
+	}
+
+	// Make sure there aren't additional peer IDs in the local whitelist.
+	mismatch = mismatch || len(req.PeerIDs) != len(localPeerIDs)
+
+	var resp *pb.WhitelistResponse
+	if mismatch {
+		resp = pbWhitelistResponseMismatch(whitelist.peerIDsBytes())
+	} else {
+		resp = pbWhitelistResponseSuccess()
+	}
+
+	if err := codec.WriteLengthPrefixedMessage(s, resp); err != nil {
+		t.log.Warnf("Failed to write whitelist response to %s: %v", remotePeerID.ShortString(), err)
+	}
+}
+
+// --- Protobuf Helper Functions ---
 
 func pbPushMessageSubscription(topic string, client peer.ID, subscribed bool) *protocolsPb.PushMessage {
 	messageType := protocolsPb.PushMessage_SUBSCRIBE
@@ -549,6 +593,47 @@ func pbTatankaForwardRelayError(message string) *pb.TatankaForwardRelayResponse 
 	return &pb.TatankaForwardRelayResponse{
 		Response: &pb.TatankaForwardRelayResponse_Error{
 			Error: message,
+		},
+	}
+}
+
+func pbWhitelistResponseSuccess() *pb.WhitelistResponse {
+	return &pb.WhitelistResponse{
+		Response: &pb.WhitelistResponse_Success_{
+			Success: &pb.WhitelistResponse_Success{},
+		},
+	}
+}
+
+func pbWhitelistResponseMismatch(mismatchedPeerIDs [][]byte) *pb.WhitelistResponse {
+	return &pb.WhitelistResponse{
+		Response: &pb.WhitelistResponse_Mismatch_{
+			Mismatch: &pb.WhitelistResponse_Mismatch{
+				PeerIDs: mismatchedPeerIDs,
+			},
+		},
+	}
+}
+
+func pbDiscoveryResponseNotFound() *pb.DiscoveryResponse {
+	return &pb.DiscoveryResponse{
+		Response: &pb.DiscoveryResponse_NotFound_{
+			NotFound: &pb.DiscoveryResponse_NotFound{},
+		},
+	}
+}
+
+func pbDiscoveryResponseSuccess(addrs []ma.Multiaddr) *pb.DiscoveryResponse {
+	addrBytes := make([][]byte, 0, len(addrs))
+	for _, addr := range addrs {
+		addrBytes = append(addrBytes, addr.Bytes())
+	}
+
+	return &pb.DiscoveryResponse{
+		Response: &pb.DiscoveryResponse_Success_{
+			Success: &pb.DiscoveryResponse_Success{
+				Addrs: addrBytes,
+			},
 		},
 	}
 }

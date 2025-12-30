@@ -32,3 +32,38 @@ message TatankaForwardRelayResponse {
   message ClientRejected {
   }
 }
+
+message DiscoveryRequest {
+  bytes id = 1;
+}
+
+message DiscoveryResponse {
+  oneof response {
+    Success success = 1;
+    NotFound not_found = 2;
+  }
+
+  message Success {
+    repeated bytes addrs = 1;
+  }
+
+  message NotFound {}
+}
+
+message WhitelistRequest {
+  repeated bytes peerIDs = 1;
+}
+
+message WhitelistResponse {
+  oneof response {
+    Success success = 1;
+    Mismatch mismatch = 2;
+  }
+
+  message Success {
+  }
+
+  message Mismatch {
+    repeated bytes peerIDs = 1;
+  }
+}

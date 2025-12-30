@@ -63,7 +63,7 @@ func (c *clientConnectionUpdate) toPb() *pb.ClientConnectionMsg {
 type gossipSubCfg struct {
 	node                          host.Host
 	log                           slog.Logger
-	getManifestPeers              func() map[peer.ID]struct{}
+	getWhitelistPeers             func() map[peer.ID]struct{}
 	handleBroadcastMessage        func(msg *protocolsPb.PushMessage)
 	handleClientConnectionMessage func(update *clientConnectionUpdate)
 }
@@ -81,7 +81,7 @@ type gossipSub struct {
 
 func newGossipSub(ctx context.Context, cfg *gossipSubCfg) (*gossipSub, error) {
 	peerFilter := func(pid peer.ID, topic string) bool {
-		_, ok := cfg.getManifestPeers()[pid]
+		_, ok := cfg.getWhitelistPeers()[pid]
 		return ok
 	}
 
