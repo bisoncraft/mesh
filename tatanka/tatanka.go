@@ -20,6 +20,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/martonp/tatanka-mesh/protocols"
 	protocolsPb "github.com/martonp/tatanka-mesh/protocols/pb"
+	"github.com/martonp/tatanka-mesh/tatanka/admin"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
@@ -46,6 +47,7 @@ type Config struct {
 	ListenIP      string
 	ListenPort    int
 	MetricsPort   int
+	AdminPort     int
 	WhitelistPath string
 }
 
@@ -77,6 +79,7 @@ type TatankaNode struct {
 	subscriptionManager     *subscriptionManager
 	pushStreamManager       *pushStreamManager
 	connectionManager       *meshConnectionManager
+	adminServer             *admin.Server
 
 	metricsServer *http.Server
 }
@@ -187,7 +190,36 @@ func (t *TatankaNode) Run(ctx context.Context) error {
 		}
 	})
 
-	t.connectionManager = newMeshConnectionManager(t.config.Logger, t.node, t.getWhitelist())
+	// Create admin callback function and setup the admin server if configured.
+	adminCallback := func(peerID peer.ID, connected bool, whitelistMismatch bool, addresses []string, peerWhitelist []string) {
+	}
+	if t.config.AdminPort > 0 {
+		adminAddr := fmt.Sprintf(":%d", t.config.AdminPort)
+		server := admin.NewServer(t.config.Logger, adminAddr)
+		whitelistIDs := t.getWhitelist().allPeerIDs()
+		whitelist := make([]string, 0, len(whitelistIDs))
+		for id := range whitelistIDs {
+			whitelist = append(whitelist, id.String())
+		}
+		server.UpdateWhitelist(whitelist)
+
+		adminCallback = func(peerID peer.ID, connected, whitelistMismatch bool, addresses []string, peerWhitelist []string) {
+			state := admin.StateDisconnected
+			switch {
+			case connected:
+				state = admin.StateConnected
+			case whitelistMismatch:
+				state = admin.StateWhitelistMismatch
+			}
+			server.UpdateConnectionState(peerID, state, addresses, peerWhitelist)
+		}
+
+		t.adminServer = server
+	}
+
+	t.connectionManager = newMeshConnectionManager(t.config.Logger, t.node, t.getWhitelist(), adminCallback)
+
+	t.log.Infof("Admin interface available (or not) on :%d", t.config.AdminPort)
 
 	t.setupStreamHandlers()
 	t.setupObservability()
@@ -201,6 +233,20 @@ func (t *TatankaNode) Run(ctx context.Context) error {
 			}
 		}
 	}()
+
+	// Start admin server if configured
+	if t.adminServer != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			t.log.Infof("Admin interface available on :%d", t.config.AdminPort)
+			if err := t.adminServer.Start(ctx); err != nil {
+				if !errors.Is(err, http.ErrServerClosed) {
+					t.log.Errorf("Failed to start admin server: %v", err)
+				}
+			}
+		}()
+	}
 
 	wg.Add(1)
 	go func() {

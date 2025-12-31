@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -35,6 +36,9 @@ var (
 	errWhitelistMismatch = errors.New("whitelist mismatch")
 	errDiscoveryNotFound = errors.New("discovery not found")
 )
+
+// AdminUpdateCallback is called when connection states change
+type AdminUpdateCallback func(peerID peer.ID, connected bool, whitelistMismatch bool, addresses []string, peerWhitelist []string)
 
 // retryState tracks exponential backoff state for connection retries.
 type retryState struct {
@@ -70,6 +74,9 @@ type peerTracker struct {
 	// specifically due to whitelist mismatch. If this is the case, we know
 	// there's no reason to try discovery.
 	whitelistMismatch bool
+	// peerWhitelist contains the peer's whitelist if we received it during
+	// whitelist verification.
+	peerWhitelist []string
 	// initialCh is closed after the first connection attempt.
 	initialCh   chan struct{}
 	initialOnce sync.Once
@@ -81,6 +88,16 @@ func (t *peerTracker) markInitial() {
 	})
 }
 
+// getAddresses returns the known addresses for this peer as strings.
+func (t *peerTracker) getAddresses() []string {
+	addrs := t.m.node.Peerstore().Addrs(t.peerID)
+	result := make([]string, len(addrs))
+	for i, addr := range addrs {
+		result[i] = addr.String()
+	}
+	return result
+}
+
 // run starts the main event loop for a single peer connection.
 func (t *peerTracker) run() {
 	timer := time.NewTimer(0)
@@ -88,10 +105,16 @@ func (t *peerTracker) run() {
 
 	retry := &retryState{backoff: baseRetryDelay}
 
+	resetTimerWithJitter := func(duration time.Duration) {
+		jitter := time.Duration(rand.Intn(int(duration / 10)))
+		timer.Reset(duration + jitter)
+	}
+
 	success := func() {
+		t.m.adminCallback(t.peerID, true, false, t.getAddresses(), nil)
 		t.markInitial()
 		retry.onSuccess()
-		timer.Reset(maxRetryDelay)
+		resetTimerWithJitter(maxRetryDelay)
 	}
 
 	forceReconnect := func() {
@@ -100,8 +123,9 @@ func (t *peerTracker) run() {
 	}
 
 	failure := func() {
+		t.m.adminCallback(t.peerID, false, t.whitelistMismatch, t.getAddresses(), t.peerWhitelist)
 		t.markInitial()
-		timer.Reset(retry.backoff)
+		resetTimerWithJitter(retry.backoff)
 		retry.onFailure()
 	}
 
@@ -133,6 +157,10 @@ func (t *peerTracker) run() {
 			return
 
 		case <-t.signalReconnect:
+			// Do not force a reconnect if we just disconnected due to a whitelist mismatch.
+			if t.whitelistMismatch {
+				continue
+			}
 			if !timer.Stop() {
 				select {
 				case <-timer.C:
@@ -260,6 +288,20 @@ func (t *peerTracker) verifyWhitelist() error {
 		return nil
 	}
 
+	if resp.GetMismatch() != nil {
+		// Extract peer's whitelist from mismatch response
+		peerIDs := resp.GetMismatch().GetPeerIDs()
+		t.peerWhitelist = make([]string, len(peerIDs))
+		for i, peerIDBytes := range peerIDs {
+			peerID, err := peer.IDFromBytes(peerIDBytes)
+			if err != nil {
+				t.m.log.Warnf("Failed to parse peer ID from mismatch response: %v", err)
+				continue
+			}
+			t.peerWhitelist[i] = peerID.String()
+		}
+	}
+
 	return fmt.Errorf("%w for peer %s", errWhitelistMismatch, t.peerID)
 }
 
@@ -273,17 +315,19 @@ type meshConnectionManager struct {
 	trackersMtx  sync.RWMutex
 	peerTrackers map[peer.ID]*peerTracker
 
-	initialCh   chan struct{}
-	initialOnce sync.Once
-	initialErr  atomic.Value // error
+	initialCh     chan struct{}
+	initialOnce   sync.Once
+	initialErr    atomic.Value // error
+	adminCallback AdminUpdateCallback
 }
 
-func newMeshConnectionManager(log slog.Logger, node host.Host, whitelist *whitelist) *meshConnectionManager {
+func newMeshConnectionManager(log slog.Logger, node host.Host, whitelist *whitelist, adminCallback AdminUpdateCallback) *meshConnectionManager {
 	m := &meshConnectionManager{
-		log:          log,
-		node:         node,
-		peerTrackers: make(map[peer.ID]*peerTracker),
-		initialCh:    make(chan struct{}),
+		log:           log,
+		node:          node,
+		peerTrackers:  make(map[peer.ID]*peerTracker),
+		initialCh:     make(chan struct{}),
+		adminCallback: adminCallback,
 	}
 	m.whitelist.Store(whitelist)
 

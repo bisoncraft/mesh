@@ -6,6 +6,7 @@ require (
 	github.com/decred/slog v1.2.0
 	github.com/go-chi/chi/v5 v5.2.3
 	github.com/go-chi/cors v1.2.2
+	github.com/gorilla/websocket v1.5.3
 	github.com/jessevdk/go-flags v1.6.1
 	github.com/jrick/logrotate v1.1.2
 	github.com/libp2p/go-libp2p v0.44.0
@@ -26,7 +27,6 @@ require (
 	github.com/francoispqt/gojay v1.2.13 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/google/uuid v1.6.0 // indirect
-	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
 	github.com/huin/goupnp v1.3.0 // indirect
 	github.com/ipfs/go-cid v0.5.0 // indirect

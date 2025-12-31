@@ -49,6 +49,7 @@ create_config() {
   local whitelist_path=$2
   local listen_port=$3
   local metrics_port=$4
+  local admin_port=$5
   local config_path=$node_dir/tatanka.conf
 
   cat <<EOF > $config_path
@@ -56,6 +57,7 @@ appdata=$node_dir
 whitelistpath=$whitelist_path
 listenport=$listen_port
 metricsport=$metrics_port
+adminport=$admin_port
 EOF
 
   echo $config_path
@@ -105,8 +107,9 @@ start_harness() {
 
     listen_port=$((12345 + i))
     metrics_port=$((12355 + i))
+    admin_port=$((12365 + i))
     node_listen_ports+=("$listen_port")
-    config_path=$(create_config $node_dir $WHITELIST_FILE $listen_port $metrics_port)
+    config_path=$(create_config $node_dir $WHITELIST_FILE $listen_port $metrics_port $admin_port)
 
     addr="/ip4/127.0.0.1/tcp/$listen_port"
     whitelist_peers+=("{\"id\": \"$peer_id\", \"address\": \"$addr\"}")
