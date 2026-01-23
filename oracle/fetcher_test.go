@@ -4,6 +4,7 @@ package oracle
 
 import (
 	"context"
+	"math/big"
 	"net/http"
 	"testing"
 	"time"
@@ -193,7 +194,7 @@ func testFeeRateFetcher(t *testing.T, src *httpSource, expectedNetwork Network) 
 	for _, u := range updates {
 		if u.network == expectedNetwork {
 			found = true
-			if u.feeRate == 0 {
+			if u.feeRate.Cmp(big.NewInt(0)) == 0 {
 				t.Errorf("fee rate for %s is zero", expectedNetwork)
 			}
 			t.Logf("%s fee rate: %d", expectedNetwork, u.feeRate)

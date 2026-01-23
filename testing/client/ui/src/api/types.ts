@@ -14,7 +14,6 @@ export type ClientEvent = {
   type: ClientEventType
   topic?: TopicName
   peer?: string
-  data_b64?: string
   message?: string
 }
 
@@ -25,7 +24,6 @@ export type ChatMessage = {
   text: string
   receivedAt: number
   direction: 'in' | 'out' | 'system'
-  rawBase64?: string
   serverEventId?: number
 }
 

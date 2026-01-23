@@ -1,6 +1,5 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
 import type { ChatMessage, ClientEvent, TopicName } from '../api/types'
-import { fromBase64Utf8 } from '../utils/base64'
 
 type ChatState = Record<TopicName, ChatMessage[]>
 
@@ -22,19 +21,16 @@ export function useChat() {
     if (subscribedTopics.length > 0 && !subscribedTopics.includes(topic)) return
 
     const peer = evt.peer || 'peer'
-    const data = evt.data_b64
 
     if (evt.type === 'data' || evt.type === 'broadcast') {
-      const text = data ? safeDecodeBase64(data) : ''
       const dir: ChatMessage['direction'] = evt.type === 'broadcast' ? 'out' : 'in'
       const msg: ChatMessage = {
         id: makeId(),
         topic,
         peer: dir === 'out' ? 'me' : peer,
-        text,
+        text: evt.message || '',
         receivedAt: parseAt(evt.at) ?? Date.now(),
         direction: dir,
-        rawBase64: data,
         serverEventId: evt.id,
       }
       setMessagesByTopic((prev) => ({ ...prev, [topic]: [...(prev[topic] ?? []), msg] }))
@@ -71,17 +67,14 @@ export function useChat() {
 
       if (evt.type === 'data' || evt.type === 'broadcast') {
         const peer = evt.peer || 'peer'
-        const data = evt.data_b64
-        const text = data ? safeDecodeBase64(data) : ''
         const dir: ChatMessage['direction'] = evt.type === 'broadcast' ? 'out' : 'in'
         const msg: ChatMessage = {
           id: makeId(),
           topic,
           peer: dir === 'out' ? 'me' : peer,
-          text,
+          text: evt.message || '',
           receivedAt: parseAt(evt.at) ?? Date.now(),
           direction: dir,
-          rawBase64: data,
           serverEventId: evt.id,
         }
         next[topic] = [...(next[topic] ?? []), msg]
@@ -120,18 +113,8 @@ export function useChat() {
   return { applyServerEvent, loadServerEvents, getMessages, totalCount }
 }
 
-function safeDecodeBase64(dataBase64: string): string {
-  try {
-    return fromBase64Utf8(dataBase64)
-  } catch {
-    return `[base64] ${dataBase64}`
-  }
-}
-
 function parseAt(at?: string): number | null {
   if (!at) return null
   const ms = Date.parse(at)
   return Number.isFinite(ms) ? ms : null
 }
-
-

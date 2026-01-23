@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"math/big"
 	"net/http"
 	"strconv"
 	"strings"
@@ -19,6 +20,9 @@ import (
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/martonp/tatanka-mesh/bond"
 	tmc "github.com/martonp/tatanka-mesh/client"
+	"github.com/martonp/tatanka-mesh/oracle"
+	protocolsPb "github.com/martonp/tatanka-mesh/protocols/pb"
+	"google.golang.org/protobuf/proto"
 )
 
 var (
@@ -128,14 +132,12 @@ func (c *Client) subscriptions(w http.ResponseWriter, r *http.Request) {
 func (c Client) handleTopicEvent(topic string, evt tmc.TopicEvent) {
 	switch evt.Type {
 	case tmc.TopicEventData:
-		b64 := base64.StdEncoding.EncodeToString(evt.Data)
-
 		// Store and stream typed event for the UI.
 		c.events.add(Event{
 			Type:    EventTypeData,
 			Topic:   topic,
 			Peer:    evt.Peer.String(),
-			DataB64: b64,
+			Message: decodeTopicData(topic, evt.Data),
 		})
 		c.log.Infof("topic=%s event=data peer=%s data=%s", topic, evt.Peer.String(), hex.Dump(evt.Data))
 	case tmc.TopicEventPeerSubscribed:
@@ -188,7 +190,7 @@ func (c *Client) broadcast(w http.ResponseWriter, r *http.Request) {
 		Type:    EventTypeBroadcast,
 		Topic:   payload.Topic,
 		Peer:    "self",
-		DataB64: payload.Data,
+		Message: decodeTopicData(payload.Topic, data),
 	})
 
 	c.log.Infof("Broadcasted message on topic %s", payload.Topic)
@@ -424,4 +426,24 @@ func (c *Client) Run(ctx context.Context, bonds []*bond.BondParams) {
 	}()
 
 	wg.Wait()
+}
+
+// decodeTopicData decodes topic data to a human-readable string.
+func decodeTopicData(topic string, data []byte) string {
+	if strings.HasPrefix(topic, oracle.PriceTopicPrefix) {
+		ticker := topic[len(oracle.PriceTopicPrefix):]
+		var priceUpdate protocolsPb.ClientPriceUpdate
+		if err := proto.Unmarshal(data, &priceUpdate); err == nil {
+			return fmt.Sprintf("%s: $%.2f", ticker, priceUpdate.Price)
+		}
+	} else if strings.HasPrefix(topic, oracle.FeeRateTopicPrefix) {
+		network := topic[len(oracle.FeeRateTopicPrefix):]
+		var feeRateUpdate protocolsPb.ClientFeeRateUpdate
+		if err := proto.Unmarshal(data, &feeRateUpdate); err == nil {
+			feeRate := new(big.Int).SetBytes(feeRateUpdate.FeeRate)
+			return fmt.Sprintf("%s: %s", network, feeRate.String())
+		}
+	}
+	// Default: treat as UTF-8 text
+	return string(data)
 }

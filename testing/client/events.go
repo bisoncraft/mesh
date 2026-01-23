@@ -25,8 +25,7 @@ type Event struct {
 	Type    EventType `json:"type"`
 	Topic   string    `json:"topic,omitempty"`
 	Peer    string    `json:"peer,omitempty"`
-	DataB64 string    `json:"data_b64,omitempty"`
-	Message string    `json:"message,omitempty"` // optional human text
+	Message string    `json:"message,omitempty"`
 }
 
 // eventStore holds all recorded events and broadcasts them to subscribers.
