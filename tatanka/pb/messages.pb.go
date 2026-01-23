@@ -516,6 +516,319 @@ func (*WhitelistResponse_Success_) isWhitelistResponse_Response() {}
 
 func (*WhitelistResponse_Mismatch_) isWhitelistResponse_Response() {}
 
+// SourcedPrice represents a single price entry within a sourced update batch.
+type SourcedPrice struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Ticker        string                 `protobuf:"bytes,1,opt,name=ticker,proto3" json:"ticker,omitempty"`
+	Price         float64                `protobuf:"fixed64,2,opt,name=price,proto3" json:"price,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SourcedPrice) Reset() {
+	*x = SourcedPrice{}
+	mi := &file_messages_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SourcedPrice) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SourcedPrice) ProtoMessage() {}
+
+func (x *SourcedPrice) ProtoReflect() protoreflect.Message {
+	mi := &file_messages_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SourcedPrice.ProtoReflect.Descriptor instead.
+func (*SourcedPrice) Descriptor() ([]byte, []int) {
+	return file_messages_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *SourcedPrice) GetTicker() string {
+	if x != nil {
+		return x.Ticker
+	}
+	return ""
+}
+
+func (x *SourcedPrice) GetPrice() float64 {
+	if x != nil {
+		return x.Price
+	}
+	return 0
+}
+
+// SourcedPriceUpdate is a batch of price updates from a single source for sharing
+// between Tatanka Mesh nodes.
+type SourcedPriceUpdate struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Source        string                 `protobuf:"bytes,1,opt,name=source,proto3" json:"source,omitempty"`
+	Timestamp     int64                  `protobuf:"varint,2,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
+	Prices        []*SourcedPrice        `protobuf:"bytes,3,rep,name=prices,proto3" json:"prices,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SourcedPriceUpdate) Reset() {
+	*x = SourcedPriceUpdate{}
+	mi := &file_messages_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SourcedPriceUpdate) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SourcedPriceUpdate) ProtoMessage() {}
+
+func (x *SourcedPriceUpdate) ProtoReflect() protoreflect.Message {
+	mi := &file_messages_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SourcedPriceUpdate.ProtoReflect.Descriptor instead.
+func (*SourcedPriceUpdate) Descriptor() ([]byte, []int) {
+	return file_messages_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *SourcedPriceUpdate) GetSource() string {
+	if x != nil {
+		return x.Source
+	}
+	return ""
+}
+
+func (x *SourcedPriceUpdate) GetTimestamp() int64 {
+	if x != nil {
+		return x.Timestamp
+	}
+	return 0
+}
+
+func (x *SourcedPriceUpdate) GetPrices() []*SourcedPrice {
+	if x != nil {
+		return x.Prices
+	}
+	return nil
+}
+
+// SourcedFeeRate represents a single fee rate entry within a sourced update batch.
+type SourcedFeeRate struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Network       string                 `protobuf:"bytes,1,opt,name=network,proto3" json:"network,omitempty"`
+	FeeRate       []byte                 `protobuf:"bytes,2,opt,name=fee_rate,json=feeRate,proto3" json:"fee_rate,omitempty"` // big-endian encoded big integer
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SourcedFeeRate) Reset() {
+	*x = SourcedFeeRate{}
+	mi := &file_messages_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SourcedFeeRate) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SourcedFeeRate) ProtoMessage() {}
+
+func (x *SourcedFeeRate) ProtoReflect() protoreflect.Message {
+	mi := &file_messages_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SourcedFeeRate.ProtoReflect.Descriptor instead.
+func (*SourcedFeeRate) Descriptor() ([]byte, []int) {
+	return file_messages_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *SourcedFeeRate) GetNetwork() string {
+	if x != nil {
+		return x.Network
+	}
+	return ""
+}
+
+func (x *SourcedFeeRate) GetFeeRate() []byte {
+	if x != nil {
+		return x.FeeRate
+	}
+	return nil
+}
+
+// SourcedFeeRateUpdate is a batch of fee rate updates from a single source for sharing
+// between Tatanka Mesh nodes.
+type SourcedFeeRateUpdate struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Source        string                 `protobuf:"bytes,1,opt,name=source,proto3" json:"source,omitempty"`
+	Timestamp     int64                  `protobuf:"varint,2,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
+	FeeRates      []*SourcedFeeRate      `protobuf:"bytes,3,rep,name=fee_rates,json=feeRates,proto3" json:"fee_rates,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SourcedFeeRateUpdate) Reset() {
+	*x = SourcedFeeRateUpdate{}
+	mi := &file_messages_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SourcedFeeRateUpdate) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SourcedFeeRateUpdate) ProtoMessage() {}
+
+func (x *SourcedFeeRateUpdate) ProtoReflect() protoreflect.Message {
+	mi := &file_messages_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SourcedFeeRateUpdate.ProtoReflect.Descriptor instead.
+func (*SourcedFeeRateUpdate) Descriptor() ([]byte, []int) {
+	return file_messages_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *SourcedFeeRateUpdate) GetSource() string {
+	if x != nil {
+		return x.Source
+	}
+	return ""
+}
+
+func (x *SourcedFeeRateUpdate) GetTimestamp() int64 {
+	if x != nil {
+		return x.Timestamp
+	}
+	return 0
+}
+
+func (x *SourcedFeeRateUpdate) GetFeeRates() []*SourcedFeeRate {
+	if x != nil {
+		return x.FeeRates
+	}
+	return nil
+}
+
+// NodeOracleUpdate contains oracle data for sharing between Tatanka mesh nodes.
+type NodeOracleUpdate struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Types that are valid to be assigned to Update:
+	//
+	//	*NodeOracleUpdate_PriceUpdate
+	//	*NodeOracleUpdate_FeeRateUpdate
+	Update        isNodeOracleUpdate_Update `protobuf_oneof:"update"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *NodeOracleUpdate) Reset() {
+	*x = NodeOracleUpdate{}
+	mi := &file_messages_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *NodeOracleUpdate) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*NodeOracleUpdate) ProtoMessage() {}
+
+func (x *NodeOracleUpdate) ProtoReflect() protoreflect.Message {
+	mi := &file_messages_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use NodeOracleUpdate.ProtoReflect.Descriptor instead.
+func (*NodeOracleUpdate) Descriptor() ([]byte, []int) {
+	return file_messages_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *NodeOracleUpdate) GetUpdate() isNodeOracleUpdate_Update {
+	if x != nil {
+		return x.Update
+	}
+	return nil
+}
+
+func (x *NodeOracleUpdate) GetPriceUpdate() *SourcedPriceUpdate {
+	if x != nil {
+		if x, ok := x.Update.(*NodeOracleUpdate_PriceUpdate); ok {
+			return x.PriceUpdate
+		}
+	}
+	return nil
+}
+
+func (x *NodeOracleUpdate) GetFeeRateUpdate() *SourcedFeeRateUpdate {
+	if x != nil {
+		if x, ok := x.Update.(*NodeOracleUpdate_FeeRateUpdate); ok {
+			return x.FeeRateUpdate
+		}
+	}
+	return nil
+}
+
+type isNodeOracleUpdate_Update interface {
+	isNodeOracleUpdate_Update()
+}
+
+type NodeOracleUpdate_PriceUpdate struct {
+	PriceUpdate *SourcedPriceUpdate `protobuf:"bytes,1,opt,name=price_update,json=priceUpdate,proto3,oneof"`
+}
+
+type NodeOracleUpdate_FeeRateUpdate struct {
+	FeeRateUpdate *SourcedFeeRateUpdate `protobuf:"bytes,2,opt,name=fee_rate_update,json=feeRateUpdate,proto3,oneof"`
+}
+
+func (*NodeOracleUpdate_PriceUpdate) isNodeOracleUpdate_Update() {}
+
+func (*NodeOracleUpdate_FeeRateUpdate) isNodeOracleUpdate_Update() {}
+
 type TatankaForwardRelayResponse_ClientNotFound struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -524,7 +837,7 @@ type TatankaForwardRelayResponse_ClientNotFound struct {
 
 func (x *TatankaForwardRelayResponse_ClientNotFound) Reset() {
 	*x = TatankaForwardRelayResponse_ClientNotFound{}
-	mi := &file_messages_proto_msgTypes[7]
+	mi := &file_messages_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -536,7 +849,7 @@ func (x *TatankaForwardRelayResponse_ClientNotFound) String() string {
 func (*TatankaForwardRelayResponse_ClientNotFound) ProtoMessage() {}
 
 func (x *TatankaForwardRelayResponse_ClientNotFound) ProtoReflect() protoreflect.Message {
-	mi := &file_messages_proto_msgTypes[7]
+	mi := &file_messages_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -560,7 +873,7 @@ type TatankaForwardRelayResponse_ClientRejected struct {
 
 func (x *TatankaForwardRelayResponse_ClientRejected) Reset() {
 	*x = TatankaForwardRelayResponse_ClientRejected{}
-	mi := &file_messages_proto_msgTypes[8]
+	mi := &file_messages_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -572,7 +885,7 @@ func (x *TatankaForwardRelayResponse_ClientRejected) String() string {
 func (*TatankaForwardRelayResponse_ClientRejected) ProtoMessage() {}
 
 func (x *TatankaForwardRelayResponse_ClientRejected) ProtoReflect() protoreflect.Message {
-	mi := &file_messages_proto_msgTypes[8]
+	mi := &file_messages_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -597,7 +910,7 @@ type DiscoveryResponse_Success struct {
 
 func (x *DiscoveryResponse_Success) Reset() {
 	*x = DiscoveryResponse_Success{}
-	mi := &file_messages_proto_msgTypes[9]
+	mi := &file_messages_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -609,7 +922,7 @@ func (x *DiscoveryResponse_Success) String() string {
 func (*DiscoveryResponse_Success) ProtoMessage() {}
 
 func (x *DiscoveryResponse_Success) ProtoReflect() protoreflect.Message {
-	mi := &file_messages_proto_msgTypes[9]
+	mi := &file_messages_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -640,7 +953,7 @@ type DiscoveryResponse_NotFound struct {
 
 func (x *DiscoveryResponse_NotFound) Reset() {
 	*x = DiscoveryResponse_NotFound{}
-	mi := &file_messages_proto_msgTypes[10]
+	mi := &file_messages_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -652,7 +965,7 @@ func (x *DiscoveryResponse_NotFound) String() string {
 func (*DiscoveryResponse_NotFound) ProtoMessage() {}
 
 func (x *DiscoveryResponse_NotFound) ProtoReflect() protoreflect.Message {
-	mi := &file_messages_proto_msgTypes[10]
+	mi := &file_messages_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -676,7 +989,7 @@ type WhitelistResponse_Success struct {
 
 func (x *WhitelistResponse_Success) Reset() {
 	*x = WhitelistResponse_Success{}
-	mi := &file_messages_proto_msgTypes[11]
+	mi := &file_messages_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -688,7 +1001,7 @@ func (x *WhitelistResponse_Success) String() string {
 func (*WhitelistResponse_Success) ProtoMessage() {}
 
 func (x *WhitelistResponse_Success) ProtoReflect() protoreflect.Message {
-	mi := &file_messages_proto_msgTypes[11]
+	mi := &file_messages_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -713,7 +1026,7 @@ type WhitelistResponse_Mismatch struct {
 
 func (x *WhitelistResponse_Mismatch) Reset() {
 	*x = WhitelistResponse_Mismatch{}
-	mi := &file_messages_proto_msgTypes[12]
+	mi := &file_messages_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -725,7 +1038,7 @@ func (x *WhitelistResponse_Mismatch) String() string {
 func (*WhitelistResponse_Mismatch) ProtoMessage() {}
 
 func (x *WhitelistResponse_Mismatch) ProtoReflect() protoreflect.Message {
-	mi := &file_messages_proto_msgTypes[12]
+	mi := &file_messages_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -792,7 +1105,25 @@ const file_messages_proto_rawDesc = "" +
 	"\bMismatch\x12\x18\n" +
 	"\apeerIDs\x18\x01 \x03(\fR\apeerIDsB\n" +
 	"\n" +
-	"\bresponseB,Z*github.com/martonp/tatanka-mesh/tatanka/pbb\x06proto3"
+	"\bresponse\"<\n" +
+	"\fSourcedPrice\x12\x16\n" +
+	"\x06ticker\x18\x01 \x01(\tR\x06ticker\x12\x14\n" +
+	"\x05price\x18\x02 \x01(\x01R\x05price\"t\n" +
+	"\x12SourcedPriceUpdate\x12\x16\n" +
+	"\x06source\x18\x01 \x01(\tR\x06source\x12\x1c\n" +
+	"\ttimestamp\x18\x02 \x01(\x03R\ttimestamp\x12(\n" +
+	"\x06prices\x18\x03 \x03(\v2\x10.pb.SourcedPriceR\x06prices\"E\n" +
+	"\x0eSourcedFeeRate\x12\x18\n" +
+	"\anetwork\x18\x01 \x01(\tR\anetwork\x12\x19\n" +
+	"\bfee_rate\x18\x02 \x01(\fR\afeeRate\"}\n" +
+	"\x14SourcedFeeRateUpdate\x12\x16\n" +
+	"\x06source\x18\x01 \x01(\tR\x06source\x12\x1c\n" +
+	"\ttimestamp\x18\x02 \x01(\x03R\ttimestamp\x12/\n" +
+	"\tfee_rates\x18\x03 \x03(\v2\x12.pb.SourcedFeeRateR\bfeeRates\"\x9d\x01\n" +
+	"\x10NodeOracleUpdate\x12;\n" +
+	"\fprice_update\x18\x01 \x01(\v2\x16.pb.SourcedPriceUpdateH\x00R\vpriceUpdate\x12B\n" +
+	"\x0ffee_rate_update\x18\x02 \x01(\v2\x18.pb.SourcedFeeRateUpdateH\x00R\rfeeRateUpdateB\b\n" +
+	"\x06updateB,Z*github.com/martonp/tatanka-mesh/tatanka/pbb\x06proto3"
 
 var (
 	file_messages_proto_rawDescOnce sync.Once
@@ -806,7 +1137,7 @@ func file_messages_proto_rawDescGZIP() []byte {
 	return file_messages_proto_rawDescData
 }
 
-var file_messages_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
+var file_messages_proto_msgTypes = make([]protoimpl.MessageInfo, 18)
 var file_messages_proto_goTypes = []any{
 	(*ClientConnectionMsg)(nil),                        // 0: pb.ClientConnectionMsg
 	(*TatankaForwardRelayRequest)(nil),                 // 1: pb.TatankaForwardRelayRequest
@@ -815,25 +1146,34 @@ var file_messages_proto_goTypes = []any{
 	(*DiscoveryResponse)(nil),                          // 4: pb.DiscoveryResponse
 	(*WhitelistRequest)(nil),                           // 5: pb.WhitelistRequest
 	(*WhitelistResponse)(nil),                          // 6: pb.WhitelistResponse
-	(*TatankaForwardRelayResponse_ClientNotFound)(nil), // 7: pb.TatankaForwardRelayResponse.ClientNotFound
-	(*TatankaForwardRelayResponse_ClientRejected)(nil), // 8: pb.TatankaForwardRelayResponse.ClientRejected
-	(*DiscoveryResponse_Success)(nil),                  // 9: pb.DiscoveryResponse.Success
-	(*DiscoveryResponse_NotFound)(nil),                 // 10: pb.DiscoveryResponse.NotFound
-	(*WhitelistResponse_Success)(nil),                  // 11: pb.WhitelistResponse.Success
-	(*WhitelistResponse_Mismatch)(nil),                 // 12: pb.WhitelistResponse.Mismatch
+	(*SourcedPrice)(nil),                               // 7: pb.SourcedPrice
+	(*SourcedPriceUpdate)(nil),                         // 8: pb.SourcedPriceUpdate
+	(*SourcedFeeRate)(nil),                             // 9: pb.SourcedFeeRate
+	(*SourcedFeeRateUpdate)(nil),                       // 10: pb.SourcedFeeRateUpdate
+	(*NodeOracleUpdate)(nil),                           // 11: pb.NodeOracleUpdate
+	(*TatankaForwardRelayResponse_ClientNotFound)(nil), // 12: pb.TatankaForwardRelayResponse.ClientNotFound
+	(*TatankaForwardRelayResponse_ClientRejected)(nil), // 13: pb.TatankaForwardRelayResponse.ClientRejected
+	(*DiscoveryResponse_Success)(nil),                  // 14: pb.DiscoveryResponse.Success
+	(*DiscoveryResponse_NotFound)(nil),                 // 15: pb.DiscoveryResponse.NotFound
+	(*WhitelistResponse_Success)(nil),                  // 16: pb.WhitelistResponse.Success
+	(*WhitelistResponse_Mismatch)(nil),                 // 17: pb.WhitelistResponse.Mismatch
 }
 var file_messages_proto_depIdxs = []int32{
-	7,  // 0: pb.TatankaForwardRelayResponse.client_not_found:type_name -> pb.TatankaForwardRelayResponse.ClientNotFound
-	8,  // 1: pb.TatankaForwardRelayResponse.client_rejected:type_name -> pb.TatankaForwardRelayResponse.ClientRejected
-	9,  // 2: pb.DiscoveryResponse.success:type_name -> pb.DiscoveryResponse.Success
-	10, // 3: pb.DiscoveryResponse.not_found:type_name -> pb.DiscoveryResponse.NotFound
-	11, // 4: pb.WhitelistResponse.success:type_name -> pb.WhitelistResponse.Success
-	12, // 5: pb.WhitelistResponse.mismatch:type_name -> pb.WhitelistResponse.Mismatch
-	6,  // [6:6] is the sub-list for method output_type
-	6,  // [6:6] is the sub-list for method input_type
-	6,  // [6:6] is the sub-list for extension type_name
-	6,  // [6:6] is the sub-list for extension extendee
-	0,  // [0:6] is the sub-list for field type_name
+	12, // 0: pb.TatankaForwardRelayResponse.client_not_found:type_name -> pb.TatankaForwardRelayResponse.ClientNotFound
+	13, // 1: pb.TatankaForwardRelayResponse.client_rejected:type_name -> pb.TatankaForwardRelayResponse.ClientRejected
+	14, // 2: pb.DiscoveryResponse.success:type_name -> pb.DiscoveryResponse.Success
+	15, // 3: pb.DiscoveryResponse.not_found:type_name -> pb.DiscoveryResponse.NotFound
+	16, // 4: pb.WhitelistResponse.success:type_name -> pb.WhitelistResponse.Success
+	17, // 5: pb.WhitelistResponse.mismatch:type_name -> pb.WhitelistResponse.Mismatch
+	7,  // 6: pb.SourcedPriceUpdate.prices:type_name -> pb.SourcedPrice
+	9,  // 7: pb.SourcedFeeRateUpdate.fee_rates:type_name -> pb.SourcedFeeRate
+	8,  // 8: pb.NodeOracleUpdate.price_update:type_name -> pb.SourcedPriceUpdate
+	10, // 9: pb.NodeOracleUpdate.fee_rate_update:type_name -> pb.SourcedFeeRateUpdate
+	10, // [10:10] is the sub-list for method output_type
+	10, // [10:10] is the sub-list for method input_type
+	10, // [10:10] is the sub-list for extension type_name
+	10, // [10:10] is the sub-list for extension extendee
+	0,  // [0:10] is the sub-list for field type_name
 }
 
 func init() { file_messages_proto_init() }
@@ -855,13 +1195,17 @@ func file_messages_proto_init() {
 		(*WhitelistResponse_Success_)(nil),
 		(*WhitelistResponse_Mismatch_)(nil),
 	}
+	file_messages_proto_msgTypes[11].OneofWrappers = []any{
+		(*NodeOracleUpdate_PriceUpdate)(nil),
+		(*NodeOracleUpdate_FeeRateUpdate)(nil),
+	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_messages_proto_rawDesc), len(file_messages_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   13,
+			NumMessages:   18,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

@@ -125,6 +125,22 @@ type subscriptionChanges struct {
 	unsubscribed []string
 }
 
+// subscribedTopics returns all topics that have active subscriptions and exist
+// in the provided set of candidate topics. This is used for efficiently finding
+// which topics from an update have subscribers.
+func (sm *subscriptionManager) subscribedTopics(candidates map[string]struct{}) map[string][]peer.ID {
+	sm.mtx.RLock()
+	defer sm.mtx.RUnlock()
+
+	result := make(map[string][]peer.ID)
+	for topic := range candidates {
+		if clients, ok := sm.topicSubscriptions[topic]; ok && len(clients) > 0 {
+			result[topic] = slices.Collect(maps.Keys(clients))
+		}
+	}
+	return result
+}
+
 // bulkSubscribe replaces a client's subscriptions with the given topics.
 // It returns the list of newly subscribed topics and unsubscribed topics.
 func (sm *subscriptionManager) bulkSubscribe(client peer.ID, topics []string) subscriptionChanges {

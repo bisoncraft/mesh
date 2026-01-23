@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"net/http"
 	"net/http/pprof"
 	"os"
@@ -18,6 +19,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/martonp/tatanka-mesh/oracle"
 	"github.com/martonp/tatanka-mesh/protocols"
 	protocolsPb "github.com/martonp/tatanka-mesh/protocols/pb"
 	"github.com/martonp/tatanka-mesh/tatanka/admin"
@@ -49,6 +51,11 @@ type Config struct {
 	MetricsPort   int
 	AdminPort     int
 	WhitelistPath string
+
+	// Oracle Configuration
+	CMCKey        string
+	TatumKey      string
+	CryptoApisKey string
 }
 
 // Option is a functional option for configuring TatankaNode.
@@ -59,6 +66,16 @@ func WithHost(h host.Host) Option {
 	return func(n *TatankaNode) {
 		n.node = h
 	}
+}
+
+// Oracle defines the requirements for implementing an oracle.
+type Oracle interface {
+	Run(ctx context.Context)
+	MergePrices(sourcedUpdate *oracle.SourcedPriceUpdate) map[oracle.Ticker]float64
+	MergeFeeRates(sourcedUpdate *oracle.SourcedFeeRateUpdate) map[oracle.Network]*big.Int
+	Prices() map[oracle.Ticker]float64
+	FeeRates() map[oracle.Network]*big.Int
+	GetSourceWeight(sourceName string) float64
 }
 
 // TatankaNode is a permissioned node in the tatanka mesh
@@ -82,6 +99,8 @@ type TatankaNode struct {
 	adminServer             *admin.Server
 
 	metricsServer *http.Server
+
+	oracle Oracle
 }
 
 // NewTatankaNode creates a new TatankaNode with the given configuration and options.
@@ -172,6 +191,7 @@ func (t *TatankaNode) Run(ctx context.Context) error {
 		getWhitelistPeers:             t.getWhitelistPeers,
 		handleBroadcastMessage:        t.handleBroadcastMessage,
 		handleClientConnectionMessage: t.handleClientConnectionMessage,
+		handleOracleUpdate:            t.handleOracleUpdate,
 	})
 	if err != nil {
 		t.markReady(err)
@@ -189,6 +209,20 @@ func (t *TatankaNode) Run(ctx context.Context) error {
 			t.log.Errorf("Publishing client connection message failed: %v", err)
 		}
 	})
+
+	// Only create oracle if not provided (e.g., via test setup)
+	if t.oracle == nil {
+		t.oracle, err = oracle.New(&oracle.Config{
+			Log:           t.config.Logger,
+			CMCKey:        t.config.CMCKey,
+			TatumKey:      t.config.TatumKey,
+			CryptoApisKey: t.config.CryptoApisKey,
+			PublishUpdate: t.gossipSub.publishOracleUpdate,
+		})
+		if err != nil {
+			return fmt.Errorf("Failed to create oracle: %v", err)
+		}
+	}
 
 	// Create admin callback function and setup the admin server if configured.
 	adminCallback := func(peerID peer.ID, connected bool, whitelistMismatch bool, addresses []string, peerWhitelist []string) {
@@ -268,6 +302,13 @@ func (t *TatankaNode) Run(ctx context.Context) error {
 	// Wait for the initial connectivity pass to finish before reporting ready.
 	t.connectionManager.waitInitial(ctx)
 	t.markReady(nil)
+
+	// Run Oracle
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		t.oracle.Run(ctx)
+	}()
 
 	wg.Wait()
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/decred/slog"
+	"github.com/klauspost/compress/zstd"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -23,6 +24,10 @@ const (
 	// propagate client connection and disconnection messages between tatanka
 	// nodes.
 	clientConnectionsTopicName = "client_connections"
+
+	// oracleUpdatesTopicName is the name of the pubsub topic used to
+	// propagate oracle updates between tatanka nodes.
+	oracleUpdatesTopicName = "oracle_updates"
 )
 
 type clientConnectionUpdate struct {
@@ -66,17 +71,21 @@ type gossipSubCfg struct {
 	getWhitelistPeers             func() map[peer.ID]struct{}
 	handleBroadcastMessage        func(msg *protocolsPb.PushMessage)
 	handleClientConnectionMessage func(update *clientConnectionUpdate)
+	handleOracleUpdate            func(update *pb.NodeOracleUpdate)
 }
 
 // gossipSub manages the nodes connection to a gossip sub network between tatanka
-// nodes. This network is used to gossip all client broadcast messages and
-// client connections.
+// nodes. This network is used to gossip all client broadcast messages,
+// client connections, and oracle updates.
 type gossipSub struct {
 	log                    slog.Logger
 	ps                     *pubsub.PubSub
 	cfg                    *gossipSubCfg
 	clientMessageTopic     *pubsub.Topic
 	clientConnectionsTopic *pubsub.Topic
+	oracleUpdatesTopic     *pubsub.Topic
+	zstdEncoder            *zstd.Encoder
+	zstdDecoder            *zstd.Decoder
 }
 
 func newGossipSub(ctx context.Context, cfg *gossipSubCfg) (*gossipSub, error) {
@@ -108,12 +117,30 @@ func newGossipSub(ctx context.Context, cfg *gossipSubCfg) (*gossipSub, error) {
 		return nil, fmt.Errorf("failed to join client connections topic: %w", err)
 	}
 
+	oracleUpdatesTopic, err := ps.Join(oracleUpdatesTopicName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to join oracle updates topic: %w", err)
+	}
+
+	zstdEncoder, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedDefault))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create zstd encoder: %w", err)
+	}
+
+	zstdDecoder, err := zstd.NewReader(nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create zstd decoder: %w", err)
+	}
+
 	return &gossipSub{
 		log:                    cfg.log,
 		ps:                     ps,
 		cfg:                    cfg,
 		clientMessageTopic:     clientMessageTopic,
 		clientConnectionsTopic: clientConnectionsTopic,
+		oracleUpdatesTopic:     oracleUpdatesTopic,
+		zstdEncoder:            zstdEncoder,
+		zstdDecoder:            zstdDecoder,
 	}, nil
 }
 
@@ -180,6 +207,39 @@ func (gs *gossipSub) listenForClientConnections(ctx context.Context) error {
 	}
 }
 
+func (gs *gossipSub) listenForOracleUpdates(ctx context.Context) error {
+	sub, err := gs.oracleUpdatesTopic.Subscribe()
+	if err != nil {
+		return fmt.Errorf("failed to subscribe to oracle updates topic: %w", err)
+	}
+
+	for {
+		msg, err := sub.Next(ctx)
+		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				return nil
+			}
+			return err
+		}
+
+		if msg != nil {
+			decompressed, err := gs.zstdDecoder.DecodeAll(msg.Data, nil)
+			if err != nil {
+				gs.log.Errorf("Failed to decompress oracle update: %v", err)
+				continue
+			}
+
+			oracleUpdate := &pb.NodeOracleUpdate{}
+			if err := proto.Unmarshal(decompressed, oracleUpdate); err != nil {
+				gs.log.Errorf("Failed to unmarshal oracle update: %v", err)
+				continue
+			}
+
+			gs.cfg.handleOracleUpdate(oracleUpdate)
+		}
+	}
+}
+
 func (gs *gossipSub) publishClientMessage(ctx context.Context, msg *protocolsPb.PushMessage) error {
 	data, err := proto.Marshal(msg)
 	if err != nil {
@@ -197,6 +257,17 @@ func (gs *gossipSub) publishClientConnectionMessage(ctx context.Context, msg *cl
 	return gs.clientConnectionsTopic.Publish(ctx, data)
 }
 
+func (gs *gossipSub) publishOracleUpdate(ctx context.Context, update *pb.NodeOracleUpdate) error {
+	data, err := proto.Marshal(update)
+	if err != nil {
+		return fmt.Errorf("failed to marshal oracle update: %w", err)
+	}
+
+	compressed := gs.zstdEncoder.EncodeAll(data, nil)
+
+	return gs.oracleUpdatesTopic.Publish(ctx, compressed)
+}
+
 func (gs *gossipSub) run(ctx context.Context) error {
 	g, ctx := errgroup.WithContext(ctx)
 
@@ -209,6 +280,12 @@ func (gs *gossipSub) run(ctx context.Context) error {
 	g.Go(func() error {
 		err := gs.listenForClientConnections(ctx)
 		gs.log.Debug("Client connection listener stopped.")
+		return err
+	})
+
+	g.Go(func() error {
+		err := gs.listenForOracleUpdates(ctx)
+		gs.log.Debug("Oracle updates listener stopped.")
 		return err
 	})
 

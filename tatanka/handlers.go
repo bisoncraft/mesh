@@ -3,15 +3,20 @@ package tatanka
 import (
 	"context"
 	"fmt"
+	"math/big"
+	"strings"
+	"time"
 
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/martonp/tatanka-mesh/bond"
 	"github.com/martonp/tatanka-mesh/codec"
+	"github.com/martonp/tatanka-mesh/oracle"
 	"github.com/martonp/tatanka-mesh/protocols"
 	protocolsPb "github.com/martonp/tatanka-mesh/protocols/pb"
 	"github.com/martonp/tatanka-mesh/tatanka/pb"
 	ma "github.com/multiformats/go-multiaddr"
+	"google.golang.org/protobuf/proto"
 )
 
 // libp2pPeerInfoToPb converts a peer.AddrInfo to a protocolsPb.PeerInfo.
@@ -110,12 +115,63 @@ func (t *TatankaNode) handleClientSubscribe(s network.Stream) {
 		subscribed := t.subscriptionManager.subscribeClient(client, subscribeMessage.Topic)
 		if subscribed {
 			t.publishClientSubscriptionEvent(client, subscribeMessage.Topic, true)
+
+			// Update the subscribing client immediately if subscribing for oracle updates.
+			// Check for prefixed price or fee rate topics.
+			if strings.HasPrefix(subscribeMessage.Topic, oracle.PriceTopicPrefix) {
+				t.sendCurrentOracleUpdate(client, subscribeMessage.Topic)
+			} else if strings.HasPrefix(subscribeMessage.Topic, oracle.FeeRateTopicPrefix) {
+				t.sendCurrentOracleUpdate(client, subscribeMessage.Topic)
+			}
 		}
 	} else {
 		unsubscribed := t.subscriptionManager.unsubscribeClient(client, subscribeMessage.Topic)
 		if unsubscribed {
 			t.publishClientSubscriptionEvent(client, subscribeMessage.Topic, false)
 		}
+	}
+}
+
+// sendCurrentOracleUpdate sends the current oracle state to a newly subscribed client.
+func (t *TatankaNode) sendCurrentOracleUpdate(client peer.ID, topic string) {
+	var data []byte
+	var err error
+
+	// Check for prefixed price subscription.
+	if strings.HasPrefix(topic, oracle.PriceTopicPrefix) {
+		ticker := topic[len(oracle.PriceTopicPrefix):]
+		prices := t.oracle.Prices()
+		if price, ok := prices[oracle.Ticker(ticker)]; ok {
+			clientUpdate := &protocolsPb.ClientPriceUpdate{
+				Price: price,
+			}
+			data, err = proto.Marshal(clientUpdate)
+		}
+	} else if strings.HasPrefix(topic, oracle.FeeRateTopicPrefix) {
+		// Check for prefixed fee rate subscription.
+		network := topic[len(oracle.FeeRateTopicPrefix):]
+		if feeRate, ok := t.oracle.FeeRates()[oracle.Network(network)]; ok {
+			clientUpdate := &protocolsPb.ClientFeeRateUpdate{
+				FeeRate: bigIntToBytes(feeRate),
+			}
+			data, err = proto.Marshal(clientUpdate)
+		}
+	}
+
+	if err != nil {
+		t.log.Errorf("Failed to marshal oracle update for new subscriber: %v", err)
+		return
+	}
+
+	if data != nil {
+		pushMsg := &protocolsPb.PushMessage{
+			MessageType: protocolsPb.PushMessage_BROADCAST,
+			Topic:       topic,
+			Data:        data,
+			Sender:      []byte(t.node.ID()),
+		}
+
+		t.pushStreamManager.distribute([]peer.ID{client}, pushMsg)
 	}
 }
 
@@ -130,6 +186,13 @@ func (t *TatankaNode) handleClientPublish(s network.Stream) {
 	if err := codec.ReadLengthPrefixedMessage(s, publishMessage); err != nil {
 		t.log.Debugf("Failed to read/unmarshal publish message from client %s: %v.", client.ShortString(), err)
 		// TODO: remove client?
+		return
+	}
+
+	if strings.HasPrefix(publishMessage.Topic, oracle.PriceTopicPrefix) ||
+		strings.HasPrefix(publishMessage.Topic, oracle.FeeRateTopicPrefix) {
+		t.log.Warnf("Client %s attempted to publish to restricted oracle topic %s",
+			client.ShortString(), publishMessage.Topic)
 		return
 	}
 
@@ -372,6 +435,212 @@ func (t *TatankaNode) handleForwardRelay(s network.Stream) {
 	}
 
 	writeResponse(pbTatankaForwardRelaySuccess(respData))
+}
+
+func (t *TatankaNode) findSubscribedPriceTopics(prices map[oracle.Ticker]float64) map[string][]peer.ID {
+	candidates := make(map[string]struct{}, len(prices))
+	for ticker := range prices {
+		candidates[oracle.PriceTopicPrefix+string(ticker)] = struct{}{}
+	}
+
+	return t.subscriptionManager.subscribedTopics(candidates)
+}
+
+func (t *TatankaNode) findSubscribedFeeRateTopics(feeRates map[oracle.Network]*big.Int) map[string][]peer.ID {
+
+	candidates := make(map[string]struct{}, len(feeRates))
+	for network := range feeRates {
+		candidates[oracle.FeeRateTopicPrefix+string(network)] = struct{}{}
+	}
+
+	return t.subscriptionManager.subscribedTopics(candidates)
+}
+
+func (t *TatankaNode) distributePriceUpdate(topic string, candidates []peer.ID, price float64) {
+	clientUpdate := &protocolsPb.ClientPriceUpdate{
+		Price: price,
+	}
+
+	data, err := proto.Marshal(clientUpdate)
+	if err != nil {
+		t.log.Errorf("Failed to marshal price update for %s: %v", topic, err)
+		return
+	}
+
+	pushMsg := &protocolsPb.PushMessage{
+		MessageType: protocolsPb.PushMessage_BROADCAST,
+		Topic:       topic,
+		Data:        data,
+		Sender:      []byte(t.node.ID()),
+	}
+
+	t.pushStreamManager.distribute(candidates, pushMsg)
+}
+
+func (t *TatankaNode) distributeFeeRateUpdate(topic string, candidates []peer.ID, feeRate *big.Int) {
+	clientUpdate := &protocolsPb.ClientFeeRateUpdate{
+		FeeRate: bigIntToBytes(feeRate),
+	}
+
+	data, err := proto.Marshal(clientUpdate)
+	if err != nil {
+		t.log.Errorf("Failed to marshal fee rate update for %s: %v", topic, err)
+		return
+	}
+
+	pushMsg := &protocolsPb.PushMessage{
+		MessageType: protocolsPb.PushMessage_BROADCAST,
+		Topic:       topic,
+		Data:        data,
+		Sender:      []byte(t.node.ID()),
+	}
+
+	t.pushStreamManager.distribute(candidates, pushMsg)
+}
+
+func (t *TatankaNode) handleOracleUpdate(oracleUpdate *pb.NodeOracleUpdate) {
+	switch update := oracleUpdate.Update.(type) {
+	case *pb.NodeOracleUpdate_PriceUpdate:
+		pbUpdate := update.PriceUpdate
+		// Validate source-level fields
+		if pbUpdate.Source == "" {
+			t.log.Warn("Skipping price update with empty source")
+			return
+		}
+		if pbUpdate.Timestamp <= 0 {
+			t.log.Warnf("Skipping price update with invalid timestamp: %d", pbUpdate.Timestamp)
+			return
+		}
+
+		// Convert and validate individual prices
+		prices := make([]*oracle.SourcedPrice, 0, len(pbUpdate.Prices))
+		for _, p := range pbUpdate.Prices {
+			if p.Price <= 0 {
+				t.log.Warnf("Skipping price with invalid value: %f", p.Price)
+				continue
+			}
+			if p.Ticker == "" {
+				t.log.Warn("Skipping price with empty ticker")
+				continue
+			}
+			prices = append(prices, &oracle.SourcedPrice{
+				Ticker: oracle.Ticker(p.Ticker),
+				Price:  p.Price,
+			})
+		}
+
+		if len(prices) == 0 {
+			t.log.Warn("No valid prices to merge from gossipsub")
+			return
+		}
+
+		sourcedUpdate := &oracle.SourcedPriceUpdate{
+			Source: pbUpdate.Source,
+			Stamp:  time.Unix(pbUpdate.Timestamp, 0),
+			Weight: t.oracle.GetSourceWeight(pbUpdate.Source),
+			Prices: prices,
+		}
+
+		// Merge prices and get only the updated ones
+		updatedPrices := t.oracle.MergePrices(sourcedUpdate)
+		t.log.Debugf("Merged %d price updates from gossipsub", len(prices))
+
+		// Distribute updated prices to clients via per-ticker topics.
+		if len(updatedPrices) == 0 {
+			// Nothing to do.
+			return
+		}
+
+		priceSubs := t.findSubscribedPriceTopics(updatedPrices)
+		if len(priceSubs) == 0 {
+			// Nothing to do.
+			return
+		}
+
+		for topic, candidates := range priceSubs {
+			ticker := topic[len(oracle.PriceTopicPrefix):]
+			price, ok := updatedPrices[oracle.Ticker(ticker)]
+			if !ok {
+				t.log.Errorf("No update price found for %s", ticker)
+			}
+
+			go func(topic string, price float64, candidates []peer.ID) {
+				t.distributePriceUpdate(topic, candidates, price)
+			}(topic, price, candidates)
+		}
+
+	case *pb.NodeOracleUpdate_FeeRateUpdate:
+		pbUpdate := update.FeeRateUpdate
+		// Validate source-level fields
+		if pbUpdate.Source == "" {
+			t.log.Warn("Skipping fee rate update with empty source")
+			return
+		}
+		if pbUpdate.Timestamp <= 0 {
+			t.log.Warnf("Skipping fee rate update with invalid timestamp: %d", pbUpdate.Timestamp)
+			return
+		}
+
+		// Convert and validate individual fee rates
+		feeRates := make([]*oracle.SourcedFeeRate, 0, len(pbUpdate.FeeRates))
+		for _, fr := range pbUpdate.FeeRates {
+			if len(fr.FeeRate) == 0 {
+				t.log.Warn("Skipping fee rate with empty value")
+				continue
+			}
+			if fr.Network == "" {
+				t.log.Warn("Skipping fee rate with empty network")
+				continue
+			}
+			feeRates = append(feeRates, &oracle.SourcedFeeRate{
+				Network: oracle.Network(fr.Network),
+				FeeRate: fr.FeeRate,
+			})
+		}
+
+		if len(feeRates) == 0 {
+			t.log.Warn("No valid fee rates to merge from gossipsub")
+			return
+		}
+
+		sourcedUpdate := &oracle.SourcedFeeRateUpdate{
+			Source:   pbUpdate.Source,
+			Stamp:    time.Unix(pbUpdate.Timestamp, 0),
+			Weight:   t.oracle.GetSourceWeight(pbUpdate.Source),
+			FeeRates: feeRates,
+		}
+
+		// Merge fee rates and get only the updated ones
+		updatedFeeRates := t.oracle.MergeFeeRates(sourcedUpdate)
+		t.log.Debugf("Merged %d fee rate updates from gossipsub", len(feeRates))
+
+		// Distribute updated fee rates to clients via per-ticker topics.
+		if len(updatedFeeRates) == 0 {
+			// Nothing to do.
+			return
+		}
+
+		feeRateSubs := t.findSubscribedFeeRateTopics(updatedFeeRates)
+		if len(feeRateSubs) == 0 {
+			// Nothing to do.
+			return
+		}
+
+		for topic, candidates := range feeRateSubs {
+			network := topic[len(oracle.FeeRateTopicPrefix):]
+			feeRate, ok := updatedFeeRates[oracle.Network(network)]
+			if !ok {
+				t.log.Errorf("No updated fee rate found for %s", network)
+			}
+
+			go func(topic string, feeRate *big.Int, candidates []peer.ID) {
+				t.distributeFeeRateUpdate(topic, candidates, feeRate)
+			}(topic, feeRate, candidates)
+		}
+
+	default:
+		t.log.Warnf("Received unknown oracle update type %T", update)
+	}
 }
 
 // handleDiscovery handles a request from another tatanka node to discover
@@ -709,4 +978,12 @@ func pbDiscoveryResponseSuccess(addrs []ma.Multiaddr) *pb.DiscoveryResponse {
 			},
 		},
 	}
+}
+
+// bigIntToBytes converts big.Int to big-endian encoded bytes.
+func bigIntToBytes(bi *big.Int) []byte {
+	if bi == nil || bi.Sign() == 0 {
+		return []byte{0}
+	}
+	return bi.Bytes()
 }

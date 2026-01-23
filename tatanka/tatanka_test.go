@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -21,8 +22,10 @@ import (
 	mocknet "github.com/libp2p/go-libp2p/p2p/net/mock"
 	"github.com/martonp/tatanka-mesh/bond"
 	"github.com/martonp/tatanka-mesh/codec"
+	"github.com/martonp/tatanka-mesh/oracle"
 	"github.com/martonp/tatanka-mesh/protocols"
 	protocolsPb "github.com/martonp/tatanka-mesh/protocols/pb"
+	"github.com/martonp/tatanka-mesh/tatanka/pb"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -30,6 +33,9 @@ var (
 	errRelayRejected = errors.New("relay rejected")
 	errRelayNotFound = errors.New("relay counterparty not found")
 	errRelayOther    = errors.New("relay error")
+
+	oraclePricesTopic   = "price.BTC"
+	oracleFeeRatesTopic = "fee_rate.BTC"
 )
 
 type testBondStorage struct {
@@ -44,6 +50,120 @@ func (tbs *testBondStorage) addBonds(peerID peer.ID, bonds []*bond.BondParams) u
 
 func (tbs *testBondStorage) bondStrength(peerID peer.ID) uint32 {
 	return tbs.score
+}
+
+type testOracle struct{}
+
+func (to *testOracle) Run(ctx context.Context) {
+	<-ctx.Done()
+}
+
+func (to *testOracle) Next() <-chan any {
+	return nil
+}
+
+func (to *testOracle) MergePrices(sourcedUpdate *oracle.SourcedPriceUpdate) map[oracle.Ticker]float64 {
+	return make(map[oracle.Ticker]float64)
+}
+func (to *testOracle) MergeFeeRates(sourcedUpdate *oracle.SourcedFeeRateUpdate) map[oracle.Network]*big.Int {
+	return make(map[oracle.Network]*big.Int)
+}
+func (to *testOracle) Prices() map[oracle.Ticker]float64   { return make(map[oracle.Ticker]float64) }
+func (to *testOracle) FeeRates() map[oracle.Network]*big.Int { return make(map[oracle.Network]*big.Int) }
+func (to *testOracle) GetSourceWeight(sourceName string) float64 { return 1.0 }
+
+// tOracle is a test oracle that tracks merged price and fee rate updates.
+type tOracle struct {
+	mtx              sync.Mutex
+	mergedPrices     []*oracle.SourcedPriceUpdate
+	mergedFeeRates   []*oracle.SourcedFeeRateUpdate
+	prices           map[oracle.Ticker]float64
+	feeRates         map[oracle.Network]*big.Int
+}
+
+var _ Oracle = (*tOracle)(nil)
+
+func newTOracle() *tOracle {
+	return &tOracle{
+		mergedPrices:   make([]*oracle.SourcedPriceUpdate, 0),
+		mergedFeeRates: make([]*oracle.SourcedFeeRateUpdate, 0),
+		prices:         make(map[oracle.Ticker]float64),
+		feeRates:       make(map[oracle.Network]*big.Int),
+	}
+}
+
+func (t *tOracle) Run(ctx context.Context) {
+	<-ctx.Done()
+}
+
+func (t *tOracle) MergePrices(sourcedUpdate *oracle.SourcedPriceUpdate) map[oracle.Ticker]float64 {
+	t.mtx.Lock()
+	defer t.mtx.Unlock()
+	t.mergedPrices = append(t.mergedPrices, sourcedUpdate)
+
+	// Return the prices that were updated
+	updated := make(map[oracle.Ticker]float64)
+	for _, p := range sourcedUpdate.Prices {
+		updated[p.Ticker] = p.Price
+		t.prices[p.Ticker] = p.Price
+	}
+	return updated
+}
+
+func (t *tOracle) MergeFeeRates(sourcedUpdate *oracle.SourcedFeeRateUpdate) map[oracle.Network]*big.Int {
+	t.mtx.Lock()
+	defer t.mtx.Unlock()
+	t.mergedFeeRates = append(t.mergedFeeRates, sourcedUpdate)
+
+	// Return the fee rates that were updated
+	updated := make(map[oracle.Network]*big.Int)
+	for _, fr := range sourcedUpdate.FeeRates {
+		// Decode the big-endian bytes to big.Int
+		bigIntValue := new(big.Int).SetBytes(fr.FeeRate)
+		updated[fr.Network] = bigIntValue
+		t.feeRates[fr.Network] = bigIntValue
+	}
+	return updated
+}
+
+func (t *tOracle) Prices() map[oracle.Ticker]float64 {
+	t.mtx.Lock()
+	defer t.mtx.Unlock()
+	// Return a copy to avoid races with concurrent modifications
+	result := make(map[oracle.Ticker]float64)
+	for k, v := range t.prices {
+		result[k] = v
+	}
+	return result
+}
+
+func (t *tOracle) FeeRates() map[oracle.Network]*big.Int {
+	t.mtx.Lock()
+	defer t.mtx.Unlock()
+	// Return a copy to avoid races with concurrent modifications
+	result := make(map[oracle.Network]*big.Int)
+	for k, v := range t.feeRates {
+		result[k] = v
+	}
+	return result
+}
+
+func (t *tOracle) GetSourceWeight(sourceName string) float64 {
+	return 1.0
+}
+
+// SetPrices sets the prices map with proper locking.
+func (t *tOracle) SetPrices(prices map[oracle.Ticker]float64) {
+	t.mtx.Lock()
+	defer t.mtx.Unlock()
+	t.prices = prices
+}
+
+// SetFeeRates sets the fee rates map with proper locking.
+func (t *tOracle) SetFeeRates(feeRates map[oracle.Network]*big.Int) {
+	t.mtx.Lock()
+	defer t.mtx.Unlock()
+	t.feeRates = feeRates
 }
 
 func newTestNode(t *testing.T, ctx context.Context, h host.Host, dataDir string, whitelist *whitelist) *TatankaNode {
@@ -71,6 +191,48 @@ func newTestNode(t *testing.T, ctx context.Context, h host.Host, dataDir string,
 	}
 
 	n.bondStorage = &testBondStorage{score: 1}
+	n.oracle = &testOracle{}
+
+	go func() {
+		if err := n.Run(ctx); err != nil {
+			t.Errorf("Failed to run test node: %v", err)
+		}
+	}()
+
+	if err := n.WaitReady(ctx); err != nil {
+		t.Fatalf("Failed to start test node: %v", err)
+	}
+
+	return n
+}
+
+// newTestNodeWithOracle creates a test node with a custom oracle implementation.
+func newTestNodeWithOracle(t *testing.T, ctx context.Context, h host.Host, dataDir string, whitelist *whitelist, testOracle Oracle) *TatankaNode {
+	logBackend := slog.NewBackend(os.Stdout)
+	log := logBackend.Logger(h.ID().ShortString())
+	log.SetLevel(slog.LevelDebug)
+
+	// Write the whitelist to the data directory.
+	whitelistPath := filepath.Join(dataDir, "whitelist.json")
+	whitelistData, err := json.Marshal(whitelist.toFile())
+	if err != nil {
+		t.Fatalf("Failed to marshal whitelist: %v", err)
+	}
+	if err := os.WriteFile(whitelistPath, whitelistData, 0644); err != nil {
+		t.Fatalf("Failed to write whitelist: %v", err)
+	}
+
+	n, err := NewTatankaNode(&Config{
+		Logger:        log,
+		DataDir:       dataDir,
+		WhitelistPath: filepath.Join(dataDir, "whitelist.json"),
+	}, WithHost(h))
+	if err != nil {
+		t.Fatalf("Failed to create test node: %v", err)
+	}
+
+	n.bondStorage = &testBondStorage{score: 1}
+	n.oracle = testOracle
 
 	go func() {
 		if err := n.Run(ctx); err != nil {
@@ -607,6 +769,46 @@ func requireEventually(t *testing.T, condition func() bool, timeout, tick time.D
 	t.Fatalf("Condition failed after %v: %s", timeout, fmt.Sprintf(msg, args...))
 }
 
+// pbNodePriceUpdate converts a SourcedPriceUpdate to a NodeOracleUpdate for testing.
+func pbNodePriceUpdate(update *oracle.SourcedPriceUpdate) *pb.NodeOracleUpdate {
+	pbPrices := make([]*pb.SourcedPrice, len(update.Prices))
+	for i, p := range update.Prices {
+		pbPrices[i] = &pb.SourcedPrice{
+			Ticker: string(p.Ticker),
+			Price:  p.Price,
+		}
+	}
+	return &pb.NodeOracleUpdate{
+		Update: &pb.NodeOracleUpdate_PriceUpdate{
+			PriceUpdate: &pb.SourcedPriceUpdate{
+				Source:    update.Source,
+				Timestamp: update.Stamp.Unix(),
+				Prices:    pbPrices,
+			},
+		},
+	}
+}
+
+// pbNodeFeeRateUpdate converts a SourcedFeeRateUpdate to a NodeOracleUpdate for testing.
+func pbNodeFeeRateUpdate(update *oracle.SourcedFeeRateUpdate) *pb.NodeOracleUpdate {
+	pbFeeRates := make([]*pb.SourcedFeeRate, len(update.FeeRates))
+	for i, fr := range update.FeeRates {
+		pbFeeRates[i] = &pb.SourcedFeeRate{
+			Network: string(fr.Network),
+			FeeRate: fr.FeeRate,
+		}
+	}
+	return &pb.NodeOracleUpdate{
+		Update: &pb.NodeOracleUpdate_FeeRateUpdate{
+			FeeRateUpdate: &pb.SourcedFeeRateUpdate{
+				Source:    update.Source,
+				Timestamp: update.Stamp.Unix(),
+				FeeRates:  pbFeeRates,
+			},
+		},
+	}
+}
+
 func TestMeshRecovery(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -951,6 +1153,445 @@ func TestClientSubscriptionAndBroadcast(t *testing.T) {
 	}
 
 	// Terminate clients.
+	for idx := range clients {
+		clients[idx].Close()
+	}
+}
+
+func TestGossipSubOracleUpdates_PriceUpdates(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	const numMeshNodes = 3
+	mesh, err := mocknet.FullMeshConnected(numMeshNodes)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	peerIDs := mesh.Peers()
+	hosts := make([]host.Host, numMeshNodes)
+	for i := range hosts {
+		hosts[i] = mesh.Host(peerIDs[i])
+	}
+
+	// Create whitelist with all nodes
+	whitelistPeers := make([]*peer.AddrInfo, numMeshNodes)
+	for i, h := range hosts {
+		whitelistPeers[i] = &peer.AddrInfo{ID: h.ID(), Addrs: h.Addrs()}
+	}
+	mockWhitelist := &whitelist{
+		peers: whitelistPeers,
+	}
+
+	// Create nodes with custom oracles that track merges
+	nodes := make([]*TatankaNode, numMeshNodes)
+	oracles := make([]*tOracle, numMeshNodes)
+	for i := range nodes {
+		dir := t.TempDir()
+		oracle := newTOracle()
+		oracles[i] = oracle
+		nodes[i] = newTestNodeWithOracle(t, ctx, hosts[i], dir, mockWhitelist, oracle)
+	}
+
+	time.Sleep(time.Second)
+
+	// Node 0 publishes price updates
+	now := time.Now()
+	sourcedUpdate := &oracle.SourcedPriceUpdate{
+		Source: "test-source",
+		Stamp:  now,
+		Weight: 1.0,
+		Prices: []*oracle.SourcedPrice{
+			{Ticker: "BTC", Price: 50000.0},
+			{Ticker: "ETH", Price: 3000.0},
+		},
+	}
+
+	oracleUpdate := pbNodePriceUpdate(sourcedUpdate)
+	if err := nodes[0].gossipSub.publishOracleUpdate(ctx, oracleUpdate); err != nil {
+		t.Fatalf("Failed to publish oracle update: %v", err)
+	}
+
+	// Wait for gossip propagation
+	time.Sleep(2 * time.Second)
+
+	// Verify that all nodes received and merged the updates
+	for i := 0; i < numMeshNodes; i++ {
+		oracles[i].mtx.Lock()
+		mergedCount := len(oracles[i].mergedPrices)
+		oracles[i].mtx.Unlock()
+
+		if mergedCount != 1 {
+			t.Errorf("Node %d: expected 1 merged price update, got %d", i, mergedCount)
+			continue
+		}
+
+		oracles[i].mtx.Lock()
+		merged := oracles[i].mergedPrices[0]
+		oracles[i].mtx.Unlock()
+
+		// Verify the merged update
+		if merged.Source != "test-source" {
+			t.Errorf("Node %d: expected source 'test-source', got %s", i, merged.Source)
+		}
+		if len(merged.Prices) != 2 {
+			t.Errorf("Node %d: expected 2 prices, got %d", i, len(merged.Prices))
+			continue
+		}
+		if merged.Prices[0].Ticker != "BTC" || merged.Prices[0].Price != 50000.0 {
+			t.Errorf("Node %d: first price incorrect: %+v", i, merged.Prices[0])
+		}
+		if merged.Prices[1].Ticker != "ETH" || merged.Prices[1].Price != 3000.0 {
+			t.Errorf("Node %d: second price incorrect: %+v", i, merged.Prices[1])
+		}
+	}
+}
+
+func TestGossipSubOracleUpdates_FeeRateUpdates(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	const numMeshNodes = 3
+	mesh, err := mocknet.FullMeshConnected(numMeshNodes)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	peerIDs := mesh.Peers()
+	hosts := make([]host.Host, numMeshNodes)
+	for i := range hosts {
+		hosts[i] = mesh.Host(peerIDs[i])
+	}
+
+	// Create whitelist with all nodes
+	whitelistPeers := make([]*peer.AddrInfo, numMeshNodes)
+	for i, h := range hosts {
+		whitelistPeers[i] = &peer.AddrInfo{ID: h.ID(), Addrs: h.Addrs()}
+	}
+	mockWhitelist := &whitelist{
+		peers: whitelistPeers,
+	}
+
+	// Create nodes with custom oracles
+	nodes := make([]*TatankaNode, numMeshNodes)
+	oracles := make([]*tOracle, numMeshNodes)
+	for i := range nodes {
+		dir := t.TempDir()
+		oracle := newTOracle()
+		oracles[i] = oracle
+		nodes[i] = newTestNodeWithOracle(t, ctx, hosts[i], dir, mockWhitelist, oracle)
+	}
+
+	time.Sleep(time.Second)
+
+	// Node 1 publishes fee rate updates
+	now := time.Now()
+	sourcedUpdate := &oracle.SourcedFeeRateUpdate{
+		Source: "test-source",
+		Stamp:  now,
+		Weight: 1.0,
+		FeeRates: []*oracle.SourcedFeeRate{
+			{Network: "Bitcoin", FeeRate: big.NewInt(100).Bytes()},
+			{Network: "Ethereum", FeeRate: big.NewInt(50).Bytes()},
+		},
+	}
+
+	oracleUpdate := pbNodeFeeRateUpdate(sourcedUpdate)
+	if err := nodes[1].gossipSub.publishOracleUpdate(ctx, oracleUpdate); err != nil {
+		t.Fatalf("Failed to publish oracle update: %v", err)
+	}
+
+	// Wait for gossip propagation
+	time.Sleep(2 * time.Second)
+
+	// Verify that all nodes received and merged the updates
+	for i := 0; i < numMeshNodes; i++ {
+		oracles[i].mtx.Lock()
+		mergedCount := len(oracles[i].mergedFeeRates)
+		oracles[i].mtx.Unlock()
+
+		if mergedCount != 1 {
+			t.Errorf("Node %d: expected 1 merged fee rate update, got %d", i, mergedCount)
+			continue
+		}
+
+		oracles[i].mtx.Lock()
+		merged := oracles[i].mergedFeeRates[0]
+		oracles[i].mtx.Unlock()
+
+		// Verify the merged update
+		if merged.Source != "test-source" {
+			t.Errorf("Node %d: expected source 'test-source', got %s", i, merged.Source)
+		}
+		if len(merged.FeeRates) != 2 {
+			t.Errorf("Node %d: expected 2 fee rates, got %d", i, len(merged.FeeRates))
+			continue
+		}
+		if merged.FeeRates[0].Network != "Bitcoin" || new(big.Int).SetBytes(merged.FeeRates[0].FeeRate).Cmp(big.NewInt(100)) != 0 {
+			t.Errorf("Node %d: first fee rate incorrect: %+v", i, merged.FeeRates[0])
+		}
+		if merged.FeeRates[1].Network != "Ethereum" || new(big.Int).SetBytes(merged.FeeRates[1].FeeRate).Cmp(big.NewInt(50)) != 0 {
+			t.Errorf("Node %d: second fee rate incorrect: %+v", i, merged.FeeRates[1])
+		}
+	}
+}
+
+func TestGossipSubOracleUpdates_MultipleNodes(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	const numMeshNodes = 4
+	mesh, err := mocknet.FullMeshConnected(numMeshNodes)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	peerIDs := mesh.Peers()
+	hosts := make([]host.Host, numMeshNodes)
+	for i := range hosts {
+		hosts[i] = mesh.Host(peerIDs[i])
+	}
+
+	// Create whitelist with all nodes
+	whitelistPeers := make([]*peer.AddrInfo, numMeshNodes)
+	for i, h := range hosts {
+		whitelistPeers[i] = &peer.AddrInfo{ID: h.ID(), Addrs: h.Addrs()}
+	}
+	mockWhitelist := &whitelist{
+		peers: whitelistPeers,
+	}
+
+	// Create nodes with custom oracles
+	nodes := make([]*TatankaNode, numMeshNodes)
+	oracles := make([]*tOracle, numMeshNodes)
+	for i := range nodes {
+		dir := t.TempDir()
+		oracle := newTOracle()
+		oracles[i] = oracle
+		nodes[i] = newTestNodeWithOracle(t, ctx, hosts[i], dir, mockWhitelist, oracle)
+	}
+
+	time.Sleep(time.Second)
+
+	now := time.Now()
+
+	// Node 0 publishes price updates
+	priceUpdate0 := &oracle.SourcedPriceUpdate{
+		Source: "node-0",
+		Stamp:  now,
+		Weight: 1.0,
+		Prices: []*oracle.SourcedPrice{
+			{Ticker: "BTC", Price: 50000.0},
+		},
+	}
+	if err := nodes[0].gossipSub.publishOracleUpdate(ctx, pbNodePriceUpdate(priceUpdate0)); err != nil {
+		t.Fatalf("Failed to publish price update from node 0: %v", err)
+	}
+
+	// Node 1 publishes fee rate updates
+	feeRateUpdate := &oracle.SourcedFeeRateUpdate{
+		Source: "node-1",
+		Stamp:  now,
+		Weight: 1.0,
+		FeeRates: []*oracle.SourcedFeeRate{
+			{Network: "Bitcoin", FeeRate: big.NewInt(100).Bytes()},
+		},
+	}
+	if err := nodes[1].gossipSub.publishOracleUpdate(ctx, pbNodeFeeRateUpdate(feeRateUpdate)); err != nil {
+		t.Fatalf("Failed to publish fee rate update from node 1: %v", err)
+	}
+
+	// Node 2 publishes price updates
+	priceUpdate2 := &oracle.SourcedPriceUpdate{
+		Source: "node-2",
+		Stamp:  now,
+		Weight: 0.8,
+		Prices: []*oracle.SourcedPrice{
+			{Ticker: "ETH", Price: 3000.0},
+		},
+	}
+	if err := nodes[2].gossipSub.publishOracleUpdate(ctx, pbNodePriceUpdate(priceUpdate2)); err != nil {
+		t.Fatalf("Failed to publish price update from node 2: %v", err)
+	}
+
+	// Wait for gossip propagation
+	time.Sleep(2 * time.Second)
+
+	// Verify all nodes received all price updates (2 price updates from nodes 0 and 2)
+	for i, oracle := range oracles {
+		oracle.mtx.Lock()
+		priceCount := len(oracle.mergedPrices)
+		oracle.mtx.Unlock()
+
+		// All nodes should receive both price updates
+		expectedPriceCount := 2
+
+		if priceCount != expectedPriceCount {
+			t.Errorf("Node %d: expected %d price updates, got %d", i, expectedPriceCount, priceCount)
+		}
+	}
+
+	// Verify all nodes received the fee rate update
+	for i, oracle := range oracles {
+		oracle.mtx.Lock()
+		feeRateCount := len(oracle.mergedFeeRates)
+		oracle.mtx.Unlock()
+
+		// All nodes should receive the fee rate update
+		expectedFeeRateCount := 1
+
+		if feeRateCount != expectedFeeRateCount {
+			t.Errorf("Node %d: expected %d fee rate updates, got %d", i, expectedFeeRateCount, feeRateCount)
+		}
+	}
+}
+
+func TestGossipSubOracleUpdates_ClientDelivery(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	const numMeshNodes = 2
+	const numClients = 2
+
+	mesh, err := mocknet.WithNPeers(numMeshNodes + numClients)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	allPeers := mesh.Peers()
+	meshHosts := make([]host.Host, numMeshNodes)
+	for i := range meshHosts {
+		meshHosts[i] = mesh.Host(allPeers[i])
+	}
+
+	clientHosts := make([]host.Host, numClients)
+	for i := range clientHosts {
+		clientHosts[i] = mesh.Host(allPeers[numMeshNodes+i])
+	}
+
+	// Create whitelist
+	whitelistPeers := make([]*peer.AddrInfo, numMeshNodes)
+	for i, h := range meshHosts {
+		whitelistPeers[i] = &peer.AddrInfo{ID: h.ID(), Addrs: h.Addrs()}
+	}
+	mockWhitelist := &whitelist{
+		peers: whitelistPeers,
+	}
+
+	// Create nodes with custom oracles that return updated prices/fee rates
+	nodes := make([]*TatankaNode, numMeshNodes)
+	oracles := make([]*tOracle, numMeshNodes)
+	for i := range nodes {
+		dir := t.TempDir()
+		testOracle := newTOracle()
+		// Set up the oracle to return updates when MergePrices is called
+		testOracle.SetPrices(map[oracle.Ticker]float64{
+			"BTC": 50000.0,
+		})
+		testOracle.SetFeeRates(map[oracle.Network]*big.Int{
+			"BTC": big.NewInt(100),
+		})
+		oracles[i] = testOracle
+		nodes[i] = newTestNodeWithOracle(t, ctx, meshHosts[i], dir, mockWhitelist, testOracle)
+	}
+
+	// Connect mesh nodes
+	if _, err := mesh.LinkPeers(meshHosts[0].ID(), meshHosts[1].ID()); err != nil {
+		t.Fatalf("Failed to link mesh peers: %v", err)
+	}
+	if _, err := mesh.ConnectPeers(meshHosts[0].ID(), meshHosts[1].ID()); err != nil {
+		t.Fatalf("Failed to connect mesh peers: %v", err)
+	}
+
+	time.Sleep(time.Second)
+
+	// Create clients and connect them to nodes
+	clients := make([]*testClient, numClients)
+	for i := range clients {
+		nodeIdx := i % numMeshNodes
+		if _, err := mesh.LinkPeers(clientHosts[i].ID(), meshHosts[nodeIdx].ID()); err != nil {
+			t.Fatalf("Failed to link client %d to node %d: %v", i, nodeIdx, err)
+		}
+		if _, err := mesh.ConnectPeers(clientHosts[i].ID(), meshHosts[nodeIdx].ID()); err != nil {
+			t.Fatalf("Failed to connect client %d to node %d: %v", i, nodeIdx, err)
+		}
+		clients[i], err = newTestClient(ctx, clientHosts[i], meshHosts[nodeIdx].ID())
+		if err != nil {
+			t.Fatalf("Failed to create client %d: %v", i, err)
+		}
+	}
+
+	time.Sleep(time.Second)
+
+	// Subscribe clients to oracle topics
+	if err := clients[0].Subscribe(ctx, oraclePricesTopic); err != nil {
+		t.Fatalf("Failed to subscribe client 0 to prices: %v", err)
+	}
+	if err := clients[1].Subscribe(ctx, oracleFeeRatesTopic); err != nil {
+		t.Fatalf("Failed to subscribe client 1 to fee rates: %v", err)
+	}
+
+	time.Sleep(time.Second)
+
+	// Node 0 publishes price updates via gossipsub
+	now := time.Now()
+	priceUpdate := &oracle.SourcedPriceUpdate{
+		Source: "test-source",
+		Stamp:  now,
+		Weight: 1.0,
+		Prices: []*oracle.SourcedPrice{
+			{Ticker: "BTC", Price: 50000.0},
+		},
+	}
+	if err := nodes[0].gossipSub.publishOracleUpdate(ctx, pbNodePriceUpdate(priceUpdate)); err != nil {
+		t.Fatalf("Failed to publish price update: %v", err)
+	}
+
+	// Node 1 publishes fee rate updates via gossipsub
+	feeRateUpdate := &oracle.SourcedFeeRateUpdate{
+		Source: "test-source",
+		Stamp:  now,
+		Weight: 1.0,
+		FeeRates: []*oracle.SourcedFeeRate{
+			{Network: "BTC", FeeRate: big.NewInt(100).Bytes()},
+		},
+	}
+	if err := nodes[1].gossipSub.publishOracleUpdate(ctx, pbNodeFeeRateUpdate(feeRateUpdate)); err != nil {
+		t.Fatalf("Failed to publish fee rate update: %v", err)
+	}
+
+	// Wait for processing and client delivery
+	time.Sleep(2 * time.Second)
+
+	// Verify client 0 received the price update
+	timeoutCtx, timeoutCancel := context.WithTimeout(ctx, 3*time.Second)
+	msg0, err := clients[0].Next(timeoutCtx, oraclePricesTopic)
+	timeoutCancel()
+	if err != nil {
+		t.Errorf("Client 0 did not receive price update within timeout: %v", err)
+	} else {
+		if msg0.Topic != oraclePricesTopic {
+			t.Errorf("Client 0: wrong topic, expected %s, got %s", oraclePricesTopic, msg0.Topic)
+		}
+		// The message should be a ClientPriceUpdate
+		t.Logf("Client 0 received price update message of type %T", msg0.MessageType)
+	}
+
+	// Verify client 1 received the fee rate update
+	timeoutCtx, timeoutCancel = context.WithTimeout(ctx, 3*time.Second)
+	msg1, err := clients[1].Next(timeoutCtx, oracleFeeRatesTopic)
+	timeoutCancel()
+	if err != nil {
+		t.Errorf("Client 1 did not receive fee rate update within timeout: %v", err)
+	} else {
+		if msg1.Topic != oracleFeeRatesTopic {
+			t.Errorf("Client 1: wrong topic, expected %s, got %s", oracleFeeRatesTopic, msg1.Topic)
+		}
+		// The message should be a ClientFeeRateUpdate
+		t.Logf("Client 1 received fee rate update message of type %T", msg1.MessageType)
+	}
+
+	// Terminate clients
 	for idx := range clients {
 		clients[idx].Close()
 	}

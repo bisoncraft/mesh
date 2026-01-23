@@ -27,6 +27,11 @@ type Config struct {
 	MetricsPort   int    `long:"metricsport" description:"Port to scrape metrics and fetch profiles from."`
 	AdminPort     int    `long:"adminport" description:"Port to expose the admin interface on."`
 	WhitelistPath string `long:"whitelistpath" description:"Path to local whitelist file."`
+
+	// Oracle Configuration
+	CMCKey        string `long:"cmckey" description:"coinmarketcap API key"`
+	TatumKey      string `long:"tatumkey" description:"tatum API key"`
+	CryptoApisKey string `long:"cryptoapiskey" description:"crypto apis API key"`
 }
 
 // initLogRotator initializes the logging rotater to write logs to logFile and
@@ -53,6 +58,7 @@ func main() {
 		ListenPort:    12345,
 		MetricsPort:   12355,
 		WhitelistPath: "",
+		CMCKey:        "",
 	}
 
 	// Parse command-line flags (overrides file values)
@@ -101,6 +107,9 @@ func main() {
 		MetricsPort:   cfg.MetricsPort,
 		WhitelistPath: cfg.WhitelistPath,
 		AdminPort:     cfg.AdminPort,
+		CMCKey:        cfg.CMCKey,
+		TatumKey:      cfg.TatumKey,
+		CryptoApisKey: cfg.CryptoApisKey,
 	}
 
 	// Create Tatanka node

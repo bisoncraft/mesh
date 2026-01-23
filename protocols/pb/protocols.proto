@@ -105,7 +105,7 @@ message Bond {
 
 message PostBondRequest {
   repeated Bond bonds = 1;
-}  
+}
 
 
 message PostBondResponse {
@@ -167,3 +167,20 @@ message InitialSubscriptions {
   repeated string topics = 1;
 }
 
+// Price represents a single ticker-price pair for client consumption.
+message ClientPriceUpdate {
+  double price = 1;
+}
+
+// ClientFeeRateUpdate represents a network-fee rate update for client consumption.
+message ClientFeeRateUpdate {
+  bytes fee_rate = 1;  // big-endian encoded big integer
+}
+
+// ClientOracleUpdate contains oracle data for clients.
+message ClientOracleUpdate {
+  oneof update {
+    ClientPriceUpdate price_update = 1;
+    ClientFeeRateUpdate fee_rate_update = 2;
+  }
+}

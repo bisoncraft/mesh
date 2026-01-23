@@ -1459,6 +1459,179 @@ func (x *InitialSubscriptions) GetTopics() []string {
 	return nil
 }
 
+// Price represents a single ticker-price pair for client consumption.
+type ClientPriceUpdate struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Price         float64                `protobuf:"fixed64,1,opt,name=price,proto3" json:"price,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ClientPriceUpdate) Reset() {
+	*x = ClientPriceUpdate{}
+	mi := &file_protocols_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ClientPriceUpdate) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ClientPriceUpdate) ProtoMessage() {}
+
+func (x *ClientPriceUpdate) ProtoReflect() protoreflect.Message {
+	mi := &file_protocols_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ClientPriceUpdate.ProtoReflect.Descriptor instead.
+func (*ClientPriceUpdate) Descriptor() ([]byte, []int) {
+	return file_protocols_proto_rawDescGZIP(), []int{24}
+}
+
+func (x *ClientPriceUpdate) GetPrice() float64 {
+	if x != nil {
+		return x.Price
+	}
+	return 0
+}
+
+// ClientFeeRateUpdate represents a network-fee rate update for client consumption.
+type ClientFeeRateUpdate struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	FeeRate       []byte                 `protobuf:"bytes,1,opt,name=fee_rate,json=feeRate,proto3" json:"fee_rate,omitempty"` // big-endian encoded big integer
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ClientFeeRateUpdate) Reset() {
+	*x = ClientFeeRateUpdate{}
+	mi := &file_protocols_proto_msgTypes[25]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ClientFeeRateUpdate) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ClientFeeRateUpdate) ProtoMessage() {}
+
+func (x *ClientFeeRateUpdate) ProtoReflect() protoreflect.Message {
+	mi := &file_protocols_proto_msgTypes[25]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ClientFeeRateUpdate.ProtoReflect.Descriptor instead.
+func (*ClientFeeRateUpdate) Descriptor() ([]byte, []int) {
+	return file_protocols_proto_rawDescGZIP(), []int{25}
+}
+
+func (x *ClientFeeRateUpdate) GetFeeRate() []byte {
+	if x != nil {
+		return x.FeeRate
+	}
+	return nil
+}
+
+// ClientOracleUpdate contains oracle data for clients.
+type ClientOracleUpdate struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Types that are valid to be assigned to Update:
+	//
+	//	*ClientOracleUpdate_PriceUpdate
+	//	*ClientOracleUpdate_FeeRateUpdate
+	Update        isClientOracleUpdate_Update `protobuf_oneof:"update"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ClientOracleUpdate) Reset() {
+	*x = ClientOracleUpdate{}
+	mi := &file_protocols_proto_msgTypes[26]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ClientOracleUpdate) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ClientOracleUpdate) ProtoMessage() {}
+
+func (x *ClientOracleUpdate) ProtoReflect() protoreflect.Message {
+	mi := &file_protocols_proto_msgTypes[26]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ClientOracleUpdate.ProtoReflect.Descriptor instead.
+func (*ClientOracleUpdate) Descriptor() ([]byte, []int) {
+	return file_protocols_proto_rawDescGZIP(), []int{26}
+}
+
+func (x *ClientOracleUpdate) GetUpdate() isClientOracleUpdate_Update {
+	if x != nil {
+		return x.Update
+	}
+	return nil
+}
+
+func (x *ClientOracleUpdate) GetPriceUpdate() *ClientPriceUpdate {
+	if x != nil {
+		if x, ok := x.Update.(*ClientOracleUpdate_PriceUpdate); ok {
+			return x.PriceUpdate
+		}
+	}
+	return nil
+}
+
+func (x *ClientOracleUpdate) GetFeeRateUpdate() *ClientFeeRateUpdate {
+	if x != nil {
+		if x, ok := x.Update.(*ClientOracleUpdate_FeeRateUpdate); ok {
+			return x.FeeRateUpdate
+		}
+	}
+	return nil
+}
+
+type isClientOracleUpdate_Update interface {
+	isClientOracleUpdate_Update()
+}
+
+type ClientOracleUpdate_PriceUpdate struct {
+	PriceUpdate *ClientPriceUpdate `protobuf:"bytes,1,opt,name=price_update,json=priceUpdate,proto3,oneof"`
+}
+
+type ClientOracleUpdate_FeeRateUpdate struct {
+	FeeRateUpdate *ClientFeeRateUpdate `protobuf:"bytes,2,opt,name=fee_rate_update,json=feeRateUpdate,proto3,oneof"`
+}
+
+func (*ClientOracleUpdate_PriceUpdate) isClientOracleUpdate_Update() {}
+
+func (*ClientOracleUpdate_FeeRateUpdate) isClientOracleUpdate_Update() {}
+
 var File_protocols_proto protoreflect.FileDescriptor
 
 const file_protocols_proto_rawDesc = "" +
@@ -1538,7 +1711,15 @@ const file_protocols_proto_rawDesc = "" +
 	"\x1aAvailableMeshNodesResponse\x12\"\n" +
 	"\x05peers\x18\x01 \x03(\v2\f.pb.PeerInfoR\x05peers\".\n" +
 	"\x14InitialSubscriptions\x12\x16\n" +
-	"\x06topics\x18\x01 \x03(\tR\x06topicsB.Z,github.com/martonp/tatanka-mesh/protocols/pbb\x06proto3"
+	"\x06topics\x18\x01 \x03(\tR\x06topics\")\n" +
+	"\x11ClientPriceUpdate\x12\x14\n" +
+	"\x05price\x18\x01 \x01(\x01R\x05price\"0\n" +
+	"\x13ClientFeeRateUpdate\x12\x19\n" +
+	"\bfee_rate\x18\x01 \x01(\fR\afeeRate\"\x9d\x01\n" +
+	"\x12ClientOracleUpdate\x12:\n" +
+	"\fprice_update\x18\x01 \x01(\v2\x15.pb.ClientPriceUpdateH\x00R\vpriceUpdate\x12A\n" +
+	"\x0ffee_rate_update\x18\x02 \x01(\v2\x17.pb.ClientFeeRateUpdateH\x00R\rfeeRateUpdateB\b\n" +
+	"\x06updateB.Z,github.com/martonp/tatanka-mesh/protocols/pbb\x06proto3"
 
 var (
 	file_protocols_proto_rawDescOnce sync.Once
@@ -1553,7 +1734,7 @@ func file_protocols_proto_rawDescGZIP() []byte {
 }
 
 var file_protocols_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_protocols_proto_msgTypes = make([]protoimpl.MessageInfo, 24)
+var file_protocols_proto_msgTypes = make([]protoimpl.MessageInfo, 27)
 var file_protocols_proto_goTypes = []any{
 	(PushMessage_MessageType)(0),        // 0: pb.PushMessage.MessageType
 	(*Response)(nil),                    // 1: pb.Response
@@ -1580,6 +1761,9 @@ var file_protocols_proto_goTypes = []any{
 	(*AvailableMeshNodesRequest)(nil),   // 22: pb.AvailableMeshNodesRequest
 	(*AvailableMeshNodesResponse)(nil),  // 23: pb.AvailableMeshNodesResponse
 	(*InitialSubscriptions)(nil),        // 24: pb.InitialSubscriptions
+	(*ClientPriceUpdate)(nil),           // 25: pb.ClientPriceUpdate
+	(*ClientFeeRateUpdate)(nil),         // 26: pb.ClientFeeRateUpdate
+	(*ClientOracleUpdate)(nil),          // 27: pb.ClientOracleUpdate
 }
 var file_protocols_proto_depIdxs = []int32{
 	2,  // 0: pb.Response.success:type_name -> pb.Success
@@ -1597,11 +1781,13 @@ var file_protocols_proto_depIdxs = []int32{
 	7,  // 12: pb.ClientRelayMessageResponse.error:type_name -> pb.Error
 	7,  // 13: pb.TatankaRelayMessageResponse.error:type_name -> pb.Error
 	17, // 14: pb.AvailableMeshNodesResponse.peers:type_name -> pb.PeerInfo
-	15, // [15:15] is the sub-list for method output_type
-	15, // [15:15] is the sub-list for method input_type
-	15, // [15:15] is the sub-list for extension type_name
-	15, // [15:15] is the sub-list for extension extendee
-	0,  // [0:15] is the sub-list for field type_name
+	25, // 15: pb.ClientOracleUpdate.price_update:type_name -> pb.ClientPriceUpdate
+	26, // 16: pb.ClientOracleUpdate.fee_rate_update:type_name -> pb.ClientFeeRateUpdate
+	17, // [17:17] is the sub-list for method output_type
+	17, // [17:17] is the sub-list for method input_type
+	17, // [17:17] is the sub-list for extension type_name
+	17, // [17:17] is the sub-list for extension extendee
+	0,  // [0:17] is the sub-list for field type_name
 }
 
 func init() { file_protocols_proto_init() }
@@ -1632,13 +1818,17 @@ func file_protocols_proto_init() {
 		(*TatankaRelayMessageResponse_Message)(nil),
 		(*TatankaRelayMessageResponse_Error)(nil),
 	}
+	file_protocols_proto_msgTypes[26].OneofWrappers = []any{
+		(*ClientOracleUpdate_PriceUpdate)(nil),
+		(*ClientOracleUpdate_FeeRateUpdate)(nil),
+	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_protocols_proto_rawDesc), len(file_protocols_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   24,
+			NumMessages:   27,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
