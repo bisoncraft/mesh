@@ -36,8 +36,10 @@ type pushStreamManager struct {
 	log             slog.Logger
 	notifyConnected notifyConnectedFunc
 
-	mtx         sync.RWMutex
-	pushStreams map[peer.ID]*pushStreamWrapper
+	pushStreamMtx sync.RWMutex
+	pushStreams   map[peer.ID]*pushStreamWrapper
+	ipsMtx        sync.RWMutex
+	ips           map[string]peer.ID
 }
 
 // newPushStreamManager creates a new pushStreamManager. The notifyConnectedFunc
@@ -48,6 +50,7 @@ func newPushStreamManager(log slog.Logger, f notifyConnectedFunc) *pushStreamMan
 		log:             log,
 		notifyConnected: f,
 		pushStreams:     make(map[peer.ID]*pushStreamWrapper),
+		ips:             make(map[string]peer.ID),
 	}
 }
 
@@ -58,7 +61,16 @@ func newPushStreamManager(log slog.Logger, f notifyConnectedFunc) *pushStreamMan
 func (p *pushStreamManager) newPushStream(stream network.Stream) {
 	client := stream.Conn().RemotePeer()
 
-	p.mtx.Lock()
+	ip, err := getIPFromStream(stream)
+	if err != nil {
+		p.log.Errorf("Failed to fetch ip from stream: %v", err)
+	}
+
+	p.ipsMtx.Lock()
+	p.ips[ip] = client
+	p.ipsMtx.Unlock()
+
+	p.pushStreamMtx.Lock()
 	oldWrapper := p.pushStreams[client]
 	wrapper := &pushStreamWrapper{
 		stream:  stream,
@@ -66,7 +78,7 @@ func (p *pushStreamManager) newPushStream(stream network.Stream) {
 	}
 	p.pushStreams[client] = wrapper
 	newStreamTimestamp := time.Now()
-	p.mtx.Unlock()
+	p.pushStreamMtx.Unlock()
 
 	if oldWrapper != nil {
 		_ = oldWrapper.stream.Close()
@@ -93,16 +105,20 @@ func (p *pushStreamManager) newPushStream(stream network.Stream) {
 			p.log.Debugf("Error discarding data from client %s push stream: %v", client.ShortString(), err)
 		}
 
-		p.mtx.Lock()
+		p.pushStreamMtx.Lock()
 		if p.pushStreams[client] == wrapper {
 			close(wrapper.writeCh)
 			delete(p.pushStreams, client)
 			timestamp := time.Now()
-			p.mtx.Unlock()
+			p.pushStreamMtx.Unlock()
+
+			p.ipsMtx.Lock()
+			delete(p.ips, ip)
+			p.ipsMtx.Unlock()
 
 			p.notifyConnected(client, timestamp, false)
 		} else {
-			p.mtx.Unlock()
+			p.pushStreamMtx.Unlock()
 		}
 	}()
 }
@@ -121,8 +137,8 @@ func (p *pushStreamManager) distribute(clients []peer.ID, msg *protocolsPb.PushM
 		return
 	}
 
-	p.mtx.RLock()
-	defer p.mtx.RUnlock()
+	p.pushStreamMtx.RLock()
+	defer p.pushStreamMtx.RUnlock()
 
 	for _, client := range clients {
 		if client == sender {
@@ -137,4 +153,50 @@ func (p *pushStreamManager) distribute(clients []peer.ID, msg *protocolsPb.PushM
 			}
 		}
 	}
+}
+
+func (p *pushStreamManager) disconnectClientByIP(ip string) {
+	p.ipsMtx.RLock()
+	clientID, ok := p.ips[ip]
+	p.ipsMtx.RUnlock()
+
+	if !ok {
+		p.log.Debugf("No connected client found with IP %s", ip)
+		return
+	}
+
+	p.pushStreamMtx.RLock()
+	wrapper, ok := p.pushStreams[clientID]
+	p.pushStreamMtx.RUnlock()
+
+	if !ok {
+		p.log.Debugf("No stream found for connected client %s", clientID.ShortString())
+		return
+	}
+
+	if err := wrapper.stream.Close(); err != nil {
+		p.log.Errorf("Error closing stream for client %s: %v", clientID.ShortString(), err)
+		return
+	}
+}
+
+func getIPFromStream(s network.Stream) (string, error) {
+	if s == nil {
+		return "", errors.New("network stream cannot be nil")
+	}
+
+	remoteMa := s.Conn().RemoteMultiaddr()
+	if remoteMa == nil {
+		return "", errors.New("remote multi address cannot be nil")
+	}
+
+	if ipv4, err := remoteMa.ValueForProtocol(ma.P_IP4); err == nil && ipv4 != "" {
+		return ipv4, nil
+	}
+
+	if ipv6, err := remoteMa.ValueForProtocol(ma.P_IP6); err == nil && ipv6 != "" {
+		return ipv6, nil
+	}
+
+	return "", errors.New("failed to deduce ip address from stream")
 }

@@ -90,6 +90,75 @@ func (x *ClientConnectionMsg) GetTimestamp() int64 {
 	return 0
 }
 
+// ClientBanMsg is used internally by tatanka nodes to share client ban information.
+type ClientBanMsg struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Ip             string                 `protobuf:"bytes,1,opt,name=ip,proto3" json:"ip,omitempty"`             // banned client IP address
+	Reporter       []byte                 `protobuf:"bytes,2,opt,name=reporter,proto3" json:"reporter,omitempty"` // peer.ID of reporting node
+	TotalPenalties uint32                 `protobuf:"varint,3,opt,name=total_penalties,json=totalPenalties,proto3" json:"total_penalties,omitempty"`
+	Expiry         int64                  `protobuf:"varint,4,opt,name=expiry,proto3" json:"expiry,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *ClientBanMsg) Reset() {
+	*x = ClientBanMsg{}
+	mi := &file_messages_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ClientBanMsg) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ClientBanMsg) ProtoMessage() {}
+
+func (x *ClientBanMsg) ProtoReflect() protoreflect.Message {
+	mi := &file_messages_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ClientBanMsg.ProtoReflect.Descriptor instead.
+func (*ClientBanMsg) Descriptor() ([]byte, []int) {
+	return file_messages_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *ClientBanMsg) GetIp() string {
+	if x != nil {
+		return x.Ip
+	}
+	return ""
+}
+
+func (x *ClientBanMsg) GetReporter() []byte {
+	if x != nil {
+		return x.Reporter
+	}
+	return nil
+}
+
+func (x *ClientBanMsg) GetTotalPenalties() uint32 {
+	if x != nil {
+		return x.TotalPenalties
+	}
+	return 0
+}
+
+func (x *ClientBanMsg) GetExpiry() int64 {
+	if x != nil {
+		return x.Expiry
+	}
+	return 0
+}
+
 type TatankaForwardRelayRequest struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	InitiatorId    []byte                 `protobuf:"bytes,1,opt,name=initiator_id,json=initiatorId,proto3" json:"initiator_id,omitempty"`          // peer.ID serialized as bytes
@@ -1071,7 +1140,12 @@ const file_tatanka_pb_messages_proto_rawDesc = "" +
 	"\vreporter_id\x18\x02 \x01(\fR\n" +
 	"reporterId\x12\x1c\n" +
 	"\tconnected\x18\x03 \x01(\bR\tconnected\x12\x1c\n" +
-	"\ttimestamp\x18\x04 \x01(\x03R\ttimestamp\"\x82\x01\n" +
+	"\ttimestamp\x18\x04 \x01(\x03R\ttimestamp\"{\n" +
+	"\fClientBanMsg\x12\x0e\n" +
+	"\x02ip\x18\x01 \x01(\tR\x02ip\x12\x1a\n" +
+	"\breporter\x18\x02 \x01(\fR\breporter\x12'\n" +
+	"\x0ftotal_penalties\x18\x03 \x01(\rR\x0etotalPenalties\x12\x16\n" +
+	"\x06expiry\x18\x04 \x01(\x03R\x06expiry\"\x82\x01\n" +
 	"\x1aTatankaForwardRelayRequest\x12!\n" +
 	"\finitiator_id\x18\x01 \x01(\fR\vinitiatorId\x12'\n" +
 	"\x0fcounterparty_id\x18\x02 \x01(\fR\x0ecounterpartyId\x12\x18\n" +
@@ -1137,26 +1211,32 @@ func file_tatanka_pb_messages_proto_rawDescGZIP() []byte {
 	return file_tatanka_pb_messages_proto_rawDescData
 }
 
+<<<<<<< HEAD
 var file_tatanka_pb_messages_proto_msgTypes = make([]protoimpl.MessageInfo, 18)
 var file_tatanka_pb_messages_proto_goTypes = []any{
+=======
+var file_messages_proto_msgTypes = make([]protoimpl.MessageInfo, 19)
+var file_messages_proto_goTypes = []any{
+>>>>>>> 12d2822 (multi: add ban manager)
 	(*ClientConnectionMsg)(nil),                        // 0: pb.ClientConnectionMsg
-	(*TatankaForwardRelayRequest)(nil),                 // 1: pb.TatankaForwardRelayRequest
-	(*TatankaForwardRelayResponse)(nil),                // 2: pb.TatankaForwardRelayResponse
-	(*DiscoveryRequest)(nil),                           // 3: pb.DiscoveryRequest
-	(*DiscoveryResponse)(nil),                          // 4: pb.DiscoveryResponse
-	(*WhitelistRequest)(nil),                           // 5: pb.WhitelistRequest
-	(*WhitelistResponse)(nil),                          // 6: pb.WhitelistResponse
-	(*SourcedPrice)(nil),                               // 7: pb.SourcedPrice
-	(*SourcedPriceUpdate)(nil),                         // 8: pb.SourcedPriceUpdate
-	(*SourcedFeeRate)(nil),                             // 9: pb.SourcedFeeRate
-	(*SourcedFeeRateUpdate)(nil),                       // 10: pb.SourcedFeeRateUpdate
-	(*NodeOracleUpdate)(nil),                           // 11: pb.NodeOracleUpdate
-	(*TatankaForwardRelayResponse_ClientNotFound)(nil), // 12: pb.TatankaForwardRelayResponse.ClientNotFound
-	(*TatankaForwardRelayResponse_ClientRejected)(nil), // 13: pb.TatankaForwardRelayResponse.ClientRejected
-	(*DiscoveryResponse_Success)(nil),                  // 14: pb.DiscoveryResponse.Success
-	(*DiscoveryResponse_NotFound)(nil),                 // 15: pb.DiscoveryResponse.NotFound
-	(*WhitelistResponse_Success)(nil),                  // 16: pb.WhitelistResponse.Success
-	(*WhitelistResponse_Mismatch)(nil),                 // 17: pb.WhitelistResponse.Mismatch
+	(*ClientBanMsg)(nil),                               // 1: pb.ClientBanMsg
+	(*TatankaForwardRelayRequest)(nil),                 // 2: pb.TatankaForwardRelayRequest
+	(*TatankaForwardRelayResponse)(nil),                // 3: pb.TatankaForwardRelayResponse
+	(*DiscoveryRequest)(nil),                           // 4: pb.DiscoveryRequest
+	(*DiscoveryResponse)(nil),                          // 5: pb.DiscoveryResponse
+	(*WhitelistRequest)(nil),                           // 6: pb.WhitelistRequest
+	(*WhitelistResponse)(nil),                          // 7: pb.WhitelistResponse
+	(*SourcedPrice)(nil),                               // 8: pb.SourcedPrice
+	(*SourcedPriceUpdate)(nil),                         // 9: pb.SourcedPriceUpdate
+	(*SourcedFeeRate)(nil),                             // 10: pb.SourcedFeeRate
+	(*SourcedFeeRateUpdate)(nil),                       // 11: pb.SourcedFeeRateUpdate
+	(*NodeOracleUpdate)(nil),                           // 12: pb.NodeOracleUpdate
+	(*TatankaForwardRelayResponse_ClientNotFound)(nil), // 13: pb.TatankaForwardRelayResponse.ClientNotFound
+	(*TatankaForwardRelayResponse_ClientRejected)(nil), // 14: pb.TatankaForwardRelayResponse.ClientRejected
+	(*DiscoveryResponse_Success)(nil),                  // 15: pb.DiscoveryResponse.Success
+	(*DiscoveryResponse_NotFound)(nil),                 // 16: pb.DiscoveryResponse.NotFound
+	(*WhitelistResponse_Success)(nil),                  // 17: pb.WhitelistResponse.Success
+	(*WhitelistResponse_Mismatch)(nil),                 // 18: pb.WhitelistResponse.Mismatch
 }
 var file_tatanka_pb_messages_proto_depIdxs = []int32{
 	12, // 0: pb.TatankaForwardRelayResponse.client_not_found:type_name -> pb.TatankaForwardRelayResponse.ClientNotFound
@@ -1205,7 +1285,7 @@ func file_tatanka_pb_messages_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_tatanka_pb_messages_proto_rawDesc), len(file_tatanka_pb_messages_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   18,
+			NumMessages:   19,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

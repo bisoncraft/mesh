@@ -28,6 +28,10 @@ const (
 	// oracleUpdatesTopicName is the name of the pubsub topic used to
 	// propagate oracle updates between tatanka nodes.
 	oracleUpdatesTopicName = "oracle_updates"
+
+	// clientBansTopicName is the name of the pubsub topic used to propagate
+	// client bans between tatanka nodes.
+	clientBansTopicName = "client_bans"
 )
 
 type clientConnectionUpdate struct {
@@ -72,11 +76,12 @@ type gossipSubCfg struct {
 	handleBroadcastMessage        func(msg *protocolsPb.PushMessage)
 	handleClientConnectionMessage func(update *clientConnectionUpdate)
 	handleOracleUpdate            func(update *pb.NodeOracleUpdate)
+	handleClientBanMessage        func(msg *pb.ClientBanMsg)
 }
 
 // gossipSub manages the nodes connection to a gossip sub network between tatanka
 // nodes. This network is used to gossip all client broadcast messages,
-// client connections, and oracle updates.
+// client connections, oracle updates, and client bans.
 type gossipSub struct {
 	log                    slog.Logger
 	ps                     *pubsub.PubSub
@@ -86,6 +91,7 @@ type gossipSub struct {
 	oracleUpdatesTopic     *pubsub.Topic
 	zstdEncoder            *zstd.Encoder
 	zstdDecoder            *zstd.Decoder
+	clientBansTopic        *pubsub.Topic
 }
 
 func newGossipSub(ctx context.Context, cfg *gossipSubCfg) (*gossipSub, error) {
@@ -122,6 +128,11 @@ func newGossipSub(ctx context.Context, cfg *gossipSubCfg) (*gossipSub, error) {
 		return nil, fmt.Errorf("failed to join oracle updates topic: %w", err)
 	}
 
+	clientBansTopic, err := ps.Join(clientBansTopicName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to join client bans topic: %w", err)
+	}
+
 	zstdEncoder, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedDefault))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create zstd encoder: %w", err)
@@ -141,6 +152,7 @@ func newGossipSub(ctx context.Context, cfg *gossipSubCfg) (*gossipSub, error) {
 		oracleUpdatesTopic:     oracleUpdatesTopic,
 		zstdEncoder:            zstdEncoder,
 		zstdDecoder:            zstdDecoder,
+		clientBansTopic:        clientBansTopic,
 	}, nil
 }
 
@@ -240,6 +252,33 @@ func (gs *gossipSub) listenForOracleUpdates(ctx context.Context) error {
 	}
 }
 
+func (gs *gossipSub) listenForClientBans(ctx context.Context) error {
+	sub, err := gs.clientBansTopic.Subscribe()
+	if err != nil {
+		return fmt.Errorf("failed to subscribe to client bans topic: %w", err)
+	}
+
+	for {
+		msg, err := sub.Next(ctx)
+		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				return nil
+			}
+			return err
+		}
+
+		if msg != nil {
+			banMsg := &pb.ClientBanMsg{}
+			if err := proto.Unmarshal(msg.Data, banMsg); err != nil {
+				gs.log.Errorf("Failed to unmarshal client ban message: %v", err)
+				continue
+			}
+
+			gs.cfg.handleClientBanMessage(banMsg)
+		}
+	}
+}
+
 func (gs *gossipSub) publishClientMessage(ctx context.Context, msg *protocolsPb.PushMessage) error {
 	data, err := proto.Marshal(msg)
 	if err != nil {
@@ -268,6 +307,15 @@ func (gs *gossipSub) publishOracleUpdate(ctx context.Context, update *pb.NodeOra
 	return gs.oracleUpdatesTopic.Publish(ctx, compressed)
 }
 
+func (gs *gossipSub) publishClientBanMessage(ctx context.Context, msg *pb.ClientBanMsg) error {
+	data, err := proto.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("failed to marshal client ban message: %w", err)
+	}
+
+	return gs.clientBansTopic.Publish(ctx, data)
+}
+
 func (gs *gossipSub) run(ctx context.Context) error {
 	g, ctx := errgroup.WithContext(ctx)
 
@@ -286,6 +334,12 @@ func (gs *gossipSub) run(ctx context.Context) error {
 	g.Go(func() error {
 		err := gs.listenForOracleUpdates(ctx)
 		gs.log.Debug("Oracle updates listener stopped.")
+		return err
+	})
+
+	g.Go(func() error {
+		err := gs.listenForClientBans(ctx)
+		gs.log.Debug("Client bans listener stopped.")
 		return err
 	})
 

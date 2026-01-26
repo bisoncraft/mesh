@@ -12,6 +12,14 @@ message ClientConnectionMsg {
   int64 timestamp = 4;
 }
 
+// ClientBanMsg is used internally by tatanka nodes to share client ban information.
+message ClientBanMsg {
+  string ip = 1;           // banned client IP address
+  bytes reporter = 2;      // peer.ID of reporting node
+  uint32 total_penalties = 3;
+  int64 expiry = 4;
+}
+
 message TatankaForwardRelayRequest {
   bytes initiator_id = 1; // peer.ID serialized as bytes
   bytes counterparty_id = 2; // peer.ID serialized as bytes
