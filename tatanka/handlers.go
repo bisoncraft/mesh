@@ -61,6 +61,11 @@ func pbPeerInfoToLibp2p(pbPeer *protocolsPb.PeerInfo) (peer.AddrInfo, error) {
 // handleClientPush is called when the client opens a push stream to the node.
 func (t *TatankaNode) handleClientPush(s network.Stream) {
 	client := s.Conn().RemotePeer()
+	ip, err := getIPFromStream(s)
+	if err != nil {
+		t.log.Debugf("Failed to fetch client ip from stream: %v", err)
+		return
+	}
 
 	var success bool
 	defer func() {
@@ -72,6 +77,9 @@ func (t *TatankaNode) handleClientPush(s network.Stream) {
 	initialSubs := &protocolsPb.InitialSubscriptions{}
 	if err := codec.ReadLengthPrefixedMessage(s, initialSubs); err != nil {
 		t.log.Errorf("Failed to read initial subscriptions from client %s: %v", client.ShortString(), err)
+		if err := t.banManager.recordInfraction(ip, client, MalformedMessage); err != nil {
+			t.log.Errorf("Failed to record infraction: %v", err)
+		}
 		return
 	}
 
@@ -110,11 +118,18 @@ func (t *TatankaNode) handleClientSubscribe(s network.Stream) {
 	defer func() { _ = s.Close() }()
 
 	client := s.Conn().RemotePeer()
+	ip, err := getIPFromStream(s)
+	if err != nil {
+		t.log.Debugf("Failed to fetch client ip from stream: %v", err)
+		return
+	}
 
 	subscribeMessage := &protocolsPb.SubscribeRequest{}
 	if err := codec.ReadLengthPrefixedMessage(s, subscribeMessage); err != nil {
 		t.log.Debugf("Failed to read/unmarshal subscribe message from client %s: %v.", client.ShortString(), err)
-		// TODO: client sent invalid message, remove client?
+		if err := t.banManager.recordInfraction(ip, client, MalformedMessage); err != nil {
+			t.log.Errorf("Failed to record infraction: %v", err)
+		}
 		return
 	}
 
@@ -188,26 +203,61 @@ func (t *TatankaNode) handleClientPublish(s network.Stream) {
 	defer func() { _ = s.Close() }()
 
 	client := s.Conn().RemotePeer()
+	ip, err := getIPFromStream(s)
+	if err != nil {
+		t.log.Debugf("Failed to fetch client ip from stream: %v", err)
+		return
+	}
 
 	publishMessage := &protocolsPb.PublishRequest{}
 	if err := codec.ReadLengthPrefixedMessage(s, publishMessage); err != nil {
 		t.log.Debugf("Failed to read/unmarshal publish message from client %s: %v.", client.ShortString(), err)
-		// TODO: remove client?
+		if err := t.banManager.recordInfraction(ip, client, MalformedMessage); err != nil {
+			t.log.Errorf("Failed to record infraction: %v", err)
+		}
 		return
+	}
+
+	allowed, violation := t.broadcastRateLimiter.allowBroadcast(client)
+	if !allowed {
+		t.log.Warnf("Client %s rate limit exceeded, dropping broadcast to topic %s",
+			client.ShortString(), publishMessage.Topic)
+
+		if violation {
+			err = t.banManager.recordInfraction(ip, client, t.broadcastRateLimiter.getInfractionType(client))
+			if err != nil {
+				t.log.Errorf("Failed to record rate limit infraction: %v", err)
+			}
+		}
+		return
+	}
+
+	if strings.HasPrefix(publishMessage.Topic, clientBansTopicName) {
+		t.log.Warnf("Client %s attempted to publish to restricted client bans topic %s",
+			client.ShortString(), publishMessage.Topic)
+		err = t.banManager.recordInfraction(ip, client, NodeImpersonation)
+		if err != nil {
+			t.log.Errorf("Failed to record infraction: %v", err)
+			return
+		}
 	}
 
 	if strings.HasPrefix(publishMessage.Topic, oracle.PriceTopicPrefix) ||
 		strings.HasPrefix(publishMessage.Topic, oracle.FeeRateTopicPrefix) {
 		t.log.Warnf("Client %s attempted to publish to restricted oracle topic %s",
 			client.ShortString(), publishMessage.Topic)
-		return
+		err = t.banManager.recordInfraction(ip, client, NodeImpersonation)
+		if err != nil {
+			t.log.Errorf("Failed to record infraction: %v", err)
+			return
+		}
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 	defer cancel()
 
 	message := pbPushMessageBroadcast(publishMessage.Topic, publishMessage.Data, client)
-	err := t.gossipSub.publishClientMessage(ctx, message)
+	err = t.gossipSub.publishClientMessage(ctx, message)
 	if err != nil {
 		t.log.Errorf("Failed to publish client message: %w", err)
 	}
@@ -217,11 +267,18 @@ func (t *TatankaNode) handlePostBonds(s network.Stream) {
 	defer func() { _ = s.Close() }()
 
 	client := s.Conn().RemotePeer()
+	ip, err := getIPFromStream(s)
+	if err != nil {
+		t.log.Debugf("Failed to fetch client ip from stream: %v", err)
+		return
+	}
 
 	postBondMessage := &protocolsPb.PostBondRequest{}
 	if err := codec.ReadLengthPrefixedMessage(s, postBondMessage); err != nil {
 		t.log.Debugf("Failed to read/unmarshal post bond message from client %s: %v.", client.ShortString(), err)
-		// TODO: remove client?
+		if err := t.banManager.recordInfraction(ip, client, MalformedMessage); err != nil {
+			t.log.Errorf("Failed to record infraction: %v", err)
+		}
 		return
 	}
 
@@ -247,6 +304,11 @@ func (t *TatankaNode) handlePostBonds(s network.Stream) {
 			return
 		}
 		if !valid {
+			err = t.banManager.recordInfraction(ip, client, InvalidBond)
+			if err != nil {
+				t.log.Errorf("Failed to record infraction: %v", err)
+				return
+			}
 			sendInvalidBondIndex(uint32(i))
 			return
 		}
@@ -302,10 +364,18 @@ func (t *TatankaNode) handleClientRelayMessage(s network.Stream) {
 	defer func() { _ = s.Close() }()
 
 	client := s.Conn().RemotePeer()
+	ip, err := getIPFromStream(s)
+	if err != nil {
+		t.log.Debugf("Failed to fetch client ip from stream: %v", err)
+		return
+	}
 
 	requestMessage := &protocolsPb.ClientRelayMessageRequest{}
 	if err := codec.ReadLengthPrefixedMessage(s, requestMessage); err != nil {
 		t.log.Debugf("Failed to read/unmarshal relay message request from client %s: %v.", client.ShortString(), err)
+		if err := t.banManager.recordInfraction(ip, client, MalformedMessage); err != nil {
+			t.log.Errorf("Failed to record infraction: %v", err)
+		}
 		return
 	}
 

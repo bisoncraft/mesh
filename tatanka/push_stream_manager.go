@@ -6,11 +6,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/bisoncraft/mesh/codec"
+	protocolsPb "github.com/bisoncraft/mesh/protocols/pb"
 	"github.com/decred/slog"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
-	"github.com/bisoncraft/mesh/codec"
-	protocolsPb "github.com/bisoncraft/mesh/protocols/pb"
+	ma "github.com/multiformats/go-multiaddr"
 )
 
 const (

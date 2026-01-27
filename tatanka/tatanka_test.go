@@ -1096,8 +1096,10 @@ func TestClientSubscriptionAndBroadcast(t *testing.T) {
 
 	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 
-	// Run 100 iterations of random publish/receive
-	for iteration := 0; iteration < 100; iteration++ {
+	// Run 20 iterations of random publish/receive with sufficient delay to avoid rate limiting.
+	// Rate limiter allows 4 messages/sec per client with burst of 8.
+	// With 6 clients and random publisher selection, 250ms delay ensures we stay within limits.
+	for iteration := 0; iteration < 20; iteration++ {
 		// Randomly select a topic
 		var topic string
 		var subscribers []*testClient
@@ -1148,8 +1150,8 @@ func TestClientSubscriptionAndBroadcast(t *testing.T) {
 				iteration, subscriber.host.ID().ShortString(), topic)
 		}
 
-		// Small delay between iterations
-		time.Sleep(50 * time.Millisecond)
+		// Delay between iterations to stay within rate limits (4 msgs/sec per client)
+		time.Sleep(250 * time.Millisecond)
 	}
 
 	// Terminate clients.

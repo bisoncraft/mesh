@@ -4,12 +4,13 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
+	pb "github.com/bisoncraft/mesh/tatanka/pb"
 	"github.com/decred/slog"
 	"github.com/libp2p/go-libp2p/core/peer"
-	pb "github.com/martonp/tatanka-mesh/tatanka/pb"
 )
 
 type infractionType int
@@ -26,6 +27,23 @@ const (
 	maxInfractionPenalties    = 10
 	infractionRetentionPeriod = time.Hour
 )
+
+func infractionTypeString(it infractionType) string {
+	switch it {
+	case MalformedMessage:
+		return "sent malformed message"
+	case InvalidBond:
+		return "invalid bond"
+	case NodeImpersonation:
+		return "attempted to impersonate node"
+	case RateLimitViolation:
+		return "rate limit violation"
+	case RateLimitAbuse:
+		return "rate limit abuse"
+	default:
+		return "unknown infraction"
+	}
+}
 
 type infraction struct {
 	infractionType infractionType
@@ -65,6 +83,21 @@ func newBanManager(cfg *banManagerConfig) *banManager {
 	}
 }
 
+func infractionPenaltyAndDuration(it infractionType) (uint32, time.Duration, error) {
+	switch it {
+	case MalformedMessage, InvalidBond:
+		return 1, infractionRetentionPeriod, nil
+	case NodeImpersonation:
+		return maxInfractionPenalties, infractionRetentionPeriod * 24, nil
+	case RateLimitViolation:
+		return 2, infractionRetentionPeriod * 2, nil
+	case RateLimitAbuse:
+		return 5, infractionRetentionPeriod * 6, nil
+	default:
+		return 0, 0, fmt.Errorf("unexpected infraction type provided %v", it)
+	}
+}
+
 func (bm *banManager) recordInfraction(ip string, id peer.ID, infractionType infractionType) error {
 	bm.mtx.Lock()
 	defer bm.mtx.Unlock()
@@ -75,59 +108,31 @@ func (bm *banManager) recordInfraction(ip string, id peer.ID, infractionType inf
 
 	infractions := bm.clientInfractions[ip]
 
-	// TODO: add more infraction types and their penalties.
-	switch infractionType {
-	case MalformedMessage:
-		infractions = append(infractions,
-			infraction{
-				infractionType: infractionType,
-				penalty:        1,
-				expiry:         bm.cfg.now().Add(infractionRetentionPeriod),
-			})
-	case InvalidBond:
-		infractions = append(infractions,
-			infraction{
-				infractionType: infractionType,
-				penalty:        1,
-				expiry:         bm.cfg.now().Add(infractionRetentionPeriod),
-			})
-	case NodeImpersonation:
-		infractions = append(infractions,
-			infraction{
-				infractionType: infractionType,
-				penalty:        maxInfractionPenalties,
-				expiry:         bm.cfg.now().Add(infractionRetentionPeriod * 24),
-			})
-	case RateLimitViolation:
-		infractions = append(infractions,
-			infraction{
-				infractionType: infractionType,
-				penalty:        2,
-				expiry:         bm.cfg.now().Add(infractionRetentionPeriod * 2),
-			})
-	case RateLimitAbuse:
-		infractions = append(infractions,
-			infraction{
-				infractionType: infractionType,
-				penalty:        5,
-				expiry:         bm.cfg.now().Add(infractionRetentionPeriod * 6),
-			})
-	default:
-		return fmt.Errorf("unexpected infraction type provided %T", infractionType)
+	penalty, duration, err := infractionPenaltyAndDuration(infractionType)
+	if err != nil {
+		return err
 	}
+
+	infractions = append(infractions, infraction{
+		infractionType: infractionType,
+		penalty:        penalty,
+		expiry:         bm.cfg.now().Add(duration),
+	})
 
 	bm.clientInfractions[ip] = infractions
 
+	now := bm.cfg.now()
 	var penalties uint32
 	for _, inf := range infractions {
-		penalties += inf.penalty
+		if !inf.expiry.Before(now) {
+			penalties += inf.penalty
+		}
 	}
 
 	// Disconnect the client once it meets or exceeds the maximum infraction penalties.
 	if penalties >= maxInfractionPenalties {
 		bm.cfg.disconnectClient(ip)
 
-		now := bm.cfg.now()
 		reporterBytes, err := bm.cfg.nodeID.Marshal()
 		if err != nil {
 			return fmt.Errorf("failed to marshal node ID for client ban: %v", err)
@@ -283,6 +288,36 @@ func (bm *banManager) isClientBanned(ip string) bool {
 	}
 
 	return false
+}
+
+func (bm *banManager) getClientBanReason(ip string) string {
+	bm.mtx.RLock()
+	defer bm.mtx.RUnlock()
+
+	now := bm.cfg.now()
+
+	if infractions, ok := bm.clientInfractions[ip]; ok {
+		var penalties uint32
+		var reasons []string
+		for _, inf := range infractions {
+			if !inf.expiry.Before(now) {
+				penalties += inf.penalty
+				reasons = append(reasons, infractionTypeString(inf.infractionType))
+			}
+		}
+
+		if penalties >= maxInfractionPenalties {
+			return strings.Join(reasons, ", ")
+		}
+	}
+
+	if rb, ok := bm.remoteBans[ip]; ok {
+		if !rb.expiry.Before(now) {
+			return "banned by remote node"
+		}
+	}
+
+	return ""
 }
 
 func (bm *banManager) run(ctx context.Context) {

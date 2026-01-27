@@ -92,7 +92,7 @@ func (rl *broadcastRateLimiter) allowBroadcast(client peer.ID) (bool, bool) {
 }
 
 func (rl *broadcastRateLimiter) recordViolation(bucket *clientBucket, now time.Time) bool {
-	if now.Sub(bucket.lastViolation) > violationWindowDuration {
+	if now.Sub(bucket.lastViolation) >= violationWindowDuration {
 		bucket.violations = 0
 	}
 
@@ -127,7 +127,8 @@ func (rl *broadcastRateLimiter) cleanup() {
 	cutoff := now.Add(-violationWindowDuration)
 
 	for client, bucket := range rl.clientBuckets {
-		if bucket.lastViolation.Before(cutoff) && bucket.violations == 0 {
+		// Delete if inactive (no broadcast attempts) OR violation window fully expired
+		if bucket.lastRefillTime.Before(cutoff) || !bucket.lastViolation.After(cutoff) {
 			delete(rl.clientBuckets, client)
 		}
 	}

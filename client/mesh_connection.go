@@ -25,6 +25,7 @@ const (
 
 var (
 	errInvalidBondIndex = errors.New("invalid bond index")
+	errUnauthorized     = errors.New("unauthorized")
 )
 
 // meshConnection represents a connection to a mesh peer.
@@ -176,7 +177,7 @@ func (m *meshConnection) postBondInternal(ctx context.Context, req *protocolsPb.
 
 	switch v := resp.Response.(type) {
 	case *protocolsPb.Response_Error:
-		switch v.Error.GetError().(type) {
+		switch rErr := v.Error.GetError().(type) {
 		case *protocolsPb.Error_PostBondError:
 			bondErr := v.Error.GetPostBondError()
 			err := m.bondInfo.RemoveBondAtIndex(bondErr.InvalidBondIndex)
@@ -191,8 +192,11 @@ func (m *meshConnection) postBondInternal(ctx context.Context, req *protocolsPb.
 			errMsg := v.Error.GetMessage()
 			return fmt.Errorf("%s: %v", hostID, errMsg)
 
+		case *protocolsPb.Error_Unauthorized:
+			return errUnauthorized
+
 		default:
-			return fmt.Errorf("%s: unknown error type %T", hostID, v)
+			return fmt.Errorf("%s: unknown error type %T", hostID, rErr)
 		}
 
 	case *protocolsPb.Response_PostBondResponse:
@@ -208,7 +212,7 @@ func (m *meshConnection) postBondInternal(ctx context.Context, req *protocolsPb.
 // postBond posts the connection's bond, retrying on invalid bond index errors. This needs to be
 // called before the connection's push stream is established.
 func (m *meshConnection) postBond(ctx context.Context) error {
-	hostID := m.host.ID()
+	hostID := m.host.ID().ShortString()
 	for range maxPostBondRetries {
 		req, err := bond.PostBondReqFromBondInfo(m.bondInfo)
 		if err != nil {
@@ -224,6 +228,9 @@ func (m *meshConnection) postBond(ctx context.Context) error {
 		case errors.Is(err, errInvalidBondIndex):
 			// Retry if an invalid bond index error is returned.
 			continue
+
+		case errors.Is(err, errUnauthorized):
+			return err
 
 		case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
 			return fmt.Errorf("%s: post bond retry cancelled due to context: %w", hostID, err)

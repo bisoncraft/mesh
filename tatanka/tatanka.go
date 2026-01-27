@@ -14,15 +14,16 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/bisoncraft/mesh/oracle"
+	"github.com/bisoncraft/mesh/protocols"
+	protocolsPb "github.com/bisoncraft/mesh/protocols/pb"
+	"github.com/bisoncraft/mesh/tatanka/admin"
+	pb "github.com/bisoncraft/mesh/tatanka/pb"
 	"github.com/decred/slog"
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
-	"github.com/bisoncraft/mesh/oracle"
-	"github.com/bisoncraft/mesh/protocols"
-	protocolsPb "github.com/bisoncraft/mesh/protocols/pb"
-	"github.com/bisoncraft/mesh/tatanka/admin"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
@@ -80,16 +81,18 @@ type Oracle interface {
 
 // TatankaNode is a permissioned node in the tatanka mesh
 type TatankaNode struct {
-	config       *Config
-	node         host.Host
-	log          slog.Logger
-	whitelist    atomic.Value // *whitelist
-	readyCh      chan struct{}
-	readyOnce    sync.Once
-	readyErr     atomic.Value // error
-	privateKey   crypto.PrivKey
-	bondVerifier *bondVerifier
-	bondStorage  bondStorage
+	config               *Config
+	node                 host.Host
+	log                  slog.Logger
+	whitelist            atomic.Value // *whitelist
+	readyCh              chan struct{}
+	readyOnce            sync.Once
+	readyErr             atomic.Value // error
+	privateKey           crypto.PrivKey
+	bondVerifier         *bondVerifier
+	bondStorage          bondStorage
+	banManager           *banManager
+	broadcastRateLimiter *broadcastRateLimiter
 
 	gossipSub               *gossipSub
 	clientConnectionManager *clientConnectionManager
@@ -153,6 +156,14 @@ func (t *TatankaNode) handleClientConnectionMessage(update *clientConnectionUpda
 	t.clientConnectionManager.updateClientConnectionInfo(update)
 }
 
+func (t *TatankaNode) handleClientBanMessage(msg *pb.ClientBanMsg) {
+	err := t.banManager.recordRemoteBan(msg)
+	if err != nil {
+		t.log.Errorf("Failed to record remote ban: %v", err)
+		return
+	}
+}
+
 // Run starts the tatanka node and blocks until the context is done.
 func (t *TatankaNode) Run(ctx context.Context) error {
 	wg := sync.WaitGroup{}
@@ -192,6 +203,7 @@ func (t *TatankaNode) Run(ctx context.Context) error {
 		handleBroadcastMessage:        t.handleBroadcastMessage,
 		handleClientConnectionMessage: t.handleClientConnectionMessage,
 		handleOracleUpdate:            t.handleOracleUpdate,
+		handleClientBanMessage:        t.handleClientBanMessage,
 	})
 	if err != nil {
 		t.markReady(err)
@@ -223,6 +235,20 @@ func (t *TatankaNode) Run(ctx context.Context) error {
 			return fmt.Errorf("failed to create oracle: %v", err)
 		}
 	}
+
+	t.banManager = newBanManager(&banManagerConfig{
+		disconnectClient: t.pushStreamManager.disconnectClientByIP,
+		nodeID:           t.node.ID(),
+		publishBan:       t.gossipSub.publishClientBanMessage,
+		now:              time.Now,
+		log:              t.config.Logger,
+	})
+
+	t.broadcastRateLimiter = newBroadcastRateLimiter(&rateLimitConfig{
+		recordInfraction: t.banManager.recordInfraction,
+		now:              time.Now,
+		log:              t.config.Logger,
+	})
 
 	// Create admin callback function and setup the admin server if configured.
 	adminCallback := func(peerID peer.ID, connected bool, whitelistMismatch bool, addresses []string, peerWhitelist []string) {
@@ -289,6 +315,41 @@ func (t *TatankaNode) Run(ctx context.Context) error {
 			t.log.Errorf("Gossip sub failed: %v", err)
 		} else {
 			t.log.Infof("Gossip sub stopped.")
+		}
+	}()
+
+	// Run ban manager
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		t.banManager.run(ctx)
+	}()
+
+	// Run broadcast rate limiter
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		t.broadcastRateLimiter.run(ctx)
+	}()
+
+	// Periodic ban rebroadcast
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				activeBans := t.banManager.activeBans()
+				for _, ban := range activeBans {
+					if err := t.gossipSub.publishClientBanMessage(ctx, ban); err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, context.Canceled) {
+						t.log.Warnf("Failed to rebroadcast ban for IP %s: %v", ban.Ip, err)
+					}
+				}
+			}
 		}
 	}()
 
@@ -382,15 +443,22 @@ func getOrCreatePrivateKey(filePath string) (crypto.PrivKey, error) {
 }
 
 func (t *TatankaNode) setupStreamHandlers() {
-	t.setStreamHandler(protocols.PostBondsProtocol, t.handlePostBonds, requireNoPermission)
 	t.setStreamHandler(forwardRelayProtocol, t.handleForwardRelay, t.isWhitelistPeer)
-	t.setStreamHandler(protocols.ClientSubscribeProtocol, t.handleClientSubscribe, t.requireBonds)
-	t.setStreamHandler(protocols.ClientPublishProtocol, t.handleClientPublish, t.requireBonds)
-	t.setStreamHandler(protocols.ClientPushProtocol, t.handleClientPush, t.requireBonds)
-	t.setStreamHandler(protocols.ClientRelayMessageProtocol, t.handleClientRelayMessage, t.requireBonds)
-	t.setStreamHandler(protocols.AvailableMeshNodesProtocol, t.handleAvailableMeshNodes, t.requireBonds)
 	t.setStreamHandler(discoveryProtocol, t.handleDiscovery, t.isWhitelistPeer)
 	t.setStreamHandler(whitelistProtocol, t.handleWhitelist, t.isWhitelistPeer)
+
+	t.setStreamHandler(protocols.PostBondsProtocol, t.handlePostBonds,
+		requireAll(t.isClientBanned, requireNoPermission))
+	t.setStreamHandler(protocols.ClientSubscribeProtocol, t.handleClientSubscribe,
+		requireAll(t.isClientBanned, t.requireBonds))
+	t.setStreamHandler(protocols.ClientPublishProtocol, t.handleClientPublish,
+		requireAll(t.isClientBanned, t.requireBonds))
+	t.setStreamHandler(protocols.ClientPushProtocol, t.handleClientPush,
+		requireAll(t.isClientBanned, t.requireBonds))
+	t.setStreamHandler(protocols.ClientRelayMessageProtocol, t.handleClientRelayMessage,
+		requireAll(t.isClientBanned, t.requireBonds))
+	t.setStreamHandler(protocols.AvailableMeshNodesProtocol, t.handleAvailableMeshNodes,
+		requireAll(t.isClientBanned, t.requireBonds))
 }
 
 func (t *TatankaNode) setupObservability() {

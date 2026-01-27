@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"errors"
 	"math/rand/v2"
 	"sync"
 	"sync/atomic"
@@ -188,6 +189,13 @@ func (m *meshConnectionManager) connectToAvailableNode(ctx context.Context) (mes
 
 		result := m.connectToNode(ctx, peerID)
 		if result.connectErr != nil {
+			if errors.Is(result.connectErr, errUnauthorized) {
+				m.log.Infof("%s: unauthorized", peerID.ShortString())
+				errCh := make(chan error, 1)
+				errCh <- result.connectErr
+				return nil, errCh, false
+			}
+
 			m.log.Errorf("Connection to %s failed: %v", peerID.ShortString(), result.connectErr)
 			continue
 		}
@@ -220,10 +228,8 @@ func (m *meshConnectionManager) run(ctx context.Context) {
 			m.setPrimaryConnection(conn)
 			runErrCh = errCh
 		} else {
-			reconnectTimer.Reset(backoff)
-			backoff *= 2
-			if backoff > maxReconnectDelay {
-				backoff = maxReconnectDelay
+			if errCh != nil {
+				runErrCh = errCh
 			}
 		}
 	}
@@ -237,10 +243,18 @@ func (m *meshConnectionManager) run(ctx context.Context) {
 			refreshTimer.Reset(meshNodesRefreshInterval)
 		case <-reconnectTimer.C:
 			attemptConnect()
-		case <-runErrCh:
+		case err := <-runErrCh:
 			m.setPrimaryConnection(nil)
 			runErrCh = nil
-			attemptConnect()
+			if errors.Is(err, errUnauthorized) {
+				return
+			}
+
+			reconnectTimer.Reset(backoff)
+			backoff *= 2
+			if backoff > maxReconnectDelay {
+				backoff = maxReconnectDelay
+			}
 		}
 	}
 }
