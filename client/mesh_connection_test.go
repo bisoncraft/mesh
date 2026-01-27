@@ -61,18 +61,18 @@ func receiveWithTimeout[T any](t *testing.T, ch <-chan T, timeout time.Duration)
 		return msg
 	case <-time.After(timeout):
 		t.Fatalf("Timed out waiting for message after %v", timeout)
-		return *new(T) // unreachable
 	}
+	return *new(T) // unreachable
 }
 
-func randomPeerID() peer.ID {
+func randomPeerID(t *testing.T) peer.ID {
 	_, pub, err := crypto.GenerateKeyPair(crypto.Ed25519, -1)
 	if err != nil {
-		panic(err)
+		t.Fatalf("Failed to generate key pair: %v", err)
 	}
 	id, err := peer.IDFromPublicKey(pub)
 	if err != nil {
-		panic(err)
+		t.Fatalf("Failed to create peer ID: %v", err)
 	}
 	return id
 }
@@ -337,8 +337,8 @@ func TestMeshConnection_FetchAvailableMeshNodes(t *testing.T) {
 	h := newMeshConnHarness(t, nil)
 	defer h.cleanup()
 
-	peer1ID := randomPeerID()
-	peer2ID := randomPeerID()
+	peer1ID := randomPeerID(t)
+	peer2ID := randomPeerID(t)
 	addr1, _ := ma.NewMultiaddr("/ip4/127.0.0.1/tcp/4457")
 	addr2, _ := ma.NewMultiaddr("/ip4/127.0.0.1/tcp/4458")
 	addr3, _ := ma.NewMultiaddr("/ip4/127.0.0.1/tcp/4459")

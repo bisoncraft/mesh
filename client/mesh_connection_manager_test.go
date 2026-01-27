@@ -26,8 +26,8 @@ func TestMeshConnectionManagerFailover(t *testing.T) {
 	logBackend := slog.NewBackend(os.Stdout)
 	logger := logBackend.Logger("mesh-conn-manager-test")
 
-	node1ID := randomPeerID()
-	node2ID := randomPeerID()
+	node1ID := randomPeerID(t)
+	node2ID := randomPeerID(t)
 	node1Addr := ma.StringCast("/ip4/127.0.0.1/tcp/10001")
 	node2Addr := ma.StringCast("/ip4/127.0.0.1/tcp/10002")
 	node1Info := peer.AddrInfo{ID: node1ID, Addrs: []ma.Multiaddr{node1Addr}}

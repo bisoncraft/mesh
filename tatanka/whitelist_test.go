@@ -13,8 +13,8 @@ import (
 
 func TestWhitelistSaveLoad(t *testing.T) {
 	// Create test peer IDs and addresses
-	peerID1 := randomPeerID()
-	peerID2 := randomPeerID()
+	peerID1 := randomPeerID(t)
+	peerID2 := randomPeerID(t)
 
 	addr1, err := ma.NewMultiaddr("/ip4/127.0.0.1/tcp/1234")
 	if err != nil {

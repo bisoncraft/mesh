@@ -895,7 +895,7 @@ func TestWhitelistMismatch(t *testing.T) {
 			{ID: h1.ID(), Addrs: h1.Addrs()},
 			{ID: h2.ID(), Addrs: h2.Addrs()},
 			{ID: h3.ID(), Addrs: h3.Addrs()},
-			{ID: randomPeerID(), Addrs: nil},
+			{ID: randomPeerID(t), Addrs: nil},
 		},
 	}
 
@@ -936,14 +936,14 @@ func TestWhitelistMismatch(t *testing.T) {
 	}
 }
 
-func randomPeerID() peer.ID {
+func randomPeerID(t *testing.T) peer.ID {
 	_, pub, err := crypto.GenerateKeyPair(crypto.Ed25519, -1)
 	if err != nil {
-		panic(err)
+		t.Fatalf("Failed to generate key pair: %v", err)
 	}
 	id, err := peer.IDFromPublicKey(pub)
 	if err != nil {
-		panic(err)
+		t.Fatalf("Failed to create peer ID: %v", err)
 	}
 	return id
 }
@@ -975,7 +975,7 @@ func TestClientRelay(t *testing.T) {
 		_, _, clients := fullyConnectedMeshWithClients(ctx, t, 1, 1, func(i int) int { return 0 })
 		initiator := clients[0]
 
-		_, err := initiator.relayMessage(ctx, randomPeerID(), []byte("hi"))
+		_, err := initiator.relayMessage(ctx, randomPeerID(t), []byte("hi"))
 		if !errors.Is(err, errRelayNotFound) {
 			t.Fatalf("expected counterparty not found error, got %v", err)
 		}
