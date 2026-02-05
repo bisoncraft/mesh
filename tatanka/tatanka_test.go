@@ -166,6 +166,98 @@ func (t *tOracle) SetFeeRates(feeRates map[oracle.Network]*big.Int) {
 	t.feeRates = feeRates
 }
 
+// mockGossipSub mocks the gossipSub interface for testing.
+type mockGossipSub struct {
+	publishedMessages []*protocolsPb.PushMessage
+	publishError      error
+	mtx               sync.Mutex
+}
+
+func (m *mockGossipSub) publishClientMessage(ctx context.Context, msg *protocolsPb.PushMessage) error {
+	m.mtx.Lock()
+	defer m.mtx.Unlock()
+	if m.publishError != nil {
+		return m.publishError
+	}
+	m.publishedMessages = append(m.publishedMessages, msg)
+	return nil
+}
+
+func (m *mockGossipSub) getPublishedMessages() []*protocolsPb.PushMessage {
+	m.mtx.Lock()
+	defer m.mtx.Unlock()
+	msgs := make([]*protocolsPb.PushMessage, len(m.publishedMessages))
+	copy(msgs, m.publishedMessages)
+	return msgs
+}
+
+// mockBondVerifier mocks the bondVerifier interface for testing.
+type mockVerifyResult struct {
+	valid    bool
+	expiry   time.Time
+	strength uint32
+	err      error
+}
+
+type mockBondVerifier struct {
+	callCount     int
+	verifyResults []mockVerifyResult
+	mtx           sync.Mutex
+}
+
+func (m *mockBondVerifier) verifyBond(assetID uint32, bondID []byte, peerID peer.ID) (bool, time.Time, uint32, error) {
+	m.mtx.Lock()
+	defer m.mtx.Unlock()
+	if m.callCount >= len(m.verifyResults) {
+		return false, time.Time{}, 0, fmt.Errorf("unexpected call %d", m.callCount)
+	}
+	result := m.verifyResults[m.callCount]
+	m.callCount++
+	return result.valid, result.expiry, result.strength, result.err
+}
+
+func (m *mockBondVerifier) getCallCount() int {
+	m.mtx.Lock()
+	defer m.mtx.Unlock()
+	return m.callCount
+}
+
+// mockBondStorage with call tracking
+type mockBondStorageWithTracking struct {
+	totalStrength uint32
+	addBondsCalls []addBondsCall
+	mtx           sync.Mutex
+}
+
+type addBondsCall struct {
+	peerID peer.ID
+	bonds  []*bond.BondParams
+}
+
+func (m *mockBondStorageWithTracking) addBonds(peerID peer.ID, bonds []*bond.BondParams) uint32 {
+	m.mtx.Lock()
+	defer m.mtx.Unlock()
+	bondsCopy := make([]*bond.BondParams, len(bonds))
+	copy(bondsCopy, bonds)
+	m.addBondsCalls = append(m.addBondsCalls, addBondsCall{
+		peerID: peerID,
+		bonds:  bondsCopy,
+	})
+	return m.totalStrength
+}
+
+func (m *mockBondStorageWithTracking) bondStrength(peerID peer.ID) uint32 {
+	return m.totalStrength
+}
+
+func (m *mockBondStorageWithTracking) getAddBondsCalls() []addBondsCall {
+	m.mtx.Lock()
+	defer m.mtx.Unlock()
+	calls := make([]addBondsCall, len(m.addBondsCalls))
+	copy(calls, m.addBondsCalls)
+	return calls
+}
+
 func newTestNode(t *testing.T, ctx context.Context, h host.Host, dataDir string, whitelist *whitelist) *TatankaNode {
 	logBackend := slog.NewBackend(os.Stdout)
 	log := logBackend.Logger(h.ID().ShortString())
