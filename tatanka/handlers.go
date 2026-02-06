@@ -19,6 +19,10 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+const (
+	defaultTimeout = time.Second * 30
+)
+
 // libp2pPeerInfoToPb converts a peer.AddrInfo to a protocolsPb.PeerInfo.
 func libp2pPeerInfoToPb(peerInfo peer.AddrInfo) *protocolsPb.PeerInfo {
 	addrBytes := make([][]byte, len(peerInfo.Addrs))
@@ -91,8 +95,11 @@ func (t *TatankaNode) handleClientPush(s network.Stream) {
 }
 
 func (t *TatankaNode) publishClientSubscriptionEvent(client peer.ID, topic string, subscribed bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
+	defer cancel()
+
 	message := pbPushMessageSubscription(topic, client, subscribed)
-	err := t.gossipSub.publishClientMessage(context.Background(), message)
+	err := t.gossipSub.publishClientMessage(ctx, message)
 	if err != nil {
 		t.log.Errorf("Failed to publish subscription event: %v", err)
 	}
@@ -196,8 +203,11 @@ func (t *TatankaNode) handleClientPublish(s network.Stream) {
 		return
 	}
 
+	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
+	defer cancel()
+
 	message := pbPushMessageBroadcast(publishMessage.Topic, publishMessage.Data, client)
-	err := t.gossipSub.publishClientMessage(context.Background(), message)
+	err := t.gossipSub.publishClientMessage(ctx, message)
 	if err != nil {
 		t.log.Errorf("Failed to publish client message: %w", err)
 	}
@@ -257,7 +267,10 @@ func (t *TatankaNode) handlePostBonds(s network.Stream) {
 // relayMessageToCounterparty sends a relay message to a counterparty client and
 // returns the response payload or a protocol error.
 func (t *TatankaNode) relayMessageToCounterparty(counterpartyID, initiatorID peer.ID, message []byte) (respData []byte, protoErr *protocolsPb.Error, err error) {
-	counterpartyStream, err := t.node.NewStream(context.Background(), counterpartyID, protocols.TatankaRelayMessageProtocol)
+	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
+	defer cancel()
+
+	counterpartyStream, err := t.node.NewStream(ctx, counterpartyID, protocols.TatankaRelayMessageProtocol)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -340,8 +353,11 @@ func (t *TatankaNode) handleClientRelayMessage(s network.Stream) {
 		return
 	}
 
+	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
+	defer cancel()
+
 	tatankaPeer := tatankaPeers[0]
-	forwardStream, err := t.node.NewStream(context.Background(), tatankaPeer, forwardRelayProtocol)
+	forwardStream, err := t.node.NewStream(ctx, tatankaPeer, forwardRelayProtocol)
 	if err != nil {
 		t.log.Warnf("Failed to open forward relay stream to tatanka peer %s: %v", tatankaPeer.ShortString(), err)
 		writeResponse(pbClientRelayMessageErrorMessage("failed to contact counterparty node"))

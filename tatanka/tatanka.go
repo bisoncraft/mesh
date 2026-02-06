@@ -220,7 +220,7 @@ func (t *TatankaNode) Run(ctx context.Context) error {
 			PublishUpdate: t.gossipSub.publishOracleUpdate,
 		})
 		if err != nil {
-			return fmt.Errorf("Failed to create oracle: %v", err)
+			return fmt.Errorf("failed to create oracle: %v", err)
 		}
 	}
 

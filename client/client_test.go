@@ -147,7 +147,7 @@ func (c *Client) setTestMeshConnection(mc meshConn) {
 func TestSubscribe(t *testing.T) {
 	ctx := context.Background()
 
-	mc := newTMeshConnection(randomPeerID())
+	mc := newTMeshConnection(randomPeerID(t))
 
 	c := &Client{
 		cfg:           &Config{},
@@ -248,7 +248,7 @@ func TestPushMessage(t *testing.T) {
 	logBackend := slog.NewBackend(os.Stdout)
 	logger := logBackend.Logger("client_test")
 
-	mc := newTMeshConnection(randomPeerID())
+	mc := newTMeshConnection(randomPeerID(t))
 
 	c := &Client{
 		cfg:           &Config{Logger: logger},
@@ -381,7 +381,7 @@ func TestConcurrentBroadcasts(t *testing.T) {
 	logBackend := slog.NewBackend(os.Stdout)
 	logger := logBackend.Logger("client_test")
 
-	mc := newTMeshConnection(randomPeerID())
+	mc := newTMeshConnection(randomPeerID(t))
 
 	c := &Client{
 		cfg:           &Config{Logger: logger},
@@ -466,7 +466,7 @@ func TestConcurrentSubscribeUnsubscribe(t *testing.T) {
 	logBackend := slog.NewBackend(os.Stdout)
 	logger := logBackend.Logger("client_test")
 
-	mc := newTMeshConnection(randomPeerID())
+	mc := newTMeshConnection(randomPeerID(t))
 
 	c := &Client{
 		cfg:           &Config{Logger: logger},
@@ -574,7 +574,7 @@ func TestMalformedInput(t *testing.T) {
 	logBackend := slog.NewBackend(os.Stdout)
 	logger := logBackend.Logger("client_test")
 
-	mc := newTMeshConnection(randomPeerID())
+	mc := newTMeshConnection(randomPeerID(t))
 
 	c := &Client{
 		cfg:           &Config{Logger: logger},

@@ -10,7 +10,6 @@ import (
 	"github.com/decred/slog"
 
 	"github.com/martonp/tatanka-mesh/tatanka/pb"
-	tatankaPb "github.com/martonp/tatanka-mesh/tatanka/pb"
 )
 
 // fetcher returns either a list of price updates or a list of fee rate updates.
@@ -142,17 +141,17 @@ func randomDelay(maxDelay time.Duration) time.Duration {
 
 // --- Protobuf Helper Functions ---
 
-func pbNodePriceUpdate(update *SourcedPriceUpdate) *tatankaPb.NodeOracleUpdate {
-	pbPrices := make([]*tatankaPb.SourcedPrice, len(update.Prices))
+func pbNodePriceUpdate(update *SourcedPriceUpdate) *pb.NodeOracleUpdate {
+	pbPrices := make([]*pb.SourcedPrice, len(update.Prices))
 	for i, p := range update.Prices {
-		pbPrices[i] = &tatankaPb.SourcedPrice{
+		pbPrices[i] = &pb.SourcedPrice{
 			Ticker: string(p.Ticker),
 			Price:  p.Price,
 		}
 	}
-	return &tatankaPb.NodeOracleUpdate{
-		Update: &tatankaPb.NodeOracleUpdate_PriceUpdate{
-			PriceUpdate: &tatankaPb.SourcedPriceUpdate{
+	return &pb.NodeOracleUpdate{
+		Update: &pb.NodeOracleUpdate_PriceUpdate{
+			PriceUpdate: &pb.SourcedPriceUpdate{
 				Source:    update.Source,
 				Timestamp: update.Stamp.Unix(),
 				Prices:    pbPrices,
@@ -161,17 +160,17 @@ func pbNodePriceUpdate(update *SourcedPriceUpdate) *tatankaPb.NodeOracleUpdate {
 	}
 }
 
-func pbNodeFeeRateUpdate(update *SourcedFeeRateUpdate) *tatankaPb.NodeOracleUpdate {
-	pbFeeRates := make([]*tatankaPb.SourcedFeeRate, len(update.FeeRates))
+func pbNodeFeeRateUpdate(update *SourcedFeeRateUpdate) *pb.NodeOracleUpdate {
+	pbFeeRates := make([]*pb.SourcedFeeRate, len(update.FeeRates))
 	for i, fr := range update.FeeRates {
-		pbFeeRates[i] = &tatankaPb.SourcedFeeRate{
+		pbFeeRates[i] = &pb.SourcedFeeRate{
 			Network: string(fr.Network),
 			FeeRate: fr.FeeRate,
 		}
 	}
-	return &tatankaPb.NodeOracleUpdate{
-		Update: &tatankaPb.NodeOracleUpdate_FeeRateUpdate{
-			FeeRateUpdate: &tatankaPb.SourcedFeeRateUpdate{
+	return &pb.NodeOracleUpdate{
+		Update: &pb.NodeOracleUpdate_FeeRateUpdate{
+			FeeRateUpdate: &pb.SourcedFeeRateUpdate{
 				Source:    update.Source,
 				Timestamp: update.Stamp.Unix(),
 				FeeRates:  pbFeeRates,
