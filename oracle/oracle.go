@@ -4,11 +4,12 @@ import (
 	"context"
 	"math/big"
 	"net/http"
-	"slices"
 	"sync"
 	"time"
 
 	"github.com/decred/slog"
+	"github.com/bisoncraft/mesh/oracle/sources"
+	"github.com/bisoncraft/mesh/oracle/sources/providers"
 	"github.com/bisoncraft/mesh/tatanka/pb"
 )
 
@@ -80,18 +81,18 @@ type HTTPClient interface {
 }
 
 type Config struct {
-	Log           slog.Logger
-	CMCKey        string
-	TatumKey      string
-	CryptoApisKey string
-	HTTPClient    HTTPClient // Optional. If nil, http.DefaultClient is used.
-	PublishUpdate func(ctx context.Context, update *pb.NodeOracleUpdate) error
+	Log              slog.Logger
+	CMCKey           string
+	TatumKey         string
+	BlockcypherToken string
+	HTTPClient       HTTPClient // Optional. If nil, http.DefaultClient is used.
+	PublishUpdate    func(ctx context.Context, update *pb.NodeOracleUpdate) error
 }
 
 type Oracle struct {
-	log         slog.Logger
-	httpClient  HTTPClient
-	httpSources []*httpSource
+	log        slog.Logger
+	httpClient HTTPClient
+	srcs       []sources.Source
 
 	feeRatesMtx sync.RWMutex
 	feeRates    map[Network]map[string]*feeRateUpdate
@@ -105,57 +106,79 @@ type Oracle struct {
 	publishUpdate func(ctx context.Context, update *pb.NodeOracleUpdate) error
 }
 
+// priceUpdate is the internal message used for when a price update is fetched
+// or received from a source.
+type priceUpdate struct {
+	ticker Ticker
+	price  float64
+
+	// Added by Oracle loops
+	stamp  time.Time
+	weight float64
+}
+
+// feeRateUpdate is the internal message used for when a fee rate update is
+// fetched or received from a source.
+type feeRateUpdate struct {
+	network Network
+	feeRate *big.Int
+
+	// Added by Oracle loops
+	stamp  time.Time
+	weight float64
+}
+
 func New(cfg *Config) (*Oracle, error) {
-	httpSources := slices.Clone(unauthedHttpSources)
-
-	if cfg.CMCKey != "" {
-		httpSources = append(httpSources, coinmarketcapSource(cfg.CMCKey))
-	}
-
-	if cfg.TatumKey != "" {
-		httpSources = append(httpSources,
-			tatumBitcoinSource(cfg.TatumKey),
-			tatumLitecoinSource(cfg.TatumKey),
-			tatumDogecoinSource(cfg.TatumKey),
-		)
-	}
-
-	if cfg.CryptoApisKey != "" {
-		httpSources = append(httpSources,
-			cryptoApisBitcoinSource(cfg.CryptoApisKey),
-			cryptoApisBitcoinCashSource(cfg.CryptoApisKey),
-			cryptoApisDogecoinSource(cfg.CryptoApisKey),
-			cryptoApisDashSource(cfg.CryptoApisKey),
-			cryptoApisLitecoinSource(cfg.CryptoApisKey),
-		)
-	}
-
-	if err := setHTTPSourceDefaults(httpSources); err != nil {
-		return nil, err
-	}
-
 	httpClient := cfg.HTTPClient
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
 
+	// Add all sources that don't require an API key.
+	unlimitedSources := []sources.Source{
+		providers.NewDcrdataSource(httpClient, cfg.Log),
+		providers.NewMempoolDotSpaceSource(httpClient, cfg.Log),
+		providers.NewCoinpaprikaSource(httpClient, cfg.Log),
+		providers.NewBitcoreBitcoinCashSource(httpClient, cfg.Log),
+		providers.NewBitcoreDogecoinSource(httpClient, cfg.Log),
+		providers.NewBitcoreLitecoinSource(httpClient, cfg.Log),
+		providers.NewFiroOrgSource(httpClient, cfg.Log),
+	}
+	allSources := make([]sources.Source, 0, len(unlimitedSources))
+	allSources = append(allSources, unlimitedSources...)
+
+	if cfg.BlockcypherToken != "" {
+		blockcypherSource := providers.NewBlockcypherLitecoinSource(httpClient, cfg.Log, cfg.BlockcypherToken)
+		allSources = append(allSources, blockcypherSource)
+	}
+
+	if cfg.CMCKey != "" {
+		cmcSource := providers.NewCoinMarketCapSource(httpClient, cfg.Log, cfg.CMCKey)
+		allSources = append(allSources, cmcSource)
+	}
+
+	if cfg.TatumKey != "" {
+		tatumSources := providers.NewTatumSources(providers.TatumConfig{
+			HTTPClient: httpClient,
+			Log:        cfg.Log,
+			APIKey:     cfg.TatumKey,
+		})
+		allSources = append(allSources, tatumSources.All()...)
+	}
+
 	oracle := &Oracle{
 		log:           cfg.Log,
 		httpClient:    httpClient,
-		httpSources:   httpSources,
+		srcs:          allSources,
 		feeRates:      make(map[Network]map[string]*feeRateUpdate),
 		prices:        make(map[Ticker]map[string]*priceUpdate),
 		diviners:      make(map[string]*diviner),
 		publishUpdate: cfg.PublishUpdate,
 	}
 
-	for _, source := range httpSources {
-		src := source
-		fetcher := func(ctx context.Context) (any, error) {
-			return src.fetch(ctx, httpClient)
-		}
-		div := newDiviner(src.name, fetcher, src.weight, src.period, src.errPeriod, oracle.publishUpdate, oracle.log)
-		oracle.diviners[div.name] = div
+	for _, src := range allSources {
+		div := newDiviner(src, oracle.publishUpdate, oracle.log)
+		oracle.diviners[src.Name()] = div
 	}
 
 	return oracle, nil
@@ -371,7 +394,7 @@ func (o *Oracle) GetSourceWeight(sourceName string) float64 {
 	if !found {
 		return 1.0
 	}
-	return div.weight
+	return div.source.Weight()
 }
 
 // MergePrices merges prices from another oracle into this oracle.

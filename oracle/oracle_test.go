@@ -1424,8 +1424,8 @@ func TestGetSourceWeight(t *testing.T) {
 	log := backend.Logger("test")
 
 	t.Run("returns weight for existing source", func(t *testing.T) {
-		div1 := &diviner{name: "source1", weight: 0.8}
-		div2 := &diviner{name: "source2", weight: 0.5}
+		div1 := &diviner{source: &mockSource{name: "source1", weight: 0.8}}
+		div2 := &diviner{source: &mockSource{name: "source2", weight: 0.5}}
 
 		oracle := &Oracle{
 			log:      log,
@@ -1477,7 +1477,7 @@ func TestRescheduleDiviner(t *testing.T) {
 
 	t.Run("reschedules existing diviner", func(t *testing.T) {
 		mockDiv := &diviner{
-			name:       "test-source",
+			source:     &mockSource{name: "test-source"},
 			resetTimer: make(chan struct{}, 1),
 		}
 
@@ -1552,7 +1552,7 @@ func TestRun(t *testing.T) {
 		mockDiviners := make(map[string]*diviner)
 		for i := 0; i < 2; i++ {
 			name := fmt.Sprintf("source%d", i)
-			mockDiviners[name] = &diviner{name: name}
+			mockDiviners[name] = &diviner{source: &mockSource{name: name, minPeriod: time.Hour}}
 		}
 
 		oracle := &Oracle{
