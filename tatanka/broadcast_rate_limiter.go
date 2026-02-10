@@ -46,13 +46,12 @@ func newBroadcastRateLimiter(cfg *rateLimitConfig) *broadcastRateLimiter {
 	}
 }
 
-func (rl *broadcastRateLimiter) allowBroadcast(client peer.ID) (bool, bool) {
+func (rl *broadcastRateLimiter) allowBroadcast(client peer.ID) (bool, infractionType) {
 	rl.mtx.Lock()
 	defer rl.mtx.Unlock()
 
 	now := rl.cfg.now()
 
-	var allowed, recordViolation bool
 	bucket, exists := rl.clientBuckets[client]
 	if !exists {
 		bucket = &clientBucket{
@@ -63,10 +62,7 @@ func (rl *broadcastRateLimiter) allowBroadcast(client peer.ID) (bool, bool) {
 		rl.clientBuckets[client] = bucket
 		bucket.tokens--
 
-		allowed = true
-		recordViolation = false
-
-		return allowed, recordViolation
+		return true, 0
 	}
 
 	// Refill tokens based on elapsed time
@@ -77,18 +73,20 @@ func (rl *broadcastRateLimiter) allowBroadcast(client peer.ID) (bool, bool) {
 
 	if bucket.tokens >= 1.0 {
 		bucket.tokens--
-
-		allowed = true
-		recordViolation = false
-
-		return allowed, recordViolation
+		return true, 0
 	}
 
 	// Rate limit violation
-	allowed = false
-	recordViolation = rl.recordViolation(bucket, now)
+	shouldRecord := rl.recordViolation(bucket, now)
+	if !shouldRecord {
+		return false, 0
+	}
 
-	return allowed, recordViolation
+	if bucket.violations >= abuseThreshold {
+		return false, RateLimitAbuse
+	}
+
+	return false, RateLimitViolation
 }
 
 func (rl *broadcastRateLimiter) recordViolation(bucket *clientBucket, now time.Time) bool {
@@ -103,22 +101,6 @@ func (rl *broadcastRateLimiter) recordViolation(bucket *clientBucket, now time.T
 	return bucket.violations > uint32(warningThreshold)
 }
 
-func (rl *broadcastRateLimiter) getInfractionType(client peer.ID) infractionType {
-	rl.mtx.RLock()
-	defer rl.mtx.RUnlock()
-
-	bucket, exists := rl.clientBuckets[client]
-	if !exists {
-		return RateLimitViolation
-	}
-
-	if bucket.violations >= abuseThreshold {
-		return RateLimitAbuse
-	}
-
-	return RateLimitViolation
-}
-
 func (rl *broadcastRateLimiter) cleanup() {
 	rl.mtx.Lock()
 	defer rl.mtx.Unlock()
@@ -127,8 +109,7 @@ func (rl *broadcastRateLimiter) cleanup() {
 	cutoff := now.Add(-violationWindowDuration)
 
 	for client, bucket := range rl.clientBuckets {
-		// Delete if inactive (no broadcast attempts) OR violation window fully expired
-		if bucket.lastRefillTime.Before(cutoff) || !bucket.lastViolation.After(cutoff) {
+		if bucket.lastRefillTime.Before(cutoff) && bucket.lastViolation.Before(cutoff) {
 			delete(rl.clientBuckets, client)
 		}
 	}

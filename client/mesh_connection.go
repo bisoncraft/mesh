@@ -135,7 +135,20 @@ func (m *meshConnection) broadcast(ctx context.Context, topic string, data []byt
 		Topic: topic,
 		Data:  data,
 	}
-	return codec.WriteLengthPrefixedMessage(s, req)
+	if err := codec.WriteLengthPrefixedMessage(s, req); err != nil {
+		return fmt.Errorf("failed to send publish request: %w", err)
+	}
+
+	resp := &protocolsPb.Response{}
+	if err := codec.ReadLengthPrefixedMessage(s, resp); err != nil {
+		return fmt.Errorf("failed to read publish response: %w", err)
+	}
+
+	if respErr := resp.GetError(); respErr != nil {
+		return fmt.Errorf("publish failed: %s", respErr.GetMessage())
+	}
+
+	return nil
 }
 
 // unsubscribe unsubscribes from the provided topic.

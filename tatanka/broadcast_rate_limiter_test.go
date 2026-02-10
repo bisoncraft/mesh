@@ -136,15 +136,15 @@ func TestViolationCounting(t *testing.T) {
 
 	// First 3 violations should not record infractions (warning threshold = 3)
 	for i := 0; i < 3; i++ {
-		_, shouldRecord := limiter.allowBroadcast(clientID)
-		if shouldRecord {
+		_, infractionType := limiter.allowBroadcast(clientID)
+		if infractionType != 0 {
 			t.Fatalf("Violation %d should not record infraction yet", i+1)
 		}
 	}
 
 	// 4th violation should record infraction
-	_, shouldRecord := limiter.allowBroadcast(clientID)
-	if !shouldRecord {
+	_, infractionType := limiter.allowBroadcast(clientID)
+	if infractionType == 0 {
 		t.Fatalf("Violation 4 should record infraction")
 	}
 }
@@ -223,14 +223,14 @@ func TestViolationAbuseThreshold(t *testing.T) {
 	}
 
 	// Record violations to reach severe abuse threshold (10 violations)
+	var lastInfractionType infractionType
 	for i := 0; i < 10; i++ {
-		limiter.allowBroadcast(clientID)
+		_, lastInfractionType = limiter.allowBroadcast(clientID)
 	}
 
 	// Check the infraction type
-	infractionType := limiter.getInfractionType(clientID)
-	if infractionType != RateLimitAbuse {
-		t.Fatalf("Expected SevereRateLimitAbuse at 10 violations, got %v", infractionType)
+	if lastInfractionType != RateLimitAbuse {
+		t.Fatalf("Expected RateLimitAbuse at 10 violations, got %v", lastInfractionType)
 	}
 
 	// Test that at 9 violations it's still normal violation
@@ -248,12 +248,11 @@ func TestViolationAbuseThreshold(t *testing.T) {
 
 	// Record 9 violations
 	for i := 0; i < 9; i++ {
-		limiter2.allowBroadcast(clientID)
+		_, lastInfractionType = limiter2.allowBroadcast(clientID)
 	}
 
-	infractionType = limiter2.getInfractionType(clientID)
-	if infractionType != RateLimitViolation {
-		t.Fatalf("Expected RateLimitViolation at 9 violations, got %v", infractionType)
+	if lastInfractionType != RateLimitViolation {
+		t.Fatalf("Expected RateLimitViolation at 9 violations, got %v", lastInfractionType)
 	}
 }
 
@@ -271,11 +270,11 @@ func TestNewClientFirstBroadcast(t *testing.T) {
 	clientID := generateTestPeerID(t)
 
 	// First broadcast for any client should be allowed
-	allowed, shouldRecord := limiter.allowBroadcast(clientID)
+	allowed, infractionType := limiter.allowBroadcast(clientID)
 	if !allowed {
 		t.Fatalf("First broadcast for new client should be allowed")
 	}
-	if shouldRecord {
+	if infractionType != 0 {
 		t.Fatalf("First broadcast should not record infraction")
 	}
 }
