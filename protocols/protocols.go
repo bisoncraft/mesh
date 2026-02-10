@@ -34,3 +34,10 @@ const (
 	// tatanka nodes in the mesh that this node is connected to.
 	AvailableMeshNodesProtocol = "/tatanka/available-mesh-nodes/1.0.0"
 )
+
+var (
+	// PriceTopicPrefix is the prefix for price topics.
+	PriceTopicPrefix = "price."
+	// FeeRateTopicPrefix is the prefix for fee rate topics.
+	FeeRateTopicPrefix = "fee_rate."
+)

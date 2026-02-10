@@ -20,7 +20,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/bisoncraft/mesh/bond"
 	tmc "github.com/bisoncraft/mesh/client"
-	"github.com/bisoncraft/mesh/oracle"
+	"github.com/bisoncraft/mesh/protocols"
 	protocolsPb "github.com/bisoncraft/mesh/protocols/pb"
 	"google.golang.org/protobuf/proto"
 )
@@ -430,14 +430,14 @@ func (c *Client) Run(ctx context.Context, bonds []*bond.BondParams) {
 
 // decodeTopicData decodes topic data to a human-readable string.
 func decodeTopicData(topic string, data []byte) string {
-	if strings.HasPrefix(topic, oracle.PriceTopicPrefix) {
-		ticker := topic[len(oracle.PriceTopicPrefix):]
+	if strings.HasPrefix(topic, protocols.PriceTopicPrefix) {
+		ticker := topic[len(protocols.PriceTopicPrefix):]
 		var priceUpdate protocolsPb.ClientPriceUpdate
 		if err := proto.Unmarshal(data, &priceUpdate); err == nil {
 			return fmt.Sprintf("%s: $%.2f", ticker, priceUpdate.Price)
 		}
-	} else if strings.HasPrefix(topic, oracle.FeeRateTopicPrefix) {
-		network := topic[len(oracle.FeeRateTopicPrefix):]
+	} else if strings.HasPrefix(topic, protocols.FeeRateTopicPrefix) {
+		network := topic[len(protocols.FeeRateTopicPrefix):]
 		var feeRateUpdate protocolsPb.ClientFeeRateUpdate
 		if err := proto.Unmarshal(data, &feeRateUpdate); err == nil {
 			feeRate := new(big.Int).SetBytes(feeRateUpdate.FeeRate)

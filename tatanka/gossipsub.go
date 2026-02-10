@@ -10,6 +10,8 @@ import (
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/bisoncraft/mesh/oracle"
+	"github.com/bisoncraft/mesh/oracle/sources"
 	protocolsPb "github.com/bisoncraft/mesh/protocols/pb"
 	pb "github.com/bisoncraft/mesh/tatanka/pb"
 	"golang.org/x/sync/errgroup"
@@ -28,6 +30,10 @@ const (
 	// oracleUpdatesTopicName is the name of the pubsub topic used to
 	// propagate oracle updates between tatanka nodes.
 	oracleUpdatesTopicName = "oracle_updates"
+
+	// quotaHeartbeatTopicName is the name of the pubsub topic used to
+	// periodically share quota information between tatanka nodes.
+	quotaHeartbeatTopicName = "quota_heartbeat"
 )
 
 type clientConnectionUpdate struct {
@@ -71,7 +77,8 @@ type gossipSubCfg struct {
 	getWhitelistPeers             func() map[peer.ID]struct{}
 	handleBroadcastMessage        func(msg *protocolsPb.PushMessage)
 	handleClientConnectionMessage func(update *clientConnectionUpdate)
-	handleOracleUpdate            func(update *pb.NodeOracleUpdate)
+	handleOracleUpdate            func(senderID peer.ID, update *pb.NodeOracleUpdate)
+	handleQuotaHeartbeat          func(senderID peer.ID, heartbeat *pb.QuotaHandshake)
 }
 
 // gossipSub manages the nodes connection to a gossip sub network between tatanka
@@ -84,6 +91,7 @@ type gossipSub struct {
 	clientMessageTopic     *pubsub.Topic
 	clientConnectionsTopic *pubsub.Topic
 	oracleUpdatesTopic     *pubsub.Topic
+	quotaHeartbeatTopic    *pubsub.Topic
 	zstdEncoder            *zstd.Encoder
 	zstdDecoder            *zstd.Decoder
 }
@@ -122,6 +130,11 @@ func newGossipSub(ctx context.Context, cfg *gossipSubCfg) (*gossipSub, error) {
 		return nil, fmt.Errorf("failed to join oracle updates topic: %w", err)
 	}
 
+	quotaHeartbeatTopic, err := ps.Join(quotaHeartbeatTopicName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to join quota heartbeat topic: %w", err)
+	}
+
 	zstdEncoder, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedDefault))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create zstd encoder: %w", err)
@@ -139,6 +152,7 @@ func newGossipSub(ctx context.Context, cfg *gossipSubCfg) (*gossipSub, error) {
 		clientMessageTopic:     clientMessageTopic,
 		clientConnectionsTopic: clientConnectionsTopic,
 		oracleUpdatesTopic:     oracleUpdatesTopic,
+		quotaHeartbeatTopic:    quotaHeartbeatTopic,
 		zstdEncoder:            zstdEncoder,
 		zstdDecoder:            zstdDecoder,
 	}, nil
@@ -235,7 +249,7 @@ func (gs *gossipSub) listenForOracleUpdates(ctx context.Context) error {
 				continue
 			}
 
-			gs.cfg.handleOracleUpdate(oracleUpdate)
+			gs.cfg.handleOracleUpdate(msg.GetFrom(), oracleUpdate)
 		}
 	}
 }
@@ -257,8 +271,13 @@ func (gs *gossipSub) publishClientConnectionMessage(ctx context.Context, msg *cl
 	return gs.clientConnectionsTopic.Publish(ctx, data)
 }
 
-func (gs *gossipSub) publishOracleUpdate(ctx context.Context, update *pb.NodeOracleUpdate) error {
-	data, err := proto.Marshal(update)
+func (gs *gossipSub) publishOracleUpdate(ctx context.Context, update *oracle.OracleUpdate) error {
+	pbUpdate, err := oracleUpdateToPb(update)
+	if err != nil {
+		return err
+	}
+
+	data, err := proto.Marshal(pbUpdate)
 	if err != nil {
 		return fmt.Errorf("failed to marshal oracle update: %w", err)
 	}
@@ -266,6 +285,43 @@ func (gs *gossipSub) publishOracleUpdate(ctx context.Context, update *pb.NodeOra
 	compressed := gs.zstdEncoder.EncodeAll(data, nil)
 
 	return gs.oracleUpdatesTopic.Publish(ctx, compressed)
+}
+
+func (gs *gossipSub) listenForQuotaHeartbeats(ctx context.Context) error {
+	sub, err := gs.quotaHeartbeatTopic.Subscribe()
+	if err != nil {
+		return fmt.Errorf("failed to subscribe to quota heartbeat topic: %w", err)
+	}
+
+	for {
+		msg, err := sub.Next(ctx)
+		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				return nil
+			}
+			return err
+		}
+
+		if msg != nil && gs.cfg.handleQuotaHeartbeat != nil {
+			heartbeat := &pb.QuotaHandshake{}
+			if err := proto.Unmarshal(msg.Data, heartbeat); err != nil {
+				gs.log.Errorf("Failed to unmarshal quota heartbeat: %v", err)
+				continue
+			}
+			gs.cfg.handleQuotaHeartbeat(msg.GetFrom(), heartbeat)
+		}
+	}
+}
+
+func (gs *gossipSub) publishQuotaHeartbeat(ctx context.Context, quotas map[string]*sources.QuotaStatus) error {
+	heartbeat := &pb.QuotaHandshake{
+		Quotas: quotaStatusesToPb(quotas),
+	}
+	data, err := proto.Marshal(heartbeat)
+	if err != nil {
+		return fmt.Errorf("failed to marshal quota heartbeat: %w", err)
+	}
+	return gs.quotaHeartbeatTopic.Publish(ctx, data)
 }
 
 func (gs *gossipSub) run(ctx context.Context) error {
@@ -286,6 +342,12 @@ func (gs *gossipSub) run(ctx context.Context) error {
 	g.Go(func() error {
 		err := gs.listenForOracleUpdates(ctx)
 		gs.log.Debug("Oracle updates listener stopped.")
+		return err
+	})
+
+	g.Go(func() error {
+		err := gs.listenForQuotaHeartbeats(ctx)
+		gs.log.Debug("Quota heartbeat listener stopped.")
 		return err
 	})
 

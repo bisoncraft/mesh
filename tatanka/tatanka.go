@@ -20,9 +20,11 @@ import (
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/bisoncraft/mesh/oracle"
+	"github.com/bisoncraft/mesh/oracle/sources"
 	"github.com/bisoncraft/mesh/protocols"
 	protocolsPb "github.com/bisoncraft/mesh/protocols/pb"
 	"github.com/bisoncraft/mesh/tatanka/admin"
+	"github.com/bisoncraft/mesh/tatanka/pb"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
@@ -40,6 +42,9 @@ const (
 
 	// whitelistProtocol is the protocol used to verify the whitelist alignment of a tatanka node.
 	whitelistProtocol = "/tatanka/whitelist/1.0.0"
+
+	// quotaHandshakeProtocol is the protocol used to exchange quota information between tatanka nodes.
+	quotaHandshakeProtocol = "/tatanka/quota-handshake/1.0.0"
 )
 
 // Config is the configuration for the tatanka node
@@ -53,9 +58,9 @@ type Config struct {
 	WhitelistPath string
 
 	// Oracle Configuration
-	CMCKey        string
-	TatumKey      string
-	CryptoApisKey string
+	CMCKey           string
+	TatumKey         string
+	BlockcypherToken string
 }
 
 // Option is a functional option for configuring TatankaNode.
@@ -71,11 +76,12 @@ func WithHost(h host.Host) Option {
 // Oracle defines the requirements for implementing an oracle.
 type Oracle interface {
 	Run(ctx context.Context)
-	MergePrices(sourcedUpdate *oracle.SourcedPriceUpdate) map[oracle.Ticker]float64
-	MergeFeeRates(sourcedUpdate *oracle.SourcedFeeRateUpdate) map[oracle.Network]*big.Int
-	Prices() map[oracle.Ticker]float64
-	FeeRates() map[oracle.Network]*big.Int
-	GetSourceWeight(sourceName string) float64
+	Merge(update *oracle.OracleUpdate, senderID string) *oracle.MergeResult
+	Price(ticker oracle.Ticker) (float64, bool)
+	FeeRate(network oracle.Network) (*big.Int, bool)
+	GetLocalQuotas() map[string]*sources.QuotaStatus
+	UpdatePeerSourceQuota(peerID string, quota *oracle.TimestampedQuotaStatus, source string)
+	OracleSnapshot() *oracle.OracleSnapshot
 }
 
 // TatankaNode is a permissioned node in the tatanka mesh
@@ -192,6 +198,7 @@ func (t *TatankaNode) Run(ctx context.Context) error {
 		handleBroadcastMessage:        t.handleBroadcastMessage,
 		handleClientConnectionMessage: t.handleClientConnectionMessage,
 		handleOracleUpdate:            t.handleOracleUpdate,
+		handleQuotaHeartbeat:          t.handleQuotaHeartbeat,
 	})
 	if err != nil {
 		t.markReady(err)
@@ -213,11 +220,18 @@ func (t *TatankaNode) Run(ctx context.Context) error {
 	// Only create oracle if not provided (e.g., via test setup)
 	if t.oracle == nil {
 		t.oracle, err = oracle.New(&oracle.Config{
-			Log:           t.config.Logger,
-			CMCKey:        t.config.CMCKey,
-			TatumKey:      t.config.TatumKey,
-			CryptoApisKey: t.config.CryptoApisKey,
-			PublishUpdate: t.gossipSub.publishOracleUpdate,
+			Log:              t.config.Logger,
+			CMCKey:           t.config.CMCKey,
+			TatumKey:         t.config.TatumKey,
+			BlockcypherToken: t.config.BlockcypherToken,
+			NodeID:           t.node.ID().String(),
+			PublishUpdate:    t.gossipSub.publishOracleUpdate,
+			OnStateUpdate: func(update *oracle.OracleSnapshot) {
+				if t.adminServer != nil {
+					t.adminServer.BroadcastOracleUpdate("oracle_update", update)
+				}
+			},
+			PublishQuotaHeartbeat: t.gossipSub.publishQuotaHeartbeat,
 		})
 		if err != nil {
 			return fmt.Errorf("failed to create oracle: %v", err)
@@ -229,7 +243,7 @@ func (t *TatankaNode) Run(ctx context.Context) error {
 	}
 	if t.config.AdminPort > 0 {
 		adminAddr := fmt.Sprintf(":%d", t.config.AdminPort)
-		server := admin.NewServer(t.config.Logger, adminAddr)
+		server := admin.NewServer(t.config.Logger, adminAddr, t.oracle)
 		whitelistIDs := t.getWhitelist().allPeerIDs()
 		whitelist := make([]string, 0, len(whitelistIDs))
 		for id := range whitelistIDs {
@@ -251,7 +265,17 @@ func (t *TatankaNode) Run(ctx context.Context) error {
 		t.adminServer = server
 	}
 
-	t.connectionManager = newMeshConnectionManager(t.config.Logger, t.node, t.getWhitelist(), adminCallback)
+	t.connectionManager = newMeshConnectionManager(
+		t.config.Logger, t.node, t.getWhitelist(), adminCallback,
+		func() map[string]*pb.QuotaStatus {
+			return quotaStatusesToPb(t.oracle.GetLocalQuotas())
+		},
+		func(peerID peer.ID, quotas map[string]*pb.QuotaStatus) {
+			for source, q := range quotas {
+				t.oracle.UpdatePeerSourceQuota(peerID.String(), pbToTimestampedQuotaStatus(q), source)
+			}
+		},
+	)
 
 	t.log.Infof("Admin interface available (or not) on :%d", t.config.AdminPort)
 
@@ -391,6 +415,7 @@ func (t *TatankaNode) setupStreamHandlers() {
 	t.setStreamHandler(protocols.AvailableMeshNodesProtocol, t.handleAvailableMeshNodes, t.requireBonds)
 	t.setStreamHandler(discoveryProtocol, t.handleDiscovery, t.isWhitelistPeer)
 	t.setStreamHandler(whitelistProtocol, t.handleWhitelist, t.isWhitelistPeer)
+	t.setStreamHandler(quotaHandshakeProtocol, t.handleQuotaHandshake, t.isWhitelistPeer)
 }
 
 func (t *TatankaNode) setupObservability() {
