@@ -29,9 +29,9 @@ type Config struct {
 	WhitelistPath string `long:"whitelistpath" description:"Path to local whitelist file."`
 
 	// Oracle Configuration
-	CMCKey        string `long:"cmckey" description:"coinmarketcap API key"`
-	TatumKey      string `long:"tatumkey" description:"tatum API key"`
-	CryptoApisKey string `long:"cryptoapiskey" description:"crypto apis API key"`
+	CMCKey           string `long:"cmckey" description:"coinmarketcap API key"`
+	TatumKey         string `long:"tatumkey" description:"tatum API key"`
+	BlockcypherToken string `long:"blockcyphertoken" description:"blockcypher API token"`
 }
 
 // initLogRotator initializes the logging rotater to write logs to logFile and
@@ -107,9 +107,9 @@ func main() {
 		MetricsPort:   cfg.MetricsPort,
 		WhitelistPath: cfg.WhitelistPath,
 		AdminPort:     cfg.AdminPort,
-		CMCKey:        cfg.CMCKey,
-		TatumKey:      cfg.TatumKey,
-		CryptoApisKey: cfg.CryptoApisKey,
+		CMCKey:           cfg.CMCKey,
+		TatumKey:         cfg.TatumKey,
+		BlockcypherToken: cfg.BlockcypherToken,
 	}
 
 	// Create Tatanka node

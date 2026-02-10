@@ -10,6 +10,7 @@ import (
 	"github.com/decred/slog"
 	"github.com/gorilla/websocket"
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/bisoncraft/mesh/oracle"
 )
 
 // NodeConnectionState defines the status of a peer connection
@@ -47,10 +48,16 @@ func (s AdminState) DeepCopy() AdminState {
 	return newState
 }
 
+// WSMessage is the envelope for all WebSocket messages.
+type WSMessage struct {
+	Type string          `json:"type"`
+	Data json.RawMessage `json:"data"`
+}
+
 // Client represents a connected WebSocket user.
 type Client struct {
 	conn *websocket.Conn
-	send chan AdminState
+	send chan WSMessage
 }
 
 // Server manages the admin server for a tatanka node.
@@ -64,11 +71,18 @@ type Server struct {
 
 	clientsMtx sync.RWMutex
 	clients    map[*Client]bool
+
+	oracle Oracle
 }
 
-// NewServer initializes the admin server
-func NewServer(log slog.Logger, addr string) *Server {
-	return &Server{
+// Oracle supplies data for admin oracle endpoints.
+type Oracle interface {
+	OracleSnapshot() *oracle.OracleSnapshot
+}
+
+// NewServer initializes the admin server.
+func NewServer(log slog.Logger, addr string, oracle Oracle) *Server {
+	server := &Server{
 		log:      log,
 		upgrader: websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }},
 		clients:  make(map[*Client]bool),
@@ -77,7 +91,10 @@ func NewServer(log slog.Logger, addr string) *Server {
 			OurWhitelist: []string{},
 		},
 		httpServer: &http.Server{Addr: addr},
+		oracle:     oracle,
 	}
+
+	return server
 }
 
 // Start launches the HTTP server
@@ -127,14 +144,42 @@ func (s *Server) UpdateWhitelist(whitelist []string) {
 	s.broadcastState(snapshot)
 }
 
-// broadcastState sends the state to all clients.
+// broadcastState sends the admin state to all clients.
 func (s *Server) broadcastState(state AdminState) {
+	data, err := json.Marshal(state)
+	if err != nil {
+		s.log.Errorf("Failed to marshal admin state: %v", err)
+		return
+	}
+	msg := WSMessage{
+		Type: "admin_state",
+		Data: json.RawMessage(data),
+	}
+	s.broadcast(msg)
+}
+
+// BroadcastOracleUpdate broadcasts a typed oracle update to all connected clients.
+func (s *Server) BroadcastOracleUpdate(msgType string, snapshotDiff *oracle.OracleSnapshot) {
+	data, err := json.Marshal(snapshotDiff)
+	if err != nil {
+		s.log.Errorf("Failed to marshal oracle update (%s): %v", msgType, err)
+		return
+	}
+	msg := WSMessage{
+		Type: msgType,
+		Data: json.RawMessage(data),
+	}
+	s.broadcast(msg)
+}
+
+// broadcast sends a WSMessage to all connected clients.
+func (s *Server) broadcast(msg WSMessage) {
 	s.clientsMtx.RLock()
 	defer s.clientsMtx.RUnlock()
 
 	for client := range s.clients {
 		select {
-		case client.send <- state:
+		case client.send <- msg:
 		default:
 			s.log.Errorf("Client buffer full, skipping update")
 		}
@@ -164,27 +209,42 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	client := &Client{
 		conn: conn,
-		send: make(chan AdminState, 10),
+		send: make(chan WSMessage, 10),
 	}
 
 	s.clientsMtx.Lock()
 	s.clients[client] = true
 	s.clientsMtx.Unlock()
 
-	// Send initial state immediately
+	// Send initial admin state
 	s.stateMtx.RLock()
 	initialState := s.state.DeepCopy()
 	s.stateMtx.RUnlock()
-	select {
-	case client.send <- initialState:
-	default:
+	stateData, err := json.Marshal(initialState)
+	if err == nil {
+		select {
+		case client.send <- WSMessage{Type: "admin_state", Data: json.RawMessage(stateData)}:
+		default:
+		}
+	}
+
+	// Send oracle snapshot
+	snapshot := s.oracle.OracleSnapshot()
+	if snapshot != nil {
+		snapshotData, err := json.Marshal(snapshot)
+		if err == nil {
+			select {
+			case client.send <- WSMessage{Type: "oracle_snapshot", Data: json.RawMessage(snapshotData)}:
+			default:
+			}
+		}
 	}
 
 	// 1. Writer Goroutine
 	go func() {
 		defer conn.Close()
-		for state := range client.send {
-			if err := conn.WriteJSON(state); err != nil {
+		for msg := range client.send {
+			if err := conn.WriteJSON(msg); err != nil {
 				return
 			}
 		}

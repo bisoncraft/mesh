@@ -2,7 +2,6 @@ package tatanka
 
 import (
 	"context"
-	"fmt"
 	"math/big"
 	"strings"
 	"time"
@@ -15,48 +14,10 @@ import (
 	"github.com/bisoncraft/mesh/protocols"
 	protocolsPb "github.com/bisoncraft/mesh/protocols/pb"
 	"github.com/bisoncraft/mesh/tatanka/pb"
-	ma "github.com/multiformats/go-multiaddr"
 	"google.golang.org/protobuf/proto"
 )
 
-const (
-	defaultTimeout = time.Second * 30
-)
-
-// libp2pPeerInfoToPb converts a peer.AddrInfo to a protocolsPb.PeerInfo.
-func libp2pPeerInfoToPb(peerInfo peer.AddrInfo) *protocolsPb.PeerInfo {
-	addrBytes := make([][]byte, len(peerInfo.Addrs))
-	for i, addr := range peerInfo.Addrs {
-		addrBytes[i] = addr.Bytes()
-	}
-
-	return &protocolsPb.PeerInfo{
-		Id:    []byte(peerInfo.ID),
-		Addrs: addrBytes,
-	}
-}
-
-// pbPeerInfoToLibp2p converts a protocolsPb.PeerInfo to a peer.AddrInfo.
-func pbPeerInfoToLibp2p(pbPeer *protocolsPb.PeerInfo) (peer.AddrInfo, error) {
-	peerID, err := peer.IDFromBytes(pbPeer.Id)
-	if err != nil {
-		return peer.AddrInfo{}, fmt.Errorf("failed to parse peer ID: %w", err)
-	}
-
-	addrs := make([]ma.Multiaddr, 0, len(pbPeer.Addrs))
-	for _, addrBytes := range pbPeer.Addrs {
-		addr, err := ma.NewMultiaddrBytes(addrBytes)
-		if err != nil {
-			return peer.AddrInfo{}, fmt.Errorf("failed to parse multiaddr: %w", err)
-		}
-		addrs = append(addrs, addr)
-	}
-
-	return peer.AddrInfo{
-		ID:    peerID,
-		Addrs: addrs,
-	}, nil
-}
+const defaultTimeout = time.Second * 30
 
 // handleClientPush is called when the client opens a push stream to the node.
 func (t *TatankaNode) handleClientPush(s network.Stream) {
@@ -125,9 +86,9 @@ func (t *TatankaNode) handleClientSubscribe(s network.Stream) {
 
 			// Update the subscribing client immediately if subscribing for oracle updates.
 			// Check for prefixed price or fee rate topics.
-			if strings.HasPrefix(subscribeMessage.Topic, oracle.PriceTopicPrefix) {
+			if strings.HasPrefix(subscribeMessage.Topic, protocols.PriceTopicPrefix) {
 				t.sendCurrentOracleUpdate(client, subscribeMessage.Topic)
-			} else if strings.HasPrefix(subscribeMessage.Topic, oracle.FeeRateTopicPrefix) {
+			} else if strings.HasPrefix(subscribeMessage.Topic, protocols.FeeRateTopicPrefix) {
 				t.sendCurrentOracleUpdate(client, subscribeMessage.Topic)
 			}
 		}
@@ -145,19 +106,18 @@ func (t *TatankaNode) sendCurrentOracleUpdate(client peer.ID, topic string) {
 	var err error
 
 	// Check for prefixed price subscription.
-	if strings.HasPrefix(topic, oracle.PriceTopicPrefix) {
-		ticker := topic[len(oracle.PriceTopicPrefix):]
-		prices := t.oracle.Prices()
-		if price, ok := prices[oracle.Ticker(ticker)]; ok {
+	if strings.HasPrefix(topic, protocols.PriceTopicPrefix) {
+		ticker := topic[len(protocols.PriceTopicPrefix):]
+		if price, ok := t.oracle.Price(oracle.Ticker(ticker)); ok {
 			clientUpdate := &protocolsPb.ClientPriceUpdate{
 				Price: price,
 			}
 			data, err = proto.Marshal(clientUpdate)
 		}
-	} else if strings.HasPrefix(topic, oracle.FeeRateTopicPrefix) {
+	} else if strings.HasPrefix(topic, protocols.FeeRateTopicPrefix) {
 		// Check for prefixed fee rate subscription.
-		network := topic[len(oracle.FeeRateTopicPrefix):]
-		if feeRate, ok := t.oracle.FeeRates()[oracle.Network(network)]; ok {
+		network := topic[len(protocols.FeeRateTopicPrefix):]
+		if feeRate, ok := t.oracle.FeeRate(oracle.Network(network)); ok {
 			clientUpdate := &protocolsPb.ClientFeeRateUpdate{
 				FeeRate: bigIntToBytes(feeRate),
 			}
@@ -196,8 +156,8 @@ func (t *TatankaNode) handleClientPublish(s network.Stream) {
 		return
 	}
 
-	if strings.HasPrefix(publishMessage.Topic, oracle.PriceTopicPrefix) ||
-		strings.HasPrefix(publishMessage.Topic, oracle.FeeRateTopicPrefix) {
+	if strings.HasPrefix(publishMessage.Topic, protocols.PriceTopicPrefix) ||
+		strings.HasPrefix(publishMessage.Topic, protocols.FeeRateTopicPrefix) {
 		t.log.Warnf("Client %s attempted to publish to restricted oracle topic %s",
 			client.ShortString(), publishMessage.Topic)
 		return
@@ -456,7 +416,7 @@ func (t *TatankaNode) handleForwardRelay(s network.Stream) {
 func (t *TatankaNode) findSubscribedPriceTopics(prices map[oracle.Ticker]float64) map[string][]peer.ID {
 	candidates := make(map[string]struct{}, len(prices))
 	for ticker := range prices {
-		candidates[oracle.PriceTopicPrefix+string(ticker)] = struct{}{}
+		candidates[protocols.PriceTopicPrefix+string(ticker)] = struct{}{}
 	}
 
 	return t.subscriptionManager.subscribedTopics(candidates)
@@ -466,7 +426,7 @@ func (t *TatankaNode) findSubscribedFeeRateTopics(feeRates map[oracle.Network]*b
 
 	candidates := make(map[string]struct{}, len(feeRates))
 	for network := range feeRates {
-		candidates[oracle.FeeRateTopicPrefix+string(network)] = struct{}{}
+		candidates[protocols.FeeRateTopicPrefix+string(network)] = struct{}{}
 	}
 
 	return t.subscriptionManager.subscribedTopics(candidates)
@@ -514,148 +474,79 @@ func (t *TatankaNode) distributeFeeRateUpdate(topic string, candidates []peer.ID
 	t.pushStreamManager.distribute(candidates, pushMsg)
 }
 
-func (t *TatankaNode) handleOracleUpdate(oracleUpdate *pb.NodeOracleUpdate) {
-	switch update := oracleUpdate.Update.(type) {
-	case *pb.NodeOracleUpdate_PriceUpdate:
-		pbUpdate := update.PriceUpdate
-		// Validate source-level fields
-		if pbUpdate.Source == "" {
-			t.log.Warn("Skipping price update with empty source")
-			return
+func (t *TatankaNode) handleOracleUpdate(senderID peer.ID, oracleUpdate *pb.NodeOracleUpdate) {
+	if oracleUpdate.Source == "" {
+		t.log.Warn("Skipping oracle update with empty source")
+		return
+	}
+	if oracleUpdate.Timestamp <= 0 {
+		t.log.Warnf("Skipping oracle update with invalid timestamp: %d", oracleUpdate.Timestamp)
+		return
+	}
+
+	// Extract piggybacked quota status and forward to oracle.
+	if oracleUpdate.Quota != nil {
+		t.oracle.UpdatePeerSourceQuota(senderID.String(), pbToTimestampedQuotaStatus(oracleUpdate.Quota), oracleUpdate.Source)
+	}
+
+	update := pbToOracleUpdate(oracleUpdate)
+	if len(update.Prices) == 0 && len(update.FeeRates) == 0 {
+		t.log.Warn("Skipping oracle update with no prices or fee rates")
+		return
+	}
+
+	result := t.oracle.Merge(update, senderID.String())
+	if result == nil {
+		return
+	}
+
+	t.distributePriceUpdates(result.Prices)
+	t.distributeFeeRateUpdates(result.FeeRates)
+}
+
+func (t *TatankaNode) distributePriceUpdates(updatedPrices map[oracle.Ticker]float64) {
+	if len(updatedPrices) == 0 {
+		return
+	}
+
+	priceSubs := t.findSubscribedPriceTopics(updatedPrices)
+	if len(priceSubs) == 0 {
+		return
+	}
+
+	for topic, candidates := range priceSubs {
+		ticker := topic[len(protocols.PriceTopicPrefix):]
+		price, ok := updatedPrices[oracle.Ticker(ticker)]
+		if !ok {
+			t.log.Errorf("No updated price found for %s", ticker)
+			continue
 		}
-		if pbUpdate.Timestamp <= 0 {
-			t.log.Warnf("Skipping price update with invalid timestamp: %d", pbUpdate.Timestamp)
-			return
+		go func(topic string, price float64, candidates []peer.ID) {
+			t.distributePriceUpdate(topic, candidates, price)
+		}(topic, price, candidates)
+	}
+}
+
+func (t *TatankaNode) distributeFeeRateUpdates(updatedFeeRates map[oracle.Network]*big.Int) {
+	if len(updatedFeeRates) == 0 {
+		return
+	}
+
+	feeRateSubs := t.findSubscribedFeeRateTopics(updatedFeeRates)
+	if len(feeRateSubs) == 0 {
+		return
+	}
+
+	for topic, candidates := range feeRateSubs {
+		network := topic[len(protocols.FeeRateTopicPrefix):]
+		feeRate, ok := updatedFeeRates[oracle.Network(network)]
+		if !ok {
+			t.log.Errorf("No updated fee rate found for %s", network)
+			continue
 		}
-
-		// Convert and validate individual prices
-		prices := make([]*oracle.SourcedPrice, 0, len(pbUpdate.Prices))
-		for _, p := range pbUpdate.Prices {
-			if p.Price <= 0 {
-				t.log.Warnf("Skipping price with invalid value: %f", p.Price)
-				continue
-			}
-			if p.Ticker == "" {
-				t.log.Warn("Skipping price with empty ticker")
-				continue
-			}
-			prices = append(prices, &oracle.SourcedPrice{
-				Ticker: oracle.Ticker(p.Ticker),
-				Price:  p.Price,
-			})
-		}
-
-		if len(prices) == 0 {
-			t.log.Warn("No valid prices to merge from gossipsub")
-			return
-		}
-
-		sourcedUpdate := &oracle.SourcedPriceUpdate{
-			Source: pbUpdate.Source,
-			Stamp:  time.Unix(pbUpdate.Timestamp, 0),
-			Weight: t.oracle.GetSourceWeight(pbUpdate.Source),
-			Prices: prices,
-		}
-
-		// Merge prices and get only the updated ones
-		updatedPrices := t.oracle.MergePrices(sourcedUpdate)
-		t.log.Debugf("Merged %d price updates from gossipsub", len(prices))
-
-		// Distribute updated prices to clients via per-ticker topics.
-		if len(updatedPrices) == 0 {
-			// Nothing to do.
-			return
-		}
-
-		priceSubs := t.findSubscribedPriceTopics(updatedPrices)
-		if len(priceSubs) == 0 {
-			// Nothing to do.
-			return
-		}
-
-		for topic, candidates := range priceSubs {
-			ticker := topic[len(oracle.PriceTopicPrefix):]
-			price, ok := updatedPrices[oracle.Ticker(ticker)]
-			if !ok {
-				t.log.Errorf("No update price found for %s", ticker)
-			}
-
-			go func(topic string, price float64, candidates []peer.ID) {
-				t.distributePriceUpdate(topic, candidates, price)
-			}(topic, price, candidates)
-		}
-
-	case *pb.NodeOracleUpdate_FeeRateUpdate:
-		pbUpdate := update.FeeRateUpdate
-		// Validate source-level fields
-		if pbUpdate.Source == "" {
-			t.log.Warn("Skipping fee rate update with empty source")
-			return
-		}
-		if pbUpdate.Timestamp <= 0 {
-			t.log.Warnf("Skipping fee rate update with invalid timestamp: %d", pbUpdate.Timestamp)
-			return
-		}
-
-		// Convert and validate individual fee rates
-		feeRates := make([]*oracle.SourcedFeeRate, 0, len(pbUpdate.FeeRates))
-		for _, fr := range pbUpdate.FeeRates {
-			if len(fr.FeeRate) == 0 {
-				t.log.Warn("Skipping fee rate with empty value")
-				continue
-			}
-			if fr.Network == "" {
-				t.log.Warn("Skipping fee rate with empty network")
-				continue
-			}
-			feeRates = append(feeRates, &oracle.SourcedFeeRate{
-				Network: oracle.Network(fr.Network),
-				FeeRate: fr.FeeRate,
-			})
-		}
-
-		if len(feeRates) == 0 {
-			t.log.Warn("No valid fee rates to merge from gossipsub")
-			return
-		}
-
-		sourcedUpdate := &oracle.SourcedFeeRateUpdate{
-			Source:   pbUpdate.Source,
-			Stamp:    time.Unix(pbUpdate.Timestamp, 0),
-			Weight:   t.oracle.GetSourceWeight(pbUpdate.Source),
-			FeeRates: feeRates,
-		}
-
-		// Merge fee rates and get only the updated ones
-		updatedFeeRates := t.oracle.MergeFeeRates(sourcedUpdate)
-		t.log.Debugf("Merged %d fee rate updates from gossipsub", len(feeRates))
-
-		// Distribute updated fee rates to clients via per-ticker topics.
-		if len(updatedFeeRates) == 0 {
-			// Nothing to do.
-			return
-		}
-
-		feeRateSubs := t.findSubscribedFeeRateTopics(updatedFeeRates)
-		if len(feeRateSubs) == 0 {
-			// Nothing to do.
-			return
-		}
-
-		for topic, candidates := range feeRateSubs {
-			network := topic[len(oracle.FeeRateTopicPrefix):]
-			feeRate, ok := updatedFeeRates[oracle.Network(network)]
-			if !ok {
-				t.log.Errorf("No updated fee rate found for %s", network)
-			}
-
-			go func(topic string, feeRate *big.Int, candidates []peer.ID) {
-				t.distributeFeeRateUpdate(topic, candidates, feeRate)
-			}(topic, feeRate, candidates)
-		}
-
-	default:
-		t.log.Warnf("Received unknown oracle update type %T", update)
+		go func(topic string, feeRate *big.Int, candidates []peer.ID) {
+			t.distributeFeeRateUpdate(topic, candidates, feeRate)
+		}(topic, feeRate, candidates)
 	}
 }
 
@@ -784,222 +675,36 @@ func (t *TatankaNode) handleAvailableMeshNodes(s network.Stream) {
 	}
 }
 
-// --- Protobuf Helper Functions ---
-
-func pbPushMessageSubscription(topic string, client peer.ID, subscribed bool) *protocolsPb.PushMessage {
-	messageType := protocolsPb.PushMessage_SUBSCRIBE
-	if !subscribed {
-		messageType = protocolsPb.PushMessage_UNSUBSCRIBE
-	}
-	return &protocolsPb.PushMessage{
-		MessageType: messageType,
-		Topic:       topic,
-		Sender:      []byte(client),
+// handleQuotaHeartbeat handles a quota heartbeat message from another tatanka node.
+// This is used to periodically share quota information via gossipsub.
+func (t *TatankaNode) handleQuotaHeartbeat(senderID peer.ID, heartbeat *pb.QuotaHandshake) {
+	for source, q := range heartbeat.Quotas {
+		t.oracle.UpdatePeerSourceQuota(senderID.String(), pbToTimestampedQuotaStatus(q), source)
 	}
 }
 
-func pbPushMessageBroadcast(topic string, data []byte, sender peer.ID) *protocolsPb.PushMessage {
-	return &protocolsPb.PushMessage{
-		MessageType: protocolsPb.PushMessage_BROADCAST,
-		Topic:       topic,
-		Data:        data,
-		Sender:      []byte(sender),
-	}
-}
+// handleQuotaHandshake handles a quota handshake request from another tatanka node.
+// This is used to exchange quota information on connection.
+func (t *TatankaNode) handleQuotaHandshake(s network.Stream) {
+	defer func() { _ = s.Close() }()
+	peerID := s.Conn().RemotePeer()
 
-func pbResponseError(err error) *protocolsPb.Response {
-	return &protocolsPb.Response{
-		Response: &protocolsPb.Response_Error{
-			Error: &protocolsPb.Error{
-				Error: &protocolsPb.Error_Message{
-					Message: err.Error(),
-				},
-			},
-		},
-	}
-}
-
-func pbResponseUnauthorizedError() *protocolsPb.Response {
-	return &protocolsPb.Response{
-		Response: &protocolsPb.Response_Error{
-			Error: &protocolsPb.Error{
-				Error: &protocolsPb.Error_Unauthorized{
-					Unauthorized: &protocolsPb.UnauthorizedError{},
-				},
-			},
-		},
-	}
-}
-
-func pbResponseClientAddr(addrs [][]byte) *protocolsPb.Response {
-	return &protocolsPb.Response{
-		Response: &protocolsPb.Response_AddrResponse{
-			AddrResponse: &protocolsPb.ClientAddrResponse{
-				Addrs: addrs,
-			},
-		},
-	}
-}
-
-func pbResponsePostBondError(index uint32) *protocolsPb.Response {
-	return &protocolsPb.Response{
-		Response: &protocolsPb.Response_Error{
-			Error: &protocolsPb.Error{
-				Error: &protocolsPb.Error_PostBondError{
-					PostBondError: &protocolsPb.PostBondError{
-						InvalidBondIndex: index,
-					},
-				},
-			},
-		},
-	}
-}
-
-func pbResponsePostBond(bondStrength uint32) *protocolsPb.Response {
-	return &protocolsPb.Response{
-		Response: &protocolsPb.Response_PostBondResponse{
-			PostBondResponse: &protocolsPb.PostBondResponse{
-				BondStrength: bondStrength,
-			},
-		},
-	}
-}
-
-func pbAvailableMeshNodesResponse(peers []*protocolsPb.PeerInfo) *protocolsPb.Response {
-	return &protocolsPb.Response{
-		Response: &protocolsPb.Response_AvailableMeshNodesResponse{
-			AvailableMeshNodesResponse: &protocolsPb.AvailableMeshNodesResponse{
-				Peers: peers,
-			},
-		},
-	}
-}
-
-func pbResponseSuccess() *protocolsPb.Response {
-	return &protocolsPb.Response{
-		Response: &protocolsPb.Response_Success{
-			Success: &protocolsPb.Success{},
-		},
-	}
-}
-
-func pbClientRelayMessageSuccess(message []byte) *protocolsPb.ClientRelayMessageResponse {
-	return &protocolsPb.ClientRelayMessageResponse{
-		Response: &protocolsPb.ClientRelayMessageResponse_Message{
-			Message: message,
-		},
-	}
-}
-
-func pbClientRelayMessageError(err *protocolsPb.Error) *protocolsPb.ClientRelayMessageResponse {
-	return &protocolsPb.ClientRelayMessageResponse{
-		Response: &protocolsPb.ClientRelayMessageResponse_Error{
-			Error: err,
-		},
-	}
-}
-
-func pbClientRelayMessageErrorMessage(message string) *protocolsPb.ClientRelayMessageResponse {
-	return pbClientRelayMessageError(&protocolsPb.Error{
-		Error: &protocolsPb.Error_Message{
-			Message: message,
-		},
-	})
-}
-
-func pbClientRelayMessageCounterpartyNotFound() *protocolsPb.ClientRelayMessageResponse {
-	return pbClientRelayMessageError(&protocolsPb.Error{
-		Error: &protocolsPb.Error_CpNotFoundError{
-			CpNotFoundError: &protocolsPb.CounterpartyNotFoundError{},
-		},
-	})
-}
-
-func pbClientRelayMessageCounterpartyRejected() *protocolsPb.ClientRelayMessageResponse {
-	return pbClientRelayMessageError(&protocolsPb.Error{
-		Error: &protocolsPb.Error_CpRejectedError{
-			CpRejectedError: &protocolsPb.CounterpartyRejectedError{},
-		},
-	})
-}
-
-func pbTatankaForwardRelaySuccess(message []byte) *pb.TatankaForwardRelayResponse {
-	return &pb.TatankaForwardRelayResponse{
-		Response: &pb.TatankaForwardRelayResponse_Success{
-			Success: message,
-		},
-	}
-}
-
-func pbTatankaForwardRelayClientNotFound() *pb.TatankaForwardRelayResponse {
-	return &pb.TatankaForwardRelayResponse{
-		Response: &pb.TatankaForwardRelayResponse_ClientNotFound_{
-			ClientNotFound: &pb.TatankaForwardRelayResponse_ClientNotFound{},
-		},
-	}
-}
-
-func pbTatankaForwardRelayClientRejected() *pb.TatankaForwardRelayResponse {
-	return &pb.TatankaForwardRelayResponse{
-		Response: &pb.TatankaForwardRelayResponse_ClientRejected_{
-			ClientRejected: &pb.TatankaForwardRelayResponse_ClientRejected{},
-		},
-	}
-}
-
-func pbTatankaForwardRelayError(message string) *pb.TatankaForwardRelayResponse {
-	return &pb.TatankaForwardRelayResponse{
-		Response: &pb.TatankaForwardRelayResponse_Error{
-			Error: message,
-		},
-	}
-}
-
-func pbWhitelistResponseSuccess() *pb.WhitelistResponse {
-	return &pb.WhitelistResponse{
-		Response: &pb.WhitelistResponse_Success_{
-			Success: &pb.WhitelistResponse_Success{},
-		},
-	}
-}
-
-func pbWhitelistResponseMismatch(mismatchedPeerIDs [][]byte) *pb.WhitelistResponse {
-	return &pb.WhitelistResponse{
-		Response: &pb.WhitelistResponse_Mismatch_{
-			Mismatch: &pb.WhitelistResponse_Mismatch{
-				PeerIDs: mismatchedPeerIDs,
-			},
-		},
-	}
-}
-
-func pbDiscoveryResponseNotFound() *pb.DiscoveryResponse {
-	return &pb.DiscoveryResponse{
-		Response: &pb.DiscoveryResponse_NotFound_{
-			NotFound: &pb.DiscoveryResponse_NotFound{},
-		},
-	}
-}
-
-func pbDiscoveryResponseSuccess(addrs []ma.Multiaddr) *pb.DiscoveryResponse {
-	addrBytes := make([][]byte, 0, len(addrs))
-	for _, addr := range addrs {
-		addrBytes = append(addrBytes, addr.Bytes())
+	// Read peer's quotas
+	req := &pb.QuotaHandshake{}
+	if err := codec.ReadLengthPrefixedMessage(s, req); err != nil {
+		t.log.Warnf("Failed to read quota handshake from %s: %v", peerID.ShortString(), err)
+		return
 	}
 
-	return &pb.DiscoveryResponse{
-		Response: &pb.DiscoveryResponse_Success_{
-			Success: &pb.DiscoveryResponse_Success{
-				Addrs: addrBytes,
-			},
-		},
+	// Process peer quotas
+	for source, q := range req.Quotas {
+		t.oracle.UpdatePeerSourceQuota(peerID.String(), pbToTimestampedQuotaStatus(q), source)
 	}
-}
 
-// bigIntToBytes converts big.Int to big-endian encoded bytes.
-func bigIntToBytes(bi *big.Int) []byte {
-	if bi == nil || bi.Sign() == 0 {
-		return []byte{0}
+	// Send our quotas
+	localQuotas := quotaStatusesToPb(t.oracle.GetLocalQuotas())
+	resp := &pb.QuotaHandshake{Quotas: localQuotas}
+	if err := codec.WriteLengthPrefixedMessage(s, resp); err != nil {
+		t.log.Warnf("Failed to send quota handshake to %s: %v", peerID.ShortString(), err)
 	}
-	return bi.Bytes()
 }

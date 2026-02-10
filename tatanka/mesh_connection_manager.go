@@ -217,7 +217,37 @@ func (t *peerTracker) connect() error {
 		return fmt.Errorf("failed to verify whitelist for peer %s: %w", t.peerID, err)
 	}
 
+	go t.exchangeOracleQuotas()
+
 	return nil
+}
+
+// exchangeOracleQuotas sends local quota information to the peer and receives theirs.
+func (t *peerTracker) exchangeOracleQuotas() {
+	ctx, cancel := context.WithTimeout(t.ctx, 10*time.Second)
+	defer cancel()
+
+	stream, err := t.m.node.NewStream(ctx, t.peerID, quotaHandshakeProtocol)
+	if err != nil {
+		t.m.log.Debugf("Quota handshake stream to %s failed: %v", t.peerID, err)
+		return
+	}
+	defer func() { _ = stream.Close() }()
+
+	localQuotas := t.m.getLocalQuotas()
+	req := &pb.QuotaHandshake{Quotas: localQuotas}
+	if err := codec.WriteLengthPrefixedMessage(stream, req); err != nil {
+		t.m.log.Debugf("Failed to send quota handshake to %s: %v", t.peerID, err)
+		return
+	}
+
+	resp := &pb.QuotaHandshake{}
+	if err := codec.ReadLengthPrefixedMessage(stream, resp); err != nil {
+		t.m.log.Debugf("Failed to read quota handshake from %s: %v", t.peerID, err)
+		return
+	}
+
+	t.m.handlePeerQuotas(t.peerID, resp.Quotas)
 }
 
 // discoverAddresses asks connected whitelist peers for the address of the target.
@@ -319,15 +349,28 @@ type meshConnectionManager struct {
 	initialOnce   sync.Once
 	initialErr    atomic.Value // error
 	adminCallback AdminUpdateCallback
+
+	// Quota exchange callbacks
+	getLocalQuotas   func() map[string]*pb.QuotaStatus
+	handlePeerQuotas func(peerID peer.ID, quotas map[string]*pb.QuotaStatus)
 }
 
-func newMeshConnectionManager(log slog.Logger, node host.Host, whitelist *whitelist, adminCallback AdminUpdateCallback) *meshConnectionManager {
+func newMeshConnectionManager(
+	log slog.Logger,
+	node host.Host,
+	whitelist *whitelist,
+	adminCallback AdminUpdateCallback,
+	getLocalQuotas func() map[string]*pb.QuotaStatus,
+	handlePeerQuotas func(peerID peer.ID, quotas map[string]*pb.QuotaStatus),
+) *meshConnectionManager {
 	m := &meshConnectionManager{
-		log:           log,
-		node:          node,
-		peerTrackers:  make(map[peer.ID]*peerTracker),
-		initialCh:     make(chan struct{}),
-		adminCallback: adminCallback,
+		log:              log,
+		node:             node,
+		peerTrackers:     make(map[peer.ID]*peerTracker),
+		initialCh:        make(chan struct{}),
+		adminCallback:    adminCallback,
+		getLocalQuotas:   getLocalQuotas,
+		handlePeerQuotas: handlePeerQuotas,
 	}
 	m.whitelist.Store(whitelist)
 

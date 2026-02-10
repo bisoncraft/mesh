@@ -68,38 +68,24 @@ message WhitelistResponse {
   }
 }
 
-// SourcedPrice represents a single price entry within a sourced update batch.
-message SourcedPrice {
-  string ticker = 1;
-  double price = 2;
-}
-
-// SourcedPriceUpdate is a batch of price updates from a single source for sharing
-// between Tatanka Mesh nodes.
-message SourcedPriceUpdate {
-  string source = 1;
-  int64 timestamp = 2;
-  repeated SourcedPrice prices = 3;
-}
-
-// SourcedFeeRate represents a single fee rate entry within a sourced update batch.
-message SourcedFeeRate {
-  string network = 1;
-  bytes fee_rate = 2;  // big-endian encoded big integer
-}
-
-// SourcedFeeRateUpdate is a batch of fee rate updates from a single source for sharing
-// between Tatanka Mesh nodes.
-message SourcedFeeRateUpdate {
-  string source = 1;
-  int64 timestamp = 2;
-  repeated SourcedFeeRate fee_rates = 3;
-}
-
 // NodeOracleUpdate contains oracle data for sharing between Tatanka mesh nodes.
 message NodeOracleUpdate {
-  oneof update {
-    SourcedPriceUpdate price_update = 1;
-    SourcedFeeRateUpdate fee_rate_update = 2;
-  }
+  string source = 1;
+  int64 timestamp = 2;
+  map<string, double> prices = 3;     // ticker -> price
+  map<string, bytes> fee_rates = 4;   // network -> big-endian encoded big.Int
+  QuotaStatus quota = 5;
+}
+
+// QuotaStatus represents quota state for an API source.
+message QuotaStatus {
+  int64 fetches_remaining = 1;
+  int64 fetches_limit = 2;
+  int64 reset_timestamp = 3;     // Unix timestamp
+}
+
+// QuotaHandshake is exchanged between nodes on connection and periodically
+// via heartbeat to share quota information for network-coordinated scheduling.
+message QuotaHandshake {
+  map<string, QuotaStatus> quotas = 1; // source -> quota
 }

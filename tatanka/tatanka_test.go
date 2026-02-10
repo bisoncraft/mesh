@@ -23,9 +23,9 @@ import (
 	"github.com/bisoncraft/mesh/bond"
 	"github.com/bisoncraft/mesh/codec"
 	"github.com/bisoncraft/mesh/oracle"
+	"github.com/bisoncraft/mesh/oracle/sources"
 	"github.com/bisoncraft/mesh/protocols"
 	protocolsPb "github.com/bisoncraft/mesh/protocols/pb"
-	"github.com/bisoncraft/mesh/tatanka/pb"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -58,37 +58,32 @@ func (to *testOracle) Run(ctx context.Context) {
 	<-ctx.Done()
 }
 
-func (to *testOracle) Next() <-chan any {
-	return nil
+func (to *testOracle) Merge(update *oracle.OracleUpdate, senderID string) *oracle.MergeResult {
+	return &oracle.MergeResult{}
 }
+func (to *testOracle) Price(oracle.Ticker) (float64, bool) { return 0, false }
+func (to *testOracle) FeeRate(oracle.Network) (*big.Int, bool) {
+	return nil, false
+}
+func (to *testOracle) GetLocalQuotas() map[string]*sources.QuotaStatus { return nil }
+func (to *testOracle) UpdatePeerSourceQuota(string, *oracle.TimestampedQuotaStatus, string) {}
+func (to *testOracle) OracleSnapshot() *oracle.OracleSnapshot                        { return nil }
 
-func (to *testOracle) MergePrices(sourcedUpdate *oracle.SourcedPriceUpdate) map[oracle.Ticker]float64 {
-	return make(map[oracle.Ticker]float64)
-}
-func (to *testOracle) MergeFeeRates(sourcedUpdate *oracle.SourcedFeeRateUpdate) map[oracle.Network]*big.Int {
-	return make(map[oracle.Network]*big.Int)
-}
-func (to *testOracle) Prices() map[oracle.Ticker]float64   { return make(map[oracle.Ticker]float64) }
-func (to *testOracle) FeeRates() map[oracle.Network]*big.Int { return make(map[oracle.Network]*big.Int) }
-func (to *testOracle) GetSourceWeight(sourceName string) float64 { return 1.0 }
-
-// tOracle is a test oracle that tracks merged price and fee rate updates.
+// tOracle is a test oracle that tracks merged updates.
 type tOracle struct {
-	mtx              sync.Mutex
-	mergedPrices     []*oracle.SourcedPriceUpdate
-	mergedFeeRates   []*oracle.SourcedFeeRateUpdate
-	prices           map[oracle.Ticker]float64
-	feeRates         map[oracle.Network]*big.Int
+	mtx      sync.Mutex
+	merged   []*oracle.OracleUpdate
+	prices   map[oracle.Ticker]float64
+	feeRates map[oracle.Network]*big.Int
 }
 
 var _ Oracle = (*tOracle)(nil)
 
 func newTOracle() *tOracle {
 	return &tOracle{
-		mergedPrices:   make([]*oracle.SourcedPriceUpdate, 0),
-		mergedFeeRates: make([]*oracle.SourcedFeeRateUpdate, 0),
-		prices:         make(map[oracle.Ticker]float64),
-		feeRates:       make(map[oracle.Network]*big.Int),
+		merged:   make([]*oracle.OracleUpdate, 0),
+		prices:   make(map[oracle.Ticker]float64),
+		feeRates: make(map[oracle.Network]*big.Int),
 	}
 }
 
@@ -96,70 +91,61 @@ func (t *tOracle) Run(ctx context.Context) {
 	<-ctx.Done()
 }
 
-func (t *tOracle) MergePrices(sourcedUpdate *oracle.SourcedPriceUpdate) map[oracle.Ticker]float64 {
+func (t *tOracle) Merge(update *oracle.OracleUpdate, senderID string) *oracle.MergeResult {
 	t.mtx.Lock()
 	defer t.mtx.Unlock()
-	t.mergedPrices = append(t.mergedPrices, sourcedUpdate)
+	t.merged = append(t.merged, update)
 
-	// Return the prices that were updated
-	updated := make(map[oracle.Ticker]float64)
-	for _, p := range sourcedUpdate.Prices {
-		updated[p.Ticker] = p.Price
-		t.prices[p.Ticker] = p.Price
+	result := &oracle.MergeResult{}
+
+	if len(update.Prices) > 0 {
+		result.Prices = make(map[oracle.Ticker]float64, len(update.Prices))
+		for ticker, price := range update.Prices {
+			result.Prices[ticker] = price
+			t.prices[ticker] = price
+		}
 	}
-	return updated
-}
 
-func (t *tOracle) MergeFeeRates(sourcedUpdate *oracle.SourcedFeeRateUpdate) map[oracle.Network]*big.Int {
-	t.mtx.Lock()
-	defer t.mtx.Unlock()
-	t.mergedFeeRates = append(t.mergedFeeRates, sourcedUpdate)
-
-	// Return the fee rates that were updated
-	updated := make(map[oracle.Network]*big.Int)
-	for _, fr := range sourcedUpdate.FeeRates {
-		// Decode the big-endian bytes to big.Int
-		bigIntValue := new(big.Int).SetBytes(fr.FeeRate)
-		updated[fr.Network] = bigIntValue
-		t.feeRates[fr.Network] = bigIntValue
+	if len(update.FeeRates) > 0 {
+		result.FeeRates = make(map[oracle.Network]*big.Int, len(update.FeeRates))
+		for network, feeRate := range update.FeeRates {
+			result.FeeRates[network] = feeRate
+			t.feeRates[network] = feeRate
+		}
 	}
-	return updated
-}
 
-func (t *tOracle) Prices() map[oracle.Ticker]float64 {
-	t.mtx.Lock()
-	defer t.mtx.Unlock()
-	// Return a copy to avoid races with concurrent modifications
-	result := make(map[oracle.Ticker]float64)
-	for k, v := range t.prices {
-		result[k] = v
-	}
 	return result
 }
 
-func (t *tOracle) FeeRates() map[oracle.Network]*big.Int {
+func (t *tOracle) Price(ticker oracle.Ticker) (float64, bool) {
 	t.mtx.Lock()
 	defer t.mtx.Unlock()
-	// Return a copy to avoid races with concurrent modifications
-	result := make(map[oracle.Network]*big.Int)
-	for k, v := range t.feeRates {
-		result[k] = v
+	price, found := t.prices[ticker]
+	return price, found
+}
+
+func (t *tOracle) FeeRate(network oracle.Network) (*big.Int, bool) {
+	t.mtx.Lock()
+	defer t.mtx.Unlock()
+	value, found := t.feeRates[network]
+	if !found {
+		return nil, false
 	}
-	return result
+	return new(big.Int).Set(value), true
 }
 
-func (t *tOracle) GetSourceWeight(sourceName string) float64 {
-	return 1.0
-}
+func (t *tOracle) GetLocalQuotas() map[string]*sources.QuotaStatus { return nil }
 
-// SetPrices sets the prices map with proper locking.
+func (t *tOracle) UpdatePeerSourceQuota(string, *oracle.TimestampedQuotaStatus, string) {}
+
+func (t *tOracle) OracleSnapshot() *oracle.OracleSnapshot { return nil }
+
 func (t *tOracle) SetPrices(prices map[oracle.Ticker]float64) {
 	t.mtx.Lock()
 	defer t.mtx.Unlock()
 	t.prices = prices
 }
 
-// SetFeeRates sets the fee rates map with proper locking.
 func (t *tOracle) SetFeeRates(feeRates map[oracle.Network]*big.Int) {
 	t.mtx.Lock()
 	defer t.mtx.Unlock()
@@ -769,43 +755,21 @@ func requireEventually(t *testing.T, condition func() bool, timeout, tick time.D
 	t.Fatalf("Condition failed after %v: %s", timeout, fmt.Sprintf(msg, args...))
 }
 
-// pbNodePriceUpdate converts a SourcedPriceUpdate to a NodeOracleUpdate for testing.
-func pbNodePriceUpdate(update *oracle.SourcedPriceUpdate) *pb.NodeOracleUpdate {
-	pbPrices := make([]*pb.SourcedPrice, len(update.Prices))
-	for i, p := range update.Prices {
-		pbPrices[i] = &pb.SourcedPrice{
-			Ticker: string(p.Ticker),
-			Price:  p.Price,
-		}
-	}
-	return &pb.NodeOracleUpdate{
-		Update: &pb.NodeOracleUpdate_PriceUpdate{
-			PriceUpdate: &pb.SourcedPriceUpdate{
-				Source:    update.Source,
-				Timestamp: update.Stamp.Unix(),
-				Prices:    pbPrices,
-			},
-		},
+// newPriceUpdate creates an OracleUpdate with only prices for testing.
+func newPriceUpdate(source string, stamp time.Time, prices map[oracle.Ticker]float64) *oracle.OracleUpdate {
+	return &oracle.OracleUpdate{
+		Source: source,
+		Stamp:  stamp,
+		Prices: prices,
 	}
 }
 
-// pbNodeFeeRateUpdate converts a SourcedFeeRateUpdate to a NodeOracleUpdate for testing.
-func pbNodeFeeRateUpdate(update *oracle.SourcedFeeRateUpdate) *pb.NodeOracleUpdate {
-	pbFeeRates := make([]*pb.SourcedFeeRate, len(update.FeeRates))
-	for i, fr := range update.FeeRates {
-		pbFeeRates[i] = &pb.SourcedFeeRate{
-			Network: string(fr.Network),
-			FeeRate: fr.FeeRate,
-		}
-	}
-	return &pb.NodeOracleUpdate{
-		Update: &pb.NodeOracleUpdate_FeeRateUpdate{
-			FeeRateUpdate: &pb.SourcedFeeRateUpdate{
-				Source:    update.Source,
-				Timestamp: update.Stamp.Unix(),
-				FeeRates:  pbFeeRates,
-			},
-		},
+// newFeeRateUpdate creates an OracleUpdate with only fee rates for testing.
+func newFeeRateUpdate(source string, stamp time.Time, feeRates map[oracle.Network]*big.Int) *oracle.OracleUpdate {
+	return &oracle.OracleUpdate{
+		Source:   source,
+		Stamp:    stamp,
+		FeeRates: feeRates,
 	}
 }
 
@@ -1197,18 +1161,11 @@ func TestGossipSubOracleUpdates_PriceUpdates(t *testing.T) {
 
 	// Node 0 publishes price updates
 	now := time.Now()
-	sourcedUpdate := &oracle.SourcedPriceUpdate{
-		Source: "test-source",
-		Stamp:  now,
-		Weight: 1.0,
-		Prices: []*oracle.SourcedPrice{
-			{Ticker: "BTC", Price: 50000.0},
-			{Ticker: "ETH", Price: 3000.0},
-		},
-	}
-
-	oracleUpdate := pbNodePriceUpdate(sourcedUpdate)
-	if err := nodes[0].gossipSub.publishOracleUpdate(ctx, oracleUpdate); err != nil {
+	update := newPriceUpdate("test-source", now, map[oracle.Ticker]float64{
+		"BTC": 50000.0,
+		"ETH": 3000.0,
+	})
+	if err := nodes[0].gossipSub.publishOracleUpdate(ctx, update); err != nil {
 		t.Fatalf("Failed to publish oracle update: %v", err)
 	}
 
@@ -1218,19 +1175,18 @@ func TestGossipSubOracleUpdates_PriceUpdates(t *testing.T) {
 	// Verify that all nodes received and merged the updates
 	for i := 0; i < numMeshNodes; i++ {
 		oracles[i].mtx.Lock()
-		mergedCount := len(oracles[i].mergedPrices)
+		mergedCount := len(oracles[i].merged)
 		oracles[i].mtx.Unlock()
 
 		if mergedCount != 1 {
-			t.Errorf("Node %d: expected 1 merged price update, got %d", i, mergedCount)
+			t.Errorf("Node %d: expected 1 merged update, got %d", i, mergedCount)
 			continue
 		}
 
 		oracles[i].mtx.Lock()
-		merged := oracles[i].mergedPrices[0]
+		merged := oracles[i].merged[0]
 		oracles[i].mtx.Unlock()
 
-		// Verify the merged update
 		if merged.Source != "test-source" {
 			t.Errorf("Node %d: expected source 'test-source', got %s", i, merged.Source)
 		}
@@ -1238,11 +1194,11 @@ func TestGossipSubOracleUpdates_PriceUpdates(t *testing.T) {
 			t.Errorf("Node %d: expected 2 prices, got %d", i, len(merged.Prices))
 			continue
 		}
-		if merged.Prices[0].Ticker != "BTC" || merged.Prices[0].Price != 50000.0 {
-			t.Errorf("Node %d: first price incorrect: %+v", i, merged.Prices[0])
+		if merged.Prices["BTC"] != 50000.0 {
+			t.Errorf("Node %d: BTC price incorrect: %v", i, merged.Prices["BTC"])
 		}
-		if merged.Prices[1].Ticker != "ETH" || merged.Prices[1].Price != 3000.0 {
-			t.Errorf("Node %d: second price incorrect: %+v", i, merged.Prices[1])
+		if merged.Prices["ETH"] != 3000.0 {
+			t.Errorf("Node %d: ETH price incorrect: %v", i, merged.Prices["ETH"])
 		}
 	}
 }
@@ -1286,18 +1242,11 @@ func TestGossipSubOracleUpdates_FeeRateUpdates(t *testing.T) {
 
 	// Node 1 publishes fee rate updates
 	now := time.Now()
-	sourcedUpdate := &oracle.SourcedFeeRateUpdate{
-		Source: "test-source",
-		Stamp:  now,
-		Weight: 1.0,
-		FeeRates: []*oracle.SourcedFeeRate{
-			{Network: "Bitcoin", FeeRate: big.NewInt(100).Bytes()},
-			{Network: "Ethereum", FeeRate: big.NewInt(50).Bytes()},
-		},
-	}
-
-	oracleUpdate := pbNodeFeeRateUpdate(sourcedUpdate)
-	if err := nodes[1].gossipSub.publishOracleUpdate(ctx, oracleUpdate); err != nil {
+	update := newFeeRateUpdate("test-source", now, map[oracle.Network]*big.Int{
+		"Bitcoin":  big.NewInt(100),
+		"Ethereum": big.NewInt(50),
+	})
+	if err := nodes[1].gossipSub.publishOracleUpdate(ctx, update); err != nil {
 		t.Fatalf("Failed to publish oracle update: %v", err)
 	}
 
@@ -1307,19 +1256,18 @@ func TestGossipSubOracleUpdates_FeeRateUpdates(t *testing.T) {
 	// Verify that all nodes received and merged the updates
 	for i := 0; i < numMeshNodes; i++ {
 		oracles[i].mtx.Lock()
-		mergedCount := len(oracles[i].mergedFeeRates)
+		mergedCount := len(oracles[i].merged)
 		oracles[i].mtx.Unlock()
 
 		if mergedCount != 1 {
-			t.Errorf("Node %d: expected 1 merged fee rate update, got %d", i, mergedCount)
+			t.Errorf("Node %d: expected 1 merged update, got %d", i, mergedCount)
 			continue
 		}
 
 		oracles[i].mtx.Lock()
-		merged := oracles[i].mergedFeeRates[0]
+		merged := oracles[i].merged[0]
 		oracles[i].mtx.Unlock()
 
-		// Verify the merged update
 		if merged.Source != "test-source" {
 			t.Errorf("Node %d: expected source 'test-source', got %s", i, merged.Source)
 		}
@@ -1327,11 +1275,11 @@ func TestGossipSubOracleUpdates_FeeRateUpdates(t *testing.T) {
 			t.Errorf("Node %d: expected 2 fee rates, got %d", i, len(merged.FeeRates))
 			continue
 		}
-		if merged.FeeRates[0].Network != "Bitcoin" || new(big.Int).SetBytes(merged.FeeRates[0].FeeRate).Cmp(big.NewInt(100)) != 0 {
-			t.Errorf("Node %d: first fee rate incorrect: %+v", i, merged.FeeRates[0])
+		if merged.FeeRates["Bitcoin"].Cmp(big.NewInt(100)) != 0 {
+			t.Errorf("Node %d: Bitcoin fee rate incorrect: %v", i, merged.FeeRates["Bitcoin"])
 		}
-		if merged.FeeRates[1].Network != "Ethereum" || new(big.Int).SetBytes(merged.FeeRates[1].FeeRate).Cmp(big.NewInt(50)) != 0 {
-			t.Errorf("Node %d: second fee rate incorrect: %+v", i, merged.FeeRates[1])
+		if merged.FeeRates["Ethereum"].Cmp(big.NewInt(50)) != 0 {
+			t.Errorf("Node %d: Ethereum fee rate incorrect: %v", i, merged.FeeRates["Ethereum"])
 		}
 	}
 }
@@ -1376,72 +1324,37 @@ func TestGossipSubOracleUpdates_MultipleNodes(t *testing.T) {
 	now := time.Now()
 
 	// Node 0 publishes price updates
-	priceUpdate0 := &oracle.SourcedPriceUpdate{
-		Source: "node-0",
-		Stamp:  now,
-		Weight: 1.0,
-		Prices: []*oracle.SourcedPrice{
-			{Ticker: "BTC", Price: 50000.0},
-		},
-	}
-	if err := nodes[0].gossipSub.publishOracleUpdate(ctx, pbNodePriceUpdate(priceUpdate0)); err != nil {
+	if err := nodes[0].gossipSub.publishOracleUpdate(ctx, newPriceUpdate("node-0", now, map[oracle.Ticker]float64{
+		"BTC": 50000.0,
+	})); err != nil {
 		t.Fatalf("Failed to publish price update from node 0: %v", err)
 	}
 
 	// Node 1 publishes fee rate updates
-	feeRateUpdate := &oracle.SourcedFeeRateUpdate{
-		Source: "node-1",
-		Stamp:  now,
-		Weight: 1.0,
-		FeeRates: []*oracle.SourcedFeeRate{
-			{Network: "Bitcoin", FeeRate: big.NewInt(100).Bytes()},
-		},
-	}
-	if err := nodes[1].gossipSub.publishOracleUpdate(ctx, pbNodeFeeRateUpdate(feeRateUpdate)); err != nil {
+	if err := nodes[1].gossipSub.publishOracleUpdate(ctx, newFeeRateUpdate("node-1", now, map[oracle.Network]*big.Int{
+		"Bitcoin": big.NewInt(100),
+	})); err != nil {
 		t.Fatalf("Failed to publish fee rate update from node 1: %v", err)
 	}
 
 	// Node 2 publishes price updates
-	priceUpdate2 := &oracle.SourcedPriceUpdate{
-		Source: "node-2",
-		Stamp:  now,
-		Weight: 0.8,
-		Prices: []*oracle.SourcedPrice{
-			{Ticker: "ETH", Price: 3000.0},
-		},
-	}
-	if err := nodes[2].gossipSub.publishOracleUpdate(ctx, pbNodePriceUpdate(priceUpdate2)); err != nil {
+	if err := nodes[2].gossipSub.publishOracleUpdate(ctx, newPriceUpdate("node-2", now, map[oracle.Ticker]float64{
+		"ETH": 3000.0,
+	})); err != nil {
 		t.Fatalf("Failed to publish price update from node 2: %v", err)
 	}
 
 	// Wait for gossip propagation
 	time.Sleep(2 * time.Second)
 
-	// Verify all nodes received all price updates (2 price updates from nodes 0 and 2)
-	for i, oracle := range oracles {
-		oracle.mtx.Lock()
-		priceCount := len(oracle.mergedPrices)
-		oracle.mtx.Unlock()
+	// Verify all nodes received all 3 updates (2 price + 1 fee rate)
+	for i, orc := range oracles {
+		orc.mtx.Lock()
+		mergedCount := len(orc.merged)
+		orc.mtx.Unlock()
 
-		// All nodes should receive both price updates
-		expectedPriceCount := 2
-
-		if priceCount != expectedPriceCount {
-			t.Errorf("Node %d: expected %d price updates, got %d", i, expectedPriceCount, priceCount)
-		}
-	}
-
-	// Verify all nodes received the fee rate update
-	for i, oracle := range oracles {
-		oracle.mtx.Lock()
-		feeRateCount := len(oracle.mergedFeeRates)
-		oracle.mtx.Unlock()
-
-		// All nodes should receive the fee rate update
-		expectedFeeRateCount := 1
-
-		if feeRateCount != expectedFeeRateCount {
-			t.Errorf("Node %d: expected %d fee rate updates, got %d", i, expectedFeeRateCount, feeRateCount)
+		if mergedCount != 3 {
+			t.Errorf("Node %d: expected 3 merged updates, got %d", i, mergedCount)
 		}
 	}
 }
@@ -1535,28 +1448,16 @@ func TestGossipSubOracleUpdates_ClientDelivery(t *testing.T) {
 
 	// Node 0 publishes price updates via gossipsub
 	now := time.Now()
-	priceUpdate := &oracle.SourcedPriceUpdate{
-		Source: "test-source",
-		Stamp:  now,
-		Weight: 1.0,
-		Prices: []*oracle.SourcedPrice{
-			{Ticker: "BTC", Price: 50000.0},
-		},
-	}
-	if err := nodes[0].gossipSub.publishOracleUpdate(ctx, pbNodePriceUpdate(priceUpdate)); err != nil {
+	if err := nodes[0].gossipSub.publishOracleUpdate(ctx, newPriceUpdate("test-source", now, map[oracle.Ticker]float64{
+		"BTC": 50000.0,
+	})); err != nil {
 		t.Fatalf("Failed to publish price update: %v", err)
 	}
 
 	// Node 1 publishes fee rate updates via gossipsub
-	feeRateUpdate := &oracle.SourcedFeeRateUpdate{
-		Source: "test-source",
-		Stamp:  now,
-		Weight: 1.0,
-		FeeRates: []*oracle.SourcedFeeRate{
-			{Network: "BTC", FeeRate: big.NewInt(100).Bytes()},
-		},
-	}
-	if err := nodes[1].gossipSub.publishOracleUpdate(ctx, pbNodeFeeRateUpdate(feeRateUpdate)); err != nil {
+	if err := nodes[1].gossipSub.publishOracleUpdate(ctx, newFeeRateUpdate("test-source", now, map[oracle.Network]*big.Int{
+		"BTC": big.NewInt(100),
+	})); err != nil {
 		t.Fatalf("Failed to publish fee rate update: %v", err)
 	}
 
