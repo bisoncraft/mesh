@@ -9,32 +9,22 @@ import (
 
 	"github.com/decred/slog"
 
+	"github.com/bisoncraft/mesh/oracle/sources"
 	"github.com/bisoncraft/mesh/tatanka/pb"
 )
 
-// fetcher returns either a list of price updates or a list of fee rate updates.
-type fetcher func(ctx context.Context) (any, error)
-
-// diviner wraps an httpSource and handles periodic fetching and emitting of
+// diviner wraps a Source and handles periodic fetching and emitting of
 // price and fee rate updates.
 type diviner struct {
-	name          string
-	fetcher       func(ctx context.Context) (any, error)
-	weight        float64
-	period        time.Duration
-	errPeriod     time.Duration
+	source        sources.Source
 	log           slog.Logger
 	publishUpdate func(ctx context.Context, update *pb.NodeOracleUpdate) error
 	resetTimer    chan struct{}
 }
 
-func newDiviner(name string, fetcher fetcher, weight float64, period time.Duration, errPeriod time.Duration, publishUpdate func(ctx context.Context, update *pb.NodeOracleUpdate) error, log slog.Logger) *diviner {
+func newDiviner(src sources.Source, publishUpdate func(ctx context.Context, update *pb.NodeOracleUpdate) error, log slog.Logger) *diviner {
 	return &diviner{
-		name:          name,
-		fetcher:       fetcher,
-		weight:        weight,
-		period:        period,
-		errPeriod:     errPeriod,
+		source:        src,
 		log:           log,
 		publishUpdate: publishUpdate,
 		resetTimer:    make(chan struct{}),
@@ -42,27 +32,26 @@ func newDiviner(name string, fetcher fetcher, weight float64, period time.Durati
 }
 
 func (d *diviner) fetchUpdates(ctx context.Context) error {
-	divination, err := d.fetcher(ctx)
+	rateInfo, err := d.source.FetchRates(ctx)
 	if err != nil {
 		return err
 	}
 
 	now := time.Now()
 
-	switch updates := divination.(type) {
-	case []*priceUpdate:
-		prices := make([]*SourcedPrice, 0, len(updates))
-		for _, entry := range updates {
+	if len(rateInfo.Prices) > 0 {
+		prices := make([]*SourcedPrice, 0, len(rateInfo.Prices))
+		for _, entry := range rateInfo.Prices {
 			prices = append(prices, &SourcedPrice{
-				Ticker: entry.ticker,
-				Price:  entry.price,
+				Ticker: Ticker(entry.Ticker),
+				Price:  entry.Price,
 			})
 		}
 
 		sourcedUpdate := &SourcedPriceUpdate{
-			Source: d.name,
+			Source: d.source.Name(),
 			Stamp:  now,
-			Weight: d.weight,
+			Weight: d.source.Weight(),
 			Prices: prices,
 		}
 
@@ -73,20 +62,21 @@ func (d *diviner) fetchUpdates(ctx context.Context) error {
 				d.log.Errorf("Failed to publish sourced price update: %v", err)
 			}
 		}()
+	}
 
-	case []*feeRateUpdate:
-		feeRates := make([]*SourcedFeeRate, 0, len(updates))
-		for _, entry := range updates {
+	if len(rateInfo.FeeRates) > 0 {
+		feeRates := make([]*SourcedFeeRate, 0, len(rateInfo.FeeRates))
+		for _, entry := range rateInfo.FeeRates {
 			feeRates = append(feeRates, &SourcedFeeRate{
-				Network: entry.network,
-				FeeRate: bigIntToBytes(entry.feeRate),
+				Network: Network(entry.Network),
+				FeeRate: bigIntToBytes(entry.FeeRate),
 			})
 		}
 
 		sourcedUpdate := &SourcedFeeRateUpdate{
-			Source:   d.name,
+			Source:   d.source.Name(),
 			Stamp:    now,
-			Weight:   d.weight,
+			Weight:   d.source.Weight(),
 			FeeRates: feeRates,
 		}
 
@@ -97,8 +87,10 @@ func (d *diviner) fetchUpdates(ctx context.Context) error {
 				d.log.Errorf("Failed to publish sourced fee rate update: %v", err)
 			}
 		}()
-	default:
-		return fmt.Errorf("source %q returned unexpected type %T", d.name, divination)
+	}
+
+	if len(rateInfo.Prices) == 0 && len(rateInfo.FeeRates) == 0 {
+		return fmt.Errorf("source %q returned empty rate info", d.source.Name())
 	}
 
 	return nil
@@ -115,6 +107,8 @@ func (d *diviner) run(ctx context.Context) {
 	// Initialize with a shorter period to fetch initial oracle updates.
 	initialPeriod := time.Second * 5
 	delay := randomDelay(time.Second)
+	period := d.source.MinPeriod()
+	errPeriod := time.Minute
 	timer := time.NewTimer(initialPeriod + delay)
 	defer timer.Stop()
 
@@ -123,13 +117,13 @@ func (d *diviner) run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-d.resetTimer:
-			timer.Reset(d.period)
+			timer.Reset(period)
 		case <-timer.C:
 			if err := d.fetchUpdates(ctx); err != nil {
 				d.log.Errorf("Failed to fetch divination: %v", err)
-				timer.Reset(d.errPeriod)
+				timer.Reset(errPeriod)
 			} else {
-				timer.Reset(d.period)
+				timer.Reset(period)
 			}
 		}
 	}
