@@ -72,7 +72,7 @@ func TestBanManagerRecordInfraction(t *testing.T) {
 					disconnected = true
 				},
 				nodeID:     peer.ID("this-node"),
-				publishBan: func(ctx context.Context, msg *pb.ClientBanMsg) error { return nil },
+				publishInfraction: func(ctx context.Context, msg *pb.ClientInfractionMsg) error { return nil },
 				log:        testLogger(),
 				now:        time.Now,
 			})
@@ -100,7 +100,7 @@ func TestBanManagerMultipleIPs(t *testing.T) {
 			disconnectedIPs[ip] = true
 		},
 		nodeID:     peer.ID("this-node"),
-		publishBan: func(ctx context.Context, msg *pb.ClientBanMsg) error { return nil },
+		publishInfraction: func(ctx context.Context, msg *pb.ClientInfractionMsg) error { return nil },
 		log:        testLogger(),
 		now:        time.Now,
 	})
@@ -135,18 +135,18 @@ func TestBanManagerMultipleIPs(t *testing.T) {
 	}
 }
 
-func TestBanManagerPublishBanCallback(t *testing.T) {
-	t.Run("Publish at threshold", func(t *testing.T) {
-		var publishedBans []*pb.ClientBanMsg
+func TestBanManagerPublishInfractionCallback(t *testing.T) {
+	t.Run("Publish each infraction", func(t *testing.T) {
+		var publishedInfractions []*pb.ClientInfractionMsg
 		var mtx sync.Mutex
 		nodeID := generateTestPeerID(t)
 
 		bm := newBanManager(&banManagerConfig{
 			disconnectClient: func(ip string) {},
 			nodeID:           nodeID,
-			publishBan: func(ctx context.Context, msg *pb.ClientBanMsg) error {
+			publishInfraction: func(ctx context.Context, msg *pb.ClientInfractionMsg) error {
 				mtx.Lock()
-				publishedBans = append(publishedBans, msg)
+				publishedInfractions = append(publishedInfractions, msg)
 				mtx.Unlock()
 				return nil
 			},
@@ -157,7 +157,7 @@ func TestBanManagerPublishBanCallback(t *testing.T) {
 		clientID := peer.ID("test-client")
 		ipAddr := "192.168.1.100"
 
-		// Record 10 infractions to hit threshold
+		// Record 10 infractions - each should be published
 		for i := 0; i < 10; i++ {
 			err := bm.recordInfraction(ipAddr, clientID, MalformedMessage)
 			if err != nil {
@@ -165,38 +165,42 @@ func TestBanManagerPublishBanCallback(t *testing.T) {
 			}
 		}
 
-		// Verify publish was called
+		// Verify each infraction was published
 		mtx.Lock()
-		if len(publishedBans) != 1 {
-			t.Errorf("expected 1 published ban, got %d", len(publishedBans))
-		} else {
-			ban := publishedBans[0]
-			if ban.Ip != ipAddr {
-				t.Errorf("expected IP %s, got %s", ipAddr, ban.Ip)
+		if len(publishedInfractions) != 10 {
+			t.Errorf("expected 10 published infractions, got %d", len(publishedInfractions))
+		}
+
+		for i, infraction := range publishedInfractions {
+			if infraction.Ip != ipAddr {
+				t.Errorf("infraction %d: expected IP %s, got %s", i, ipAddr, infraction.Ip)
 			}
-			if ban.TotalPenalties != 10 {
-				t.Errorf("expected 10 penalties, got %d", ban.TotalPenalties)
+			if infraction.Penalty != 1 {
+				t.Errorf("infraction %d: expected penalty 1, got %d", i, infraction.Penalty)
 			}
-			if len(ban.Reporter) == 0 {
-				t.Errorf("reporter should not be empty")
+			if len(infraction.Reporter) == 0 {
+				t.Errorf("infraction %d: reporter should not be empty", i)
 			}
-			if ban.Expiry == 0 {
-				t.Errorf("expiry should be set")
+			if infraction.Expiry == 0 {
+				t.Errorf("infraction %d: expiry should be set", i)
+			}
+			if infraction.InfractionType != uint32(MalformedMessage) {
+				t.Errorf("infraction %d: expected type MalformedMessage, got %d", i, infraction.InfractionType)
 			}
 		}
 		mtx.Unlock()
 	})
 
-	t.Run("No publish below threshold", func(t *testing.T) {
-		var publishedBans []*pb.ClientBanMsg
+	t.Run("Publish all infractions", func(t *testing.T) {
+		var publishedInfractions []*pb.ClientInfractionMsg
 		var mtx sync.Mutex
 
 		bm := newBanManager(&banManagerConfig{
 			disconnectClient: func(ip string) {},
 			nodeID:           generateTestPeerID(t),
-			publishBan: func(ctx context.Context, msg *pb.ClientBanMsg) error {
+			publishInfraction: func(ctx context.Context, msg *pb.ClientInfractionMsg) error {
 				mtx.Lock()
-				publishedBans = append(publishedBans, msg)
+				publishedInfractions = append(publishedInfractions, msg)
 				mtx.Unlock()
 				return nil
 			},
@@ -207,27 +211,27 @@ func TestBanManagerPublishBanCallback(t *testing.T) {
 		clientID := peer.ID("test-client")
 		ipAddr := "192.168.1.100"
 
-		// Record 9 infractions (below threshold)
+		// Record 9 infractions - each should be published, even though below ban threshold
 		for i := 0; i < 9; i++ {
 			bm.recordInfraction(ipAddr, clientID, MalformedMessage)
 		}
 
 		mtx.Lock()
-		if len(publishedBans) != 0 {
-			t.Errorf("expected 0 published bans, got %d", len(publishedBans))
+		if len(publishedInfractions) != 9 {
+			t.Errorf("expected 9 published infractions, got %d", len(publishedInfractions))
 		}
 		mtx.Unlock()
 	})
 
 	t.Run("Publish error handling", func(t *testing.T) {
-		var publishedBans []*pb.ClientBanMsg
+		var publishedBans []*pb.ClientInfractionMsg
 		var mtx sync.Mutex
 		publishErr := fmt.Errorf("publish failed")
 
 		bm := newBanManager(&banManagerConfig{
 			disconnectClient: func(ip string) {},
 			nodeID:           generateTestPeerID(t),
-			publishBan: func(ctx context.Context, msg *pb.ClientBanMsg) error {
+			publishInfraction: func(ctx context.Context, msg *pb.ClientInfractionMsg) error {
 				return publishErr
 			},
 			log: testLogger(),
@@ -259,16 +263,16 @@ func TestBanManagerPublishBanCallback(t *testing.T) {
 	})
 }
 
-func TestBanManagerPublishBanMultipleInfractions(t *testing.T) {
-	var publishedBans []*pb.ClientBanMsg
+func TestBanManagerPublishInfractionMultipleTypes(t *testing.T) {
+	var publishedInfractions []*pb.ClientInfractionMsg
 	var mtx sync.Mutex
 
 	bm := newBanManager(&banManagerConfig{
 		disconnectClient: func(ip string) {},
 		nodeID:           generateTestPeerID(t),
-		publishBan: func(ctx context.Context, msg *pb.ClientBanMsg) error {
+		publishInfraction: func(ctx context.Context, msg *pb.ClientInfractionMsg) error {
 			mtx.Lock()
-			publishedBans = append(publishedBans, msg)
+			publishedInfractions = append(publishedInfractions, msg)
 			mtx.Unlock()
 			return nil
 		},
@@ -279,7 +283,7 @@ func TestBanManagerPublishBanMultipleInfractions(t *testing.T) {
 	clientID := peer.ID("test-client")
 	ipAddr := "192.168.1.100"
 
-	// Record 5 malformed messages and 5 invalid bonds
+	// Record 5 malformed messages (penalty 1 each) and 5 invalid bonds (penalty 1 each)
 	for i := 0; i < 5; i++ {
 		bm.recordInfraction(ipAddr, clientID, MalformedMessage)
 	}
@@ -287,15 +291,27 @@ func TestBanManagerPublishBanMultipleInfractions(t *testing.T) {
 		bm.recordInfraction(ipAddr, clientID, InvalidBond)
 	}
 
-	// Should publish with combined penalties
+	// Should publish 10 individual infractions
 	mtx.Lock()
-	if len(publishedBans) != 1 {
-		t.Errorf("expected 1 published ban, got %d", len(publishedBans))
-	} else {
-		ban := publishedBans[0]
-		if ban.TotalPenalties != 10 {
-			t.Errorf("expected 10 total penalties, got %d", ban.TotalPenalties)
+	if len(publishedInfractions) != 10 {
+		t.Errorf("expected 10 published infractions, got %d", len(publishedInfractions))
+	}
+
+	malformedCount := 0
+	invalidBondCount := 0
+	for _, inf := range publishedInfractions {
+		if inf.InfractionType == uint32(MalformedMessage) {
+			malformedCount++
+		} else if inf.InfractionType == uint32(InvalidBond) {
+			invalidBondCount++
 		}
+	}
+
+	if malformedCount != 5 {
+		t.Errorf("expected 5 malformed message infractions, got %d", malformedCount)
+	}
+	if invalidBondCount != 5 {
+		t.Errorf("expected 5 invalid bond infractions, got %d", invalidBondCount)
 	}
 	mtx.Unlock()
 }
@@ -304,7 +320,7 @@ func TestBanManagerIsClientBanned(t *testing.T) {
 	bm := newBanManager(&banManagerConfig{
 		disconnectClient: func(ip string) {},
 		nodeID:           peer.ID("this-node"),
-		publishBan:       func(ctx context.Context, msg *pb.ClientBanMsg) error { return nil },
+		publishInfraction:       func(ctx context.Context, msg *pb.ClientInfractionMsg) error { return nil },
 		log:              testLogger(),
 		now:              time.Now,
 	})
@@ -338,7 +354,7 @@ func TestBanManagerPurgeExpiredInfractions(t *testing.T) {
 	bm := newBanManager(&banManagerConfig{
 		disconnectClient: func(ip string) {},
 		nodeID:           peer.ID("this-node"),
-		publishBan:       func(ctx context.Context, msg *pb.ClientBanMsg) error { return nil },
+		publishInfraction:       func(ctx context.Context, msg *pb.ClientInfractionMsg) error { return nil },
 		log:              testLogger(),
 		now:              func() time.Time { return currentTime },
 	})
@@ -380,7 +396,7 @@ func TestBanManagerMultipleInfractionTypes(t *testing.T) {
 	bm := newBanManager(&banManagerConfig{
 		disconnectClient: func(ip string) {},
 		nodeID:           peer.ID("this-node"),
-		publishBan:       func(ctx context.Context, msg *pb.ClientBanMsg) error { return nil },
+		publishInfraction:       func(ctx context.Context, msg *pb.ClientInfractionMsg) error { return nil },
 		log:              testLogger(),
 		now:              time.Now,
 	})
@@ -413,7 +429,7 @@ func TestBanManagerRun(t *testing.T) {
 	bm := newBanManager(&banManagerConfig{
 		disconnectClient: func(ip string) {},
 		nodeID:           peer.ID("this-node"),
-		publishBan:       func(ctx context.Context, msg *pb.ClientBanMsg) error { return nil },
+		publishInfraction:       func(ctx context.Context, msg *pb.ClientInfractionMsg) error { return nil },
 		log:              testLogger(),
 		now:              time.Now,
 	})
@@ -427,7 +443,7 @@ func TestBanManagerRun(t *testing.T) {
 	// Should exit cleanly after context cancels
 }
 
-func TestBanManagerRecordRemoteBan(t *testing.T) {
+func TestBanManagerRecordRemoteInfraction(t *testing.T) {
 	reporterID := generateTestPeerID(t)
 	reporterBytes, err := reporterID.Marshal()
 	if err != nil {
@@ -437,29 +453,37 @@ func TestBanManagerRecordRemoteBan(t *testing.T) {
 	bm := newBanManager(&banManagerConfig{
 		disconnectClient: func(ip string) {},
 		nodeID:           generateTestPeerID(t),
-		publishBan:       func(ctx context.Context, msg *pb.ClientBanMsg) error { return nil },
-		log:              testLogger(),
-		now:              time.Now,
+		publishInfraction: func(ctx context.Context, msg *pb.ClientInfractionMsg) error { return nil },
+		log:               testLogger(),
+		now:               time.Now,
 	})
 
 	ipAddr := "192.168.1.100"
 
-	banMsg := &pb.ClientBanMsg{
-		Ip:             ipAddr,
-		Reporter:       reporterBytes,
-		TotalPenalties: 10,
-		Expiry:         time.Now().Add(time.Hour).UnixMilli(),
-	}
+	// Record 10 infractions worth 1 point each to reach the ban threshold
+	// Use different expiry times for each to avoid deduplication
+	for i := 0; i < 10; i++ {
+		infractionMsg := &pb.ClientInfractionMsg{
+			Ip:             ipAddr,
+			Reporter:       reporterBytes,
+			InfractionType: uint32(MalformedMessage),
+			Penalty:        1,
+			Expiry:         time.Now().Add(time.Hour).Add(time.Duration(i) * time.Millisecond).UnixMilli(),
+		}
 
-	bm.recordRemoteBan(banMsg)
+		err := bm.recordRemoteInfraction(infractionMsg)
+		if err != nil {
+			t.Fatalf("recordRemoteInfraction: %v", err)
+		}
+	}
 
 	// Verify client is banned
 	if !bm.isClientBanned(ipAddr) {
-		t.Errorf("expected %s to be banned after recording remote ban", ipAddr)
+		t.Errorf("expected %s to be banned after recording remote infractions", ipAddr)
 	}
 }
 
-func TestBanManagerRemoteBanExpiry(t *testing.T) {
+func TestBanManagerRemoteInfractionExpiry(t *testing.T) {
 	now := time.Unix(1000, 0)
 	currentTime := now
 
@@ -472,22 +496,29 @@ func TestBanManagerRemoteBanExpiry(t *testing.T) {
 	bm := newBanManager(&banManagerConfig{
 		disconnectClient: func(ip string) {},
 		nodeID:           generateTestPeerID(t),
-		publishBan:       func(ctx context.Context, msg *pb.ClientBanMsg) error { return nil },
-		log:              testLogger(),
-		now:              func() time.Time { return currentTime },
+		publishInfraction: func(ctx context.Context, msg *pb.ClientInfractionMsg) error { return nil },
+		log:               testLogger(),
+		now:               func() time.Time { return currentTime },
 	})
 
 	ipAddr := "192.168.1.100"
 
-	// Record a remote ban that expires in 1 hour
-	banMsg := &pb.ClientBanMsg{
-		Ip:             ipAddr,
-		Reporter:       reporterBytes,
-		TotalPenalties: 10,
-		Expiry:         now.Add(time.Hour).UnixMilli(),
-	}
+	// Record 10 remote infractions that expire in 1 hour
+	// Use different expiry times for each to avoid deduplication
+	for i := 0; i < 10; i++ {
+		infractionMsg := &pb.ClientInfractionMsg{
+			Ip:             ipAddr,
+			Reporter:       reporterBytes,
+			InfractionType: uint32(MalformedMessage),
+			Penalty:        1,
+			Expiry:         now.Add(time.Hour).Add(time.Duration(i) * time.Millisecond).UnixMilli(),
+		}
 
-	bm.recordRemoteBan(banMsg)
+		err := bm.recordRemoteInfraction(infractionMsg)
+		if err != nil {
+			t.Fatalf("recordRemoteInfraction: %v", err)
+		}
+	}
 
 	// Should be banned initially
 	if !bm.isClientBanned(ipAddr) {
@@ -503,184 +534,7 @@ func TestBanManagerRemoteBanExpiry(t *testing.T) {
 	}
 }
 
-func TestBanManagerActiveBansLocal(t *testing.T) {
-	bm := newBanManager(&banManagerConfig{
-		disconnectClient: func(ip string) {},
-		nodeID:           peer.ID("this-node"),
-		publishBan:       func(ctx context.Context, msg *pb.ClientBanMsg) error { return nil },
-		log:              testLogger(),
-		now:              time.Now,
-	})
 
-	clientID := peer.ID("test-client")
-	ipAddr := "192.168.1.100"
-
-	// Record infractions to reach ban threshold
-	for i := 0; i < 10; i++ {
-		bm.recordInfraction(ipAddr, clientID, MalformedMessage)
-	}
-
-	// Get active bans
-	bans := bm.activeBans()
-
-	if len(bans) != 1 {
-		t.Errorf("expected 1 active ban, got %d", len(bans))
-		return
-	}
-
-	if bans[0].Ip != ipAddr {
-		t.Errorf("expected ban for %s, got %s", ipAddr, bans[0].Ip)
-	}
-
-	if bans[0].TotalPenalties != 10 {
-		t.Errorf("expected 10 penalties, got %d", bans[0].TotalPenalties)
-	}
-}
-
-func TestBanManagerActiveBansRemote(t *testing.T) {
-	reporterID := generateTestPeerID(t)
-	reporterBytes, err := reporterID.Marshal()
-	if err != nil {
-		t.Fatalf("Failed to marshal reporter ID: %v", err)
-	}
-
-	bm := newBanManager(&banManagerConfig{
-		disconnectClient: func(ip string) {},
-		nodeID:           generateTestPeerID(t),
-		publishBan:       func(ctx context.Context, msg *pb.ClientBanMsg) error { return nil },
-		log:              testLogger(),
-		now:              time.Now,
-	})
-
-	ipAddr := "192.168.1.100"
-
-	banMsg := &pb.ClientBanMsg{
-		Ip:             ipAddr,
-		Reporter:       reporterBytes,
-		TotalPenalties: 10,
-		Expiry:         time.Now().Add(time.Hour).UnixMilli(),
-	}
-
-	bm.recordRemoteBan(banMsg)
-
-	// Get active bans
-	bans := bm.activeBans()
-
-	if len(bans) != 1 {
-		t.Errorf("expected 1 active ban, got %d", len(bans))
-		return
-	}
-
-	if bans[0].Ip != ipAddr {
-		t.Errorf("expected ban for %s, got %s", ipAddr, bans[0].Ip)
-	}
-}
-
-func TestBanManagerLocalAndRemoteBans(t *testing.T) {
-	reporterID := generateTestPeerID(t)
-	reporterBytes, err := reporterID.Marshal()
-	if err != nil {
-		t.Fatalf("Failed to marshal reporter ID: %v", err)
-	}
-
-	bm := newBanManager(&banManagerConfig{
-		disconnectClient: func(ip string) {},
-		nodeID:           generateTestPeerID(t),
-		publishBan:       func(ctx context.Context, msg *pb.ClientBanMsg) error { return nil },
-		log:              testLogger(),
-		now:              time.Now,
-	})
-
-	clientID1 := generateTestPeerID(t)
-	ip1 := "192.168.1.100"
-	ip2 := "192.168.1.101"
-
-	// Record local ban for client 1
-	for i := 0; i < 10; i++ {
-		bm.recordInfraction(ip1, clientID1, MalformedMessage)
-	}
-
-	// Record remote ban for client 2
-	banMsg := &pb.ClientBanMsg{
-		Ip:             ip2,
-		Reporter:       reporterBytes,
-		TotalPenalties: 10,
-		Expiry:         time.Now().Add(time.Hour).UnixMilli(),
-	}
-
-	bm.recordRemoteBan(banMsg)
-
-	// Both should be banned
-	if !bm.isClientBanned(ip1) {
-		t.Errorf("expected %s to be banned", ip1)
-	}
-
-	if !bm.isClientBanned(ip2) {
-		t.Errorf("expected %s to be banned", ip2)
-	}
-
-	// Get active bans
-	bans := bm.activeBans()
-
-	if len(bans) != 2 {
-		t.Errorf("expected 2 active bans, got %d", len(bans))
-	}
-}
-
-func TestBanManagerPurgeExpiredRemoteBans(t *testing.T) {
-	now := time.Unix(1000, 0)
-	currentTime := now
-
-	reporterID := generateTestPeerID(t)
-	reporterBytes, err := reporterID.Marshal()
-	if err != nil {
-		t.Fatalf("Failed to marshal reporter ID: %v", err)
-	}
-
-	bm := newBanManager(&banManagerConfig{
-		disconnectClient: func(ip string) {},
-		nodeID:           generateTestPeerID(t),
-		publishBan:       func(ctx context.Context, msg *pb.ClientBanMsg) error { return nil },
-		log:              testLogger(),
-		now:              func() time.Time { return currentTime },
-	})
-
-	ip1 := "192.168.1.100"
-	ip2 := "192.168.1.101"
-
-	// Record two remote bans with different expiry times
-	banMsg1 := &pb.ClientBanMsg{
-		Ip:             ip1,
-		Reporter:       reporterBytes,
-		TotalPenalties: 10,
-		Expiry:         now.Add(30 * time.Minute).UnixMilli(),
-	}
-
-	banMsg2 := &pb.ClientBanMsg{
-		Ip:             ip2,
-		Reporter:       reporterBytes,
-		TotalPenalties: 10,
-		Expiry:         now.Add(2 * time.Hour).UnixMilli(),
-	}
-
-	bm.recordRemoteBan(banMsg1)
-	bm.recordRemoteBan(banMsg2)
-
-	// Advance time to expire first ban
-	currentTime = now.Add(45 * time.Minute)
-
-	// Purge expired bans
-	bm.purgeExpiredInfractions()
-
-	// First should be gone, second should remain
-	if bm.isClientBanned(ip1) {
-		t.Errorf("expected %s to be unbanned after expiry", ip1)
-	}
-
-	if !bm.isClientBanned(ip2) {
-		t.Errorf("expected %s to still be banned", ip2)
-	}
-}
 
 func TestGetIPFromStream(t *testing.T) {
 	// This test is minimal since we can't easily mock network streams
@@ -694,7 +548,7 @@ func TestGetIPFromStream(t *testing.T) {
 	}
 }
 
-func TestBanManagerIsClientBannedMixedInfractions(t *testing.T) {
+func TestBanManagerLocalAndRemoteInfractions(t *testing.T) {
 	reporterID := generateTestPeerID(t)
 	reporterBytes, err := reporterID.Marshal()
 	if err != nil {
@@ -704,51 +558,40 @@ func TestBanManagerIsClientBannedMixedInfractions(t *testing.T) {
 	bm := newBanManager(&banManagerConfig{
 		disconnectClient: func(ip string) {},
 		nodeID:           generateTestPeerID(t),
-		publishBan:       func(ctx context.Context, msg *pb.ClientBanMsg) error { return nil },
-		log:              testLogger(),
-		now:              time.Now,
+		publishInfraction: func(ctx context.Context, msg *pb.ClientInfractionMsg) error { return nil },
+		log:               testLogger(),
+		now:               time.Now,
 	})
 
 	clientID := generateTestPeerID(t)
 	ipAddr := "192.168.1.100"
 
-	// Record 5 local infractions
+	// Record 5 local infractions (with small delays to ensure different timestamps)
 	for i := 0; i < 5; i++ {
 		bm.recordInfraction(ipAddr, clientID, MalformedMessage)
+		time.Sleep(1 * time.Millisecond) // Ensure different timestamps
 	}
 
-	// Record a remote ban with 5 penalties
-	banMsg := &pb.ClientBanMsg{
-		Ip:             ipAddr,
-		Reporter:       reporterBytes,
-		TotalPenalties: 5,
-		Expiry:         time.Now().Add(time.Hour).UnixMilli(),
-	}
+	// Record 5 remote infractions
+	// Use different expiry times for each to avoid deduplication
+	for i := 0; i < 5; i++ {
+		infractionMsg := &pb.ClientInfractionMsg{
+			Ip:             ipAddr,
+			Reporter:       reporterBytes,
+			InfractionType: uint32(MalformedMessage),
+			Penalty:        1,
+			Expiry:         time.Now().Add(time.Hour).Add(time.Duration(i) * time.Millisecond).UnixMilli(),
+		}
 
-	bm.recordRemoteBan(banMsg)
+		err := bm.recordRemoteInfraction(infractionMsg)
+		if err != nil {
+			t.Fatalf("recordRemoteInfraction: %v", err)
+		}
+	}
 
 	// Client should be banned (5 local + 5 remote = 10 total)
 	if !bm.isClientBanned(ipAddr) {
 		t.Errorf("expected %s to be banned with combined local and remote infractions", ipAddr)
-	}
-
-	// Verify active bans - since local already reached threshold, both local and remote are recorded
-	bans := bm.activeBans()
-	if len(bans) < 1 {
-		t.Errorf("expected at least 1 active ban, got %d", len(bans))
-	}
-
-	// Check that we have bans for the IP address
-	foundBan := false
-	for _, ban := range bans {
-		if ban.Ip == ipAddr {
-			foundBan = true
-			break
-		}
-	}
-
-	if !foundBan {
-		t.Errorf("expected ban for %s in active bans", ipAddr)
 	}
 }
 
@@ -791,7 +634,7 @@ func TestBanManagerDisconnectCallback(t *testing.T) {
 					mtx.Unlock()
 				},
 				nodeID:     peer.ID("this-node"),
-				publishBan: func(ctx context.Context, msg *pb.ClientBanMsg) error { return nil },
+				publishInfraction: func(ctx context.Context, msg *pb.ClientInfractionMsg) error { return nil },
 				log:        testLogger(),
 				now:        time.Now,
 			})

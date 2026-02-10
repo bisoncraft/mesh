@@ -51,26 +51,19 @@ type infraction struct {
 	expiry         time.Time
 }
 
-type remoteBan struct {
-	ip       string
-	reporter peer.ID
-	penalty  uint32
-	expiry   time.Time
-}
 
 type banManagerConfig struct {
-	disconnectClient func(string)
-	nodeID           peer.ID
-	publishBan       func(context.Context, *pb.ClientBanMsg) error
-	now              func() time.Time
-	log              slog.Logger
+	disconnectClient   func(string)
+	nodeID             peer.ID
+	publishInfraction  func(context.Context, *pb.ClientInfractionMsg) error
+	now                func() time.Time
+	log                slog.Logger
 }
 
 type banManager struct {
 	cfg               *banManagerConfig
 	mtx               sync.RWMutex
 	clientInfractions map[string][]infraction
-	remoteBans        map[string]remoteBan
 	log               slog.Logger
 }
 
@@ -78,7 +71,6 @@ func newBanManager(cfg *banManagerConfig) *banManager {
 	return &banManager{
 		cfg:               cfg,
 		clientInfractions: make(map[string][]infraction),
-		remoteBans:        make(map[string]remoteBan),
 		log:               cfg.log,
 	}
 }
@@ -129,114 +121,85 @@ func (bm *banManager) recordInfraction(ip string, id peer.ID, infractionType inf
 		}
 	}
 
+	// Publish the infraction for other nodes to gossip
+	reporterBytes, err := bm.cfg.nodeID.Marshal()
+	if err != nil {
+		return fmt.Errorf("failed to marshal node ID for infraction: %v", err)
+	}
+
+	infractionMsg := &pb.ClientInfractionMsg{
+		Ip:             ip,
+		Reporter:       reporterBytes,
+		InfractionType: uint32(infractionType),
+		Penalty:        penalty,
+		Expiry:         bm.cfg.now().Add(duration).UnixMilli(),
+	}
+
+	if err := bm.cfg.publishInfraction(context.Background(), infractionMsg); err != nil {
+		return fmt.Errorf("failed to publish infraction for client %s (%s): %v", id.ShortString(), ip, err)
+	}
+
 	// Disconnect the client once it meets or exceeds the maximum infraction penalties.
 	if penalties >= maxInfractionPenalties {
 		bm.cfg.disconnectClient(ip)
-
-		reporterBytes, err := bm.cfg.nodeID.Marshal()
-		if err != nil {
-			return fmt.Errorf("failed to marshal node ID for client ban: %v", err)
-		}
-
-		banMsg := &pb.ClientBanMsg{
-			Ip:             ip,
-			Reporter:       reporterBytes,
-			TotalPenalties: penalties,
-			Expiry:         now.Add(infractionRetentionPeriod).UnixMilli(),
-		}
-
-		if err := bm.cfg.publishBan(context.Background(), banMsg); err != nil {
-			return fmt.Errorf("failed to publish ban for client %s (%s): %v", id.ShortString(), ip, err)
-		}
-		return nil
 	}
 
 	return nil
 }
 
-func (bm *banManager) recordRemoteBan(msg *pb.ClientBanMsg) error {
+func (bm *banManager) recordRemoteInfraction(msg *pb.ClientInfractionMsg) error {
 	if msg == nil {
-		return fmt.Errorf("client ban message cannot be nil")
+		return fmt.Errorf("client infraction message cannot be nil")
 	}
 
 	bm.mtx.Lock()
 	defer bm.mtx.Unlock()
 
-	reporterID, err := peer.IDFromBytes(msg.Reporter)
-	if err != nil {
-		return fmt.Errorf("failed to parse client ban reporter: %v", err)
+	ip := msg.Ip
+	if _, ok := bm.clientInfractions[ip]; !ok {
+		bm.clientInfractions[ip] = make([]infraction, 0)
 	}
 
-	expiry := time.UnixMilli(msg.Expiry)
+	// Prevent duplicate infractions from gossip re-delivery
+	infractionKey := InfractionDedupKey(msg.Ip, msg.Reporter, msg.InfractionType, msg.Expiry)
 
-	bm.remoteBans[msg.Ip] = remoteBan{
-		ip:       msg.Ip,
-		reporter: reporterID,
-		penalty:  msg.TotalPenalties,
-		expiry:   expiry,
+	infractions := bm.clientInfractions[ip]
+	for _, existing := range infractions {
+		existingKey := InfractionDedupKey(ip, msg.Reporter, uint32(existing.infractionType), existing.expiry.UnixMilli())
+		if existingKey == infractionKey {
+			return nil
+		}
 	}
 
-	bm.cfg.disconnectClient(msg.Ip)
+	infractions = append(infractions, infraction{
+		infractionType: infractionType(msg.InfractionType),
+		penalty:        msg.Penalty,
+		expiry:         time.UnixMilli(msg.Expiry),
+	})
+	bm.clientInfractions[ip] = infractions
+
+
+	now := bm.cfg.now()
+	var penalties uint32
+	for _, inf := range infractions {
+		if !inf.expiry.Before(now) {
+			penalties += inf.penalty
+		}
+	}
+
+	if penalties >= maxInfractionPenalties {
+		bm.cfg.disconnectClient(ip)
+	}
 
 	return nil
 }
 
-func (bm *banManager) activeBans() []*pb.ClientBanMsg {
-	bm.mtx.RLock()
-	defer bm.mtx.RUnlock()
-
-	now := bm.cfg.now()
-	var bans []*pb.ClientBanMsg
-
-	for ip, infractions := range bm.clientInfractions {
-		var penalties uint32
-		for _, inf := range infractions {
-			if !inf.expiry.Before(now) {
-				penalties += inf.penalty
-			}
-		}
-
-		if penalties >= maxInfractionPenalties {
-			var latestExpiry time.Time
-			for _, inf := range infractions {
-				if !inf.expiry.Before(now) && inf.expiry.After(latestExpiry) {
-					latestExpiry = inf.expiry
-				}
-			}
-
-			reporterBytes, err := bm.cfg.nodeID.Marshal()
-			if err != nil {
-				bm.log.Errorf("failed to marshal node ID for active ban: %v", err)
-				continue
-			}
-
-			bans = append(bans, &pb.ClientBanMsg{
-				Ip:             ip,
-				Reporter:       reporterBytes,
-				TotalPenalties: penalties,
-				Expiry:         latestExpiry.UnixMilli(),
-			})
-		}
-	}
-
-	for ip, rb := range bm.remoteBans {
-		if !rb.expiry.Before(now) {
-			reporterBytes, err := rb.reporter.Marshal()
-			if err != nil {
-				bm.log.Errorf("failed to marshal remote ban reporter: %v", err)
-				continue
-			}
-			bans = append(bans, &pb.ClientBanMsg{
-				Ip:             ip,
-				Reporter:       reporterBytes,
-				TotalPenalties: rb.penalty,
-				Expiry:         rb.expiry.UnixMilli(),
-			})
-		}
-	}
-
-	return bans
+// InfractionDedupKey generates a unique key for deduplication based on (IP, reporter, type, expiry)
+// This is used by both recordRemoteInfraction and syncInfractionsFromRandomPeer
+func InfractionDedupKey(ip string, reporter []byte, infractionType uint32, expiry int64) string {
+	return fmt.Sprintf("%s_%x_%d_%d", ip, reporter, infractionType, expiry)
 }
+
 
 func (bm *banManager) purgeExpiredInfractions() {
 	bm.mtx.Lock()
@@ -252,12 +215,6 @@ func (bm *banManager) purgeExpiredInfractions() {
 
 		if len(infractions) == 0 {
 			delete(bm.clientInfractions, ip)
-		}
-	}
-
-	for ip, rb := range bm.remoteBans {
-		if rb.expiry.Before(cutoffTime) {
-			delete(bm.remoteBans, ip)
 		}
 	}
 }
@@ -277,12 +234,6 @@ func (bm *banManager) isClientBanned(ip string) bool {
 		}
 
 		if penalties >= maxInfractionPenalties {
-			return true
-		}
-	}
-
-	if rb, ok := bm.remoteBans[ip]; ok {
-		if !rb.expiry.Before(now) {
 			return true
 		}
 	}
@@ -311,13 +262,30 @@ func (bm *banManager) getClientBanReason(ip string) string {
 		}
 	}
 
-	if rb, ok := bm.remoteBans[ip]; ok {
-		if !rb.expiry.Before(now) {
-			return "banned by remote node"
+	return ""
+}
+
+func (bm *banManager) getActiveInfractions() []*pb.ClientInfractionMsg {
+	bm.mtx.RLock()
+	defer bm.mtx.RUnlock()
+
+	now := bm.cfg.now()
+	var result []*pb.ClientInfractionMsg
+
+	for ip, infractions := range bm.clientInfractions {
+		for _, inf := range infractions {
+			if !inf.expiry.Before(now) {
+				result = append(result, &pb.ClientInfractionMsg{
+					Ip:             ip,
+					InfractionType: uint32(inf.infractionType),
+					Penalty:        inf.penalty,
+					Expiry:         inf.expiry.UnixMilli(),
+				})
+			}
 		}
 	}
 
-	return ""
+	return result
 }
 
 func (bm *banManager) run(ctx context.Context) {

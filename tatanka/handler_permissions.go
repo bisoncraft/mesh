@@ -93,7 +93,7 @@ func (t *TatankaNode) setStreamHandler(protocolID string, handler func(s network
 	t.node.SetStreamHandler(protocol.ID(protocolID), finalHandler)
 }
 
-func (t *TatankaNode) isClientBanned(s network.Stream) error {
+func (t *TatankaNode) requireNotBanned(s network.Stream) error {
 	ip, err := getIPFromStream(s)
 	if err != nil {
 		return errUnauthorized

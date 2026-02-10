@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	"math/rand"
 	"net/http"
 	"net/http/pprof"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/bisoncraft/mesh/codec"
 	"github.com/bisoncraft/mesh/oracle"
 	"github.com/bisoncraft/mesh/protocols"
 	protocolsPb "github.com/bisoncraft/mesh/protocols/pb"
@@ -23,6 +25,7 @@ import (
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
+	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -41,6 +44,10 @@ const (
 
 	// whitelistProtocol is the protocol used to verify the whitelist alignment of a tatanka node.
 	whitelistProtocol = "/tatanka/whitelist/1.0.0"
+
+	// clientInfractionsSnapshotProtocol is the protocol used to query a tatanka
+	// node for a snapshot of active client infractions.
+	clientInfractionsSnapshotProtocol = "/tatanka/client-infractions-snapshot/1.0.0"
 )
 
 // Config is the configuration for the tatanka node
@@ -156,10 +163,10 @@ func (t *TatankaNode) handleClientConnectionMessage(update *clientConnectionUpda
 	t.clientConnectionManager.updateClientConnectionInfo(update)
 }
 
-func (t *TatankaNode) handleClientBanMessage(msg *pb.ClientBanMsg) {
-	err := t.banManager.recordRemoteBan(msg)
+func (t *TatankaNode) handleClientInfractionMessage(msg *pb.ClientInfractionMsg) {
+	err := t.banManager.recordRemoteInfraction(msg)
 	if err != nil {
-		t.log.Errorf("Failed to record remote ban: %v", err)
+		t.log.Errorf("Failed to record remote infraction: %v", err)
 		return
 	}
 }
@@ -203,7 +210,7 @@ func (t *TatankaNode) Run(ctx context.Context) error {
 		handleBroadcastMessage:        t.handleBroadcastMessage,
 		handleClientConnectionMessage: t.handleClientConnectionMessage,
 		handleOracleUpdate:            t.handleOracleUpdate,
-		handleClientBanMessage:        t.handleClientBanMessage,
+		handleClientInfractionMessage: t.handleClientInfractionMessage,
 	})
 	if err != nil {
 		t.markReady(err)
@@ -237,11 +244,11 @@ func (t *TatankaNode) Run(ctx context.Context) error {
 	}
 
 	t.banManager = newBanManager(&banManagerConfig{
-		disconnectClient: t.pushStreamManager.disconnectClientByIP,
-		nodeID:           t.node.ID(),
-		publishBan:       t.gossipSub.publishClientBanMessage,
-		now:              time.Now,
-		log:              t.config.Logger,
+		disconnectClient:  t.pushStreamManager.disconnectClientByIP,
+		nodeID:            t.node.ID(),
+		publishInfraction: t.gossipSub.publishClientInfractionMessage,
+		now:               time.Now,
+		log:               t.config.Logger,
 	})
 
 	t.broadcastRateLimiter = newBroadcastRateLimiter(&rateLimitConfig{
@@ -332,27 +339,6 @@ func (t *TatankaNode) Run(ctx context.Context) error {
 		t.broadcastRateLimiter.run(ctx)
 	}()
 
-	// Periodic ban rebroadcast
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		ticker := time.NewTicker(5 * time.Minute)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				activeBans := t.banManager.activeBans()
-				for _, ban := range activeBans {
-					if err := t.gossipSub.publishClientBanMessage(ctx, ban); err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, context.Canceled) {
-						t.log.Warnf("Failed to rebroadcast ban for IP %s: %v", ban.Ip, err)
-					}
-				}
-			}
-		}
-	}()
-
 	// Maintain mesh connectivity
 	wg.Add(1)
 	go func() {
@@ -362,6 +348,11 @@ func (t *TatankaNode) Run(ctx context.Context) error {
 
 	// Wait for the initial connectivity pass to finish before reporting ready.
 	t.connectionManager.waitInitial(ctx)
+
+	// Query one random connected peer for their infraction snapshot
+	// (all peers maintain equivalent sets via gossip)
+	t.syncInfractionsFromRandomPeer(ctx)
+
 	t.markReady(nil)
 
 	// Run Oracle
@@ -400,6 +391,81 @@ func (t *TatankaNode) WaitReady(ctx context.Context) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+// fetchClientInfractionsSnapshot fetches a snapshot of active client infractions from a peer.
+func (t *TatankaNode) fetchClientInfractionsSnapshot(ctx context.Context, peerID peer.ID) ([]*pb.ClientInfractionMsg, error) {
+	s, err := t.node.NewStream(ctx, peerID, clientInfractionsSnapshotProtocol)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open stream: %w", err)
+	}
+	defer func() { _ = s.Close() }()
+
+	request := &pb.ClientInfractionsSnapshotRequest{}
+	if err := codec.WriteLengthPrefixedMessage(s, request); err != nil {
+		return nil, fmt.Errorf("failed to write request: %w", err)
+	}
+
+	response := &pb.ClientInfractionsSnapshotResponse{}
+	if err := codec.ReadLengthPrefixedMessage(s, response); err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	return response.Infractions, nil
+}
+
+// syncInfractionsFromRandomPeer queries a random connected peer for their infraction snapshot.
+func (t *TatankaNode) syncInfractionsFromRandomPeer(ctx context.Context) {
+	whitelist := t.getWhitelist()
+
+	var connectedPeers []peer.ID
+	for peerID := range whitelist.allPeerIDs() {
+		if peerID == t.node.ID() {
+			continue
+		}
+		if t.node.Network().Connectedness(peerID) == network.Connected {
+			connectedPeers = append(connectedPeers, peerID)
+		}
+	}
+
+	if len(connectedPeers) == 0 {
+		t.log.Info("No connected peers to sync infractions from")
+		return
+	}
+
+	rand.Shuffle(len(connectedPeers), func(i, j int) {
+		connectedPeers[i], connectedPeers[j] = connectedPeers[j], connectedPeers[i]
+	})
+
+	for _, peerID := range connectedPeers {
+		infractions, err := t.fetchClientInfractionsSnapshot(ctx, peerID)
+		if err != nil {
+			t.log.Warnf("Failed to fetch infractions from peer %s: %v", peerID.ShortString(), err)
+			continue
+		}
+
+		// Deduplicate to prevent gossip re-delivery from creating duplicates
+		seen := make(map[string]bool)
+		var dedupedInfractions []*pb.ClientInfractionMsg
+		for _, infraction := range infractions {
+			infractionKey := InfractionDedupKey(infraction.Ip, infraction.Reporter, infraction.InfractionType, infraction.Expiry)
+			if !seen[infractionKey] {
+				seen[infractionKey] = true
+				dedupedInfractions = append(dedupedInfractions, infraction)
+			}
+		}
+
+		for _, infraction := range dedupedInfractions {
+			if err := t.banManager.recordRemoteInfraction(infraction); err != nil {
+				t.log.Errorf("Failed to record remote infraction from snapshot: %v", err)
+			}
+		}
+
+		t.log.Infof("Synced %d infractions from peer %s", len(dedupedInfractions), peerID.ShortString())
+		return
+	}
+
+	t.log.Warn("Failed to sync infractions from any connected peer")
 }
 
 // markReady signals that initialization is complete. If an error occurred,
@@ -446,19 +512,20 @@ func (t *TatankaNode) setupStreamHandlers() {
 	t.setStreamHandler(forwardRelayProtocol, t.handleForwardRelay, t.isWhitelistPeer)
 	t.setStreamHandler(discoveryProtocol, t.handleDiscovery, t.isWhitelistPeer)
 	t.setStreamHandler(whitelistProtocol, t.handleWhitelist, t.isWhitelistPeer)
+	t.setStreamHandler(clientInfractionsSnapshotProtocol, t.handleClientInfractionsSnapshot, t.isWhitelistPeer)
 
 	t.setStreamHandler(protocols.PostBondsProtocol, t.handlePostBonds,
-		requireAll(t.isClientBanned, requireNoPermission))
+		requireAll(t.requireNotBanned, requireNoPermission))
 	t.setStreamHandler(protocols.ClientSubscribeProtocol, t.handleClientSubscribe,
-		requireAll(t.isClientBanned, t.requireBonds))
+		requireAll(t.requireNotBanned, t.requireBonds))
 	t.setStreamHandler(protocols.ClientPublishProtocol, t.handleClientPublish,
-		requireAll(t.isClientBanned, t.requireBonds))
+		requireAll(t.requireNotBanned, t.requireBonds))
 	t.setStreamHandler(protocols.ClientPushProtocol, t.handleClientPush,
-		requireAll(t.isClientBanned, t.requireBonds))
+		requireAll(t.requireNotBanned, t.requireBonds))
 	t.setStreamHandler(protocols.ClientRelayMessageProtocol, t.handleClientRelayMessage,
-		requireAll(t.isClientBanned, t.requireBonds))
+		requireAll(t.requireNotBanned, t.requireBonds))
 	t.setStreamHandler(protocols.AvailableMeshNodesProtocol, t.handleAvailableMeshNodes,
-		requireAll(t.isClientBanned, t.requireBonds))
+		requireAll(t.requireNotBanned, t.requireBonds))
 }
 
 func (t *TatankaNode) setupObservability() {

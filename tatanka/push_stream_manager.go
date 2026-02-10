@@ -39,8 +39,9 @@ type pushStreamManager struct {
 
 	pushStreamMtx sync.RWMutex
 	pushStreams   map[peer.ID]*pushStreamWrapper
-	ipsMtx        sync.RWMutex
-	ips           map[string]peer.ID
+
+	ipsMtx sync.RWMutex
+	ips    map[string]peer.ID
 }
 
 // newPushStreamManager creates a new pushStreamManager. The notifyConnectedFunc

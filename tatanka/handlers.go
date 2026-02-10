@@ -7,14 +7,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/libp2p/go-libp2p/core/network"
-	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/bisoncraft/mesh/bond"
 	"github.com/bisoncraft/mesh/codec"
 	"github.com/bisoncraft/mesh/oracle"
 	"github.com/bisoncraft/mesh/protocols"
 	protocolsPb "github.com/bisoncraft/mesh/protocols/pb"
 	"github.com/bisoncraft/mesh/tatanka/pb"
+	"github.com/libp2p/go-libp2p/core/network"
+	"github.com/libp2p/go-libp2p/core/peer"
 	ma "github.com/multiformats/go-multiaddr"
 	"google.golang.org/protobuf/proto"
 )
@@ -218,13 +218,29 @@ func (t *TatankaNode) handleClientPublish(s network.Stream) {
 		return
 	}
 
-	allowed, violation := t.broadcastRateLimiter.allowBroadcast(client)
+	sendError := func(msg string) {
+		response := &protocolsPb.Response{
+			Response: &protocolsPb.Response_Error{
+				Error: &protocolsPb.Error{
+					Error: &protocolsPb.Error_Message{
+						Message: msg,
+					},
+				},
+			},
+		}
+		if err := codec.WriteLengthPrefixedMessage(s, response); err != nil {
+			t.log.Errorf("Failed to write error response: %v", err)
+		}
+	}
+
+	allowed, infractionType := t.broadcastRateLimiter.allowBroadcast(client)
 	if !allowed {
 		t.log.Warnf("Client %s rate limit exceeded, dropping broadcast to topic %s",
 			client.ShortString(), publishMessage.Topic)
+		sendError("broadcast rate limit exceeded")
 
-		if violation {
-			err = t.banManager.recordInfraction(ip, client, t.broadcastRateLimiter.getInfractionType(client))
+		if infractionType != 0 {
+			err = t.banManager.recordInfraction(ip, client, infractionType)
 			if err != nil {
 				t.log.Errorf("Failed to record rate limit infraction: %v", err)
 			}
@@ -232,25 +248,29 @@ func (t *TatankaNode) handleClientPublish(s network.Stream) {
 		return
 	}
 
-	if strings.HasPrefix(publishMessage.Topic, clientBansTopicName) {
-		t.log.Warnf("Client %s attempted to publish to restricted client bans topic %s",
+	if strings.HasPrefix(publishMessage.Topic, clientInfractionsTopicName) {
+		t.log.Warnf("Client %s attempted to publish to restricted client infractions topic %s",
 			client.ShortString(), publishMessage.Topic)
+		sendError("cannot publish to restricted topic")
 		err = t.banManager.recordInfraction(ip, client, NodeImpersonation)
 		if err != nil {
 			t.log.Errorf("Failed to record infraction: %v", err)
-			return
 		}
+
+		return
 	}
 
 	if strings.HasPrefix(publishMessage.Topic, oracle.PriceTopicPrefix) ||
 		strings.HasPrefix(publishMessage.Topic, oracle.FeeRateTopicPrefix) {
 		t.log.Warnf("Client %s attempted to publish to restricted oracle topic %s",
 			client.ShortString(), publishMessage.Topic)
+		sendError("cannot publish to restricted topic")
 		err = t.banManager.recordInfraction(ip, client, NodeImpersonation)
 		if err != nil {
 			t.log.Errorf("Failed to record infraction: %v", err)
-			return
 		}
+
+		return
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
@@ -260,6 +280,12 @@ func (t *TatankaNode) handleClientPublish(s network.Stream) {
 	err = t.gossipSub.publishClientMessage(ctx, message)
 	if err != nil {
 		t.log.Errorf("Failed to publish client message: %w", err)
+		sendError("failed to publish message")
+		return
+	}
+
+	if err := codec.WriteLengthPrefixedMessage(s, pbResponseSuccess()); err != nil {
+		t.log.Errorf("Failed to write success response: %v", err)
 	}
 }
 
@@ -817,6 +843,27 @@ func (t *TatankaNode) handleWhitelist(s network.Stream) {
 	}
 }
 
+func (t *TatankaNode) handleClientInfractionsSnapshot(s network.Stream) {
+	defer func() { _ = s.Close() }()
+
+	remotePeerID := s.Conn().RemotePeer()
+
+	request := &pb.ClientInfractionsSnapshotRequest{}
+	if err := codec.ReadLengthPrefixedMessage(s, request); err != nil {
+		t.log.Warnf("Failed to read client infractions snapshot request from peer %s: %v",
+			remotePeerID.ShortString(), err)
+		return
+	}
+
+	infractions := t.banManager.getActiveInfractions()
+	response := pbClientInfractionsSnapshotResponse(infractions)
+
+	if err := codec.WriteLengthPrefixedMessage(s, response); err != nil {
+		t.log.Warnf("Failed to write client infractions snapshot response to peer %s: %v",
+			remotePeerID.ShortString(), err)
+	}
+}
+
 // handleAvailableMeshNodes handles a request from a client to get a list of
 // all mesh nodes that this tatanka node is connected to.
 func (t *TatankaNode) handleAvailableMeshNodes(s network.Stream) {
@@ -1072,4 +1119,10 @@ func bigIntToBytes(bi *big.Int) []byte {
 		return []byte{0}
 	}
 	return bi.Bytes()
+}
+
+func pbClientInfractionsSnapshotResponse(infractions []*pb.ClientInfractionMsg) *pb.ClientInfractionsSnapshotResponse {
+	return &pb.ClientInfractionsSnapshotResponse{
+		Infractions: infractions,
+	}
 }

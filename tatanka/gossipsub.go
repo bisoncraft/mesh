@@ -29,9 +29,10 @@ const (
 	// propagate oracle updates between tatanka nodes.
 	oracleUpdatesTopicName = "oracle_updates"
 
-	// clientBansTopicName is the name of the pubsub topic used to propagate
-	// client bans between tatanka nodes.
-	clientBansTopicName = "client_bans"
+	// clientInfractionsTopicName is the name of the pubsub topic used to propagate
+	// client infractions between tatanka nodes.
+	clientInfractionsTopicName = "client_infractions"
+
 )
 
 type clientConnectionUpdate struct {
@@ -76,22 +77,22 @@ type gossipSubCfg struct {
 	handleBroadcastMessage        func(msg *protocolsPb.PushMessage)
 	handleClientConnectionMessage func(update *clientConnectionUpdate)
 	handleOracleUpdate            func(update *pb.NodeOracleUpdate)
-	handleClientBanMessage        func(msg *pb.ClientBanMsg)
+	handleClientInfractionMessage func(msg *pb.ClientInfractionMsg)
 }
 
 // gossipSub manages the nodes connection to a gossip sub network between tatanka
 // nodes. This network is used to gossip all client broadcast messages,
-// client connections, oracle updates, and client bans.
+// client connections, oracle updates, and client infractions.
 type gossipSub struct {
-	log                    slog.Logger
-	ps                     *pubsub.PubSub
-	cfg                    *gossipSubCfg
-	clientMessageTopic     *pubsub.Topic
-	clientConnectionsTopic *pubsub.Topic
-	oracleUpdatesTopic     *pubsub.Topic
+	log                            slog.Logger
+	ps                             *pubsub.PubSub
+	cfg                            *gossipSubCfg
+	clientMessageTopic             *pubsub.Topic
+	clientConnectionsTopic         *pubsub.Topic
+	oracleUpdatesTopic             *pubsub.Topic
+	clientInfractionsTopic *pubsub.Topic
 	zstdEncoder            *zstd.Encoder
-	zstdDecoder            *zstd.Decoder
-	clientBansTopic        *pubsub.Topic
+	zstdDecoder                    *zstd.Decoder
 }
 
 func newGossipSub(ctx context.Context, cfg *gossipSubCfg) (*gossipSub, error) {
@@ -128,9 +129,9 @@ func newGossipSub(ctx context.Context, cfg *gossipSubCfg) (*gossipSub, error) {
 		return nil, fmt.Errorf("failed to join oracle updates topic: %w", err)
 	}
 
-	clientBansTopic, err := ps.Join(clientBansTopicName)
+	clientInfractionsTopic, err := ps.Join(clientInfractionsTopicName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to join client bans topic: %w", err)
+		return nil, fmt.Errorf("failed to join client infractions topic: %w", err)
 	}
 
 	zstdEncoder, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedDefault))
@@ -150,9 +151,9 @@ func newGossipSub(ctx context.Context, cfg *gossipSubCfg) (*gossipSub, error) {
 		clientMessageTopic:     clientMessageTopic,
 		clientConnectionsTopic: clientConnectionsTopic,
 		oracleUpdatesTopic:     oracleUpdatesTopic,
+		clientInfractionsTopic: clientInfractionsTopic,
 		zstdEncoder:            zstdEncoder,
 		zstdDecoder:            zstdDecoder,
-		clientBansTopic:        clientBansTopic,
 	}, nil
 }
 
@@ -252,10 +253,10 @@ func (gs *gossipSub) listenForOracleUpdates(ctx context.Context) error {
 	}
 }
 
-func (gs *gossipSub) listenForClientBans(ctx context.Context) error {
-	sub, err := gs.clientBansTopic.Subscribe()
+func (gs *gossipSub) listenForClientInfractions(ctx context.Context) error {
+	sub, err := gs.clientInfractionsTopic.Subscribe()
 	if err != nil {
-		return fmt.Errorf("failed to subscribe to client bans topic: %w", err)
+		return fmt.Errorf("failed to subscribe to client infractions topic: %w", err)
 	}
 
 	for {
@@ -268,13 +269,13 @@ func (gs *gossipSub) listenForClientBans(ctx context.Context) error {
 		}
 
 		if msg != nil {
-			banMsg := &pb.ClientBanMsg{}
-			if err := proto.Unmarshal(msg.Data, banMsg); err != nil {
-				gs.log.Errorf("Failed to unmarshal client ban message: %v", err)
+			infractionMsg := &pb.ClientInfractionMsg{}
+			if err := proto.Unmarshal(msg.Data, infractionMsg); err != nil {
+				gs.log.Errorf("Failed to unmarshal client infraction message: %v", err)
 				continue
 			}
 
-			gs.cfg.handleClientBanMessage(banMsg)
+			gs.cfg.handleClientInfractionMessage(infractionMsg)
 		}
 	}
 }
@@ -307,13 +308,13 @@ func (gs *gossipSub) publishOracleUpdate(ctx context.Context, update *pb.NodeOra
 	return gs.oracleUpdatesTopic.Publish(ctx, compressed)
 }
 
-func (gs *gossipSub) publishClientBanMessage(ctx context.Context, msg *pb.ClientBanMsg) error {
+func (gs *gossipSub) publishClientInfractionMessage(ctx context.Context, msg *pb.ClientInfractionMsg) error {
 	data, err := proto.Marshal(msg)
 	if err != nil {
-		return fmt.Errorf("failed to marshal client ban message: %w", err)
+		return fmt.Errorf("failed to marshal client infraction message: %w", err)
 	}
 
-	return gs.clientBansTopic.Publish(ctx, data)
+	return gs.clientInfractionsTopic.Publish(ctx, data)
 }
 
 func (gs *gossipSub) run(ctx context.Context) error {
@@ -338,8 +339,8 @@ func (gs *gossipSub) run(ctx context.Context) error {
 	})
 
 	g.Go(func() error {
-		err := gs.listenForClientBans(ctx)
-		gs.log.Debug("Client bans listener stopped.")
+		err := gs.listenForClientInfractions(ctx)
+		gs.log.Debug("Client infractions listener stopped.")
 		return err
 	})
 
