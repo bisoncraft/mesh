@@ -10,289 +10,49 @@ import (
 	"time"
 
 	"github.com/decred/slog"
-	"github.com/bisoncraft/mesh/tatanka/pb"
+	"github.com/bisoncraft/mesh/oracle/sources"
 )
 
-
-func TestGetPrices(t *testing.T) {
-	backend := slog.NewBackend(os.Stdout)
-	log := backend.Logger("test")
-	now := time.Now()
-
-	tests := []struct {
-		name     string
-		prices   map[Ticker]map[string]*priceUpdate
-		filter   map[Ticker]bool
-		expected map[Ticker]float64
-	}{
-		{
-			name: "single source per ticker",
-			prices: map[Ticker]map[string]*priceUpdate{
-				"BTC": {
-					"source1": {ticker: "BTC", price: 50000.0, stamp: now, weight: 1.0},
-				},
-				"ETH": {
-					"source1": {ticker: "ETH", price: 3000.0, stamp: now, weight: 1.0},
-				},
-			},
-			filter: nil,
-			expected: map[Ticker]float64{
-				"BTC": 50000.0,
-				"ETH": 3000.0,
-			},
-		},
-		{
-			name: "multiple sources weighted average",
-			prices: map[Ticker]map[string]*priceUpdate{
-				"BTC": {
-					"source1": {ticker: "BTC", price: 50000.0, stamp: now, weight: 1.0},
-					"source2": {ticker: "BTC", price: 52000.0, stamp: now, weight: 1.0},
-				},
-			},
-			filter: nil,
-			expected: map[Ticker]float64{
-				"BTC": 51000.0,
-			},
-		},
-		{
-			name: "different weights",
-			prices: map[Ticker]map[string]*priceUpdate{
-				"BTC": {
-					"source1": {ticker: "BTC", price: 50000.0, stamp: now, weight: 0.25},
-					"source2": {ticker: "BTC", price: 52000.0, stamp: now, weight: 0.75},
-				},
-			},
-			filter: nil,
-			expected: map[Ticker]float64{
-				"BTC": 51500.0,
-			},
-		},
-		{
-			name: "aged weights",
-			prices: map[Ticker]map[string]*priceUpdate{
-				"BTC": {
-					"source1": {ticker: "BTC", price: 50000.0, stamp: now, weight: 1.0},
-					"source2": {ticker: "BTC", price: 30000.0, stamp: now.Add(-validityExpiration - time.Second), weight: 1.0},
-				},
-			},
-			filter: nil,
-			expected: map[Ticker]float64{
-				"BTC": 50000.0,
-			},
-		},
-		{
-			name: "filtered tickers",
-			prices: map[Ticker]map[string]*priceUpdate{
-				"BTC": {
-					"source1": {ticker: "BTC", price: 50000.0, stamp: now, weight: 1.0},
-				},
-				"ETH": {
-					"source1": {ticker: "ETH", price: 3000.0, stamp: now, weight: 1.0},
-				},
-				"DCR": {
-					"source1": {ticker: "DCR", price: 25.0, stamp: now, weight: 1.0},
-				},
-			},
-			filter: map[Ticker]bool{
-				"BTC": true,
-				"ETH": true,
-			},
-			expected: map[Ticker]float64{
-				"BTC": 50000.0,
-				"ETH": 3000.0,
-			},
-		},
-		{
-			name: "all expired sources",
-			prices: map[Ticker]map[string]*priceUpdate{
-				"BTC": {
-					"source1": {ticker: "BTC", price: 50000.0, stamp: now.Add(-validityExpiration - time.Second), weight: 1.0},
-					"source2": {ticker: "BTC", price: 52000.0, stamp: now.Add(-validityExpiration - time.Second), weight: 1.0},
-				},
-			},
-			filter:   nil,
-			expected: map[Ticker]float64{},
-		},
-		{
-			name:     "empty oracle",
-			prices:   map[Ticker]map[string]*priceUpdate{},
-			filter:   nil,
-			expected: map[Ticker]float64{},
-		},
+// makePriceBuckets converts a test-friendly format to the Oracle's bucket format.
+func makePriceBuckets(m map[Ticker]map[string]*priceUpdate) map[Ticker]*priceBucket {
+	result := make(map[Ticker]*priceBucket, len(m))
+	for ticker, sources := range m {
+		bucket := newPriceBucket()
+		for source, update := range sources {
+			bucket.mergeAndUpdateAggregate(source, update)
+		}
+		result[ticker] = bucket
 	}
+	return result
+}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			oracle := &Oracle{
-				log:    log,
-				prices: tt.prices,
-			}
+// makeFeeRateBuckets converts a test-friendly format to the Oracle's bucket format.
+func makeFeeRateBuckets(m map[Network]map[string]*feeRateUpdate) map[Network]*feeRateBucket {
+	result := make(map[Network]*feeRateBucket, len(m))
+	for network, sources := range m {
+		bucket := newFeeRateBucket()
+		for source, update := range sources {
+			bucket.mergeAndUpdateAggregate(source, update)
+		}
+		result[network] = bucket
+	}
+	return result
+}
 
-			result := oracle.getPrices(tt.filter)
-
-			if len(result) != len(tt.expected) {
-				t.Errorf("Expected %d tickers, got %d", len(tt.expected), len(result))
-			}
-
-			for ticker, expectedPrice := range tt.expected {
-				actualPrice, found := result[ticker]
-				if !found {
-					t.Errorf("Expected ticker %s to be in result", ticker)
-					continue
-				}
-				if actualPrice != expectedPrice {
-					t.Errorf("For ticker %s, expected price %.2f, got %.2f",
-						ticker, expectedPrice, actualPrice)
-				}
-			}
-
-			for ticker := range result {
-				if _, expected := tt.expected[ticker]; !expected {
-					t.Errorf("Unexpected ticker %s in result", ticker)
-				}
-			}
-		})
+func newTestOracle(log slog.Logger) *Oracle {
+	return &Oracle{
+		log:           log,
+		prices:        make(map[Ticker]*priceBucket),
+		feeRates:      make(map[Network]*feeRateBucket),
+		diviners:      make(map[string]*diviner),
+		fetchTracker:  newFetchTracker(),
+		onStateUpdate: func(*OracleSnapshot) {},
 	}
 }
 
-func TestGetFeeRates(t *testing.T) {
-	backend := slog.NewBackend(os.Stdout)
-	log := backend.Logger("test")
-	now := time.Now()
-
-	tests := []struct {
-		name     string
-		feeRates map[Network]map[string]*feeRateUpdate
-		filter   map[Network]bool
-		expected map[Network]*big.Int
-	}{
-		{
-			name: "single source per network",
-			feeRates: map[Network]map[string]*feeRateUpdate{
-				"BTC": {
-					"source1": {network: "BTC", feeRate: big.NewInt(100), stamp: now, weight: 1.0},
-				},
-				"ETH": {
-					"source1": {network: "ETH", feeRate: big.NewInt(200), stamp: now, weight: 1.0},
-				},
-			},
-			filter: nil,
-			expected: map[Network]*big.Int{
-				"BTC": big.NewInt(100),
-				"ETH": big.NewInt(200),
-			},
-		},
-		{
-			name: "multiple sources weighted average",
-			feeRates: map[Network]map[string]*feeRateUpdate{
-				"BTC": {
-					"source1": {network: "BTC", feeRate: big.NewInt(100), stamp: now, weight: 1.0},
-					"source2": {network: "BTC", feeRate: big.NewInt(200), stamp: now, weight: 1.0},
-				},
-			},
-			filter: nil,
-			expected: map[Network]*big.Int{
-				"BTC": big.NewInt(150),
-			},
-		},
-		{
-			name: "different weights",
-			feeRates: map[Network]map[string]*feeRateUpdate{
-				"BTC": {
-					"source1": {network: "BTC", feeRate: big.NewInt(100), stamp: now, weight: 0.25},
-					"source2": {network: "BTC", feeRate: big.NewInt(200), stamp: now, weight: 0.75},
-				},
-			},
-			filter: nil,
-			expected: map[Network]*big.Int{
-				"BTC": big.NewInt(175),
-			},
-		},
-		{
-			name: "aged weights",
-			feeRates: map[Network]map[string]*feeRateUpdate{
-				"BTC": {
-					"source1": {network: "BTC", feeRate: big.NewInt(100), stamp: now, weight: 1.0},
-					"source2": {network: "BTC", feeRate: big.NewInt(200), stamp: now.Add(-validityExpiration - time.Second), weight: 1.0},
-				},
-			},
-			filter: nil,
-			expected: map[Network]*big.Int{
-				"BTC": big.NewInt(100),
-			},
-		},
-		{
-			name: "filtered networks",
-			feeRates: map[Network]map[string]*feeRateUpdate{
-				"BTC": {
-					"source1": {network: "BTC", feeRate: big.NewInt(100), stamp: now, weight: 1.0},
-				},
-				"ETH": {
-					"source1": {network: "ETH", feeRate: big.NewInt(200), stamp: now, weight: 1.0},
-				},
-				"DCR": {
-					"source1": {network: "DCR", feeRate: big.NewInt(50), stamp: now, weight: 1.0},
-				},
-			},
-			filter: map[Network]bool{
-				"BTC": true,
-				"ETH": true,
-			},
-			expected: map[Network]*big.Int{
-				"BTC": big.NewInt(100),
-				"ETH": big.NewInt(200),
-			},
-		},
-		{
-			name: "all expired sources",
-			feeRates: map[Network]map[string]*feeRateUpdate{
-				"BTC": {
-					"source1": {network: "BTC", feeRate: big.NewInt(100), stamp: now.Add(-validityExpiration - time.Second), weight: 1.0},
-					"source2": {network: "BTC", feeRate: big.NewInt(200), stamp: now.Add(-validityExpiration - time.Second), weight: 1.0},
-				},
-			},
-			filter:   nil,
-			expected: map[Network]*big.Int{},
-		},
-		{
-			name:     "empty oracle",
-			feeRates: map[Network]map[string]*feeRateUpdate{},
-			filter:   nil,
-			expected: map[Network]*big.Int{},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			oracle := &Oracle{
-				log:      log,
-				feeRates: tt.feeRates,
-			}
-
-			result := oracle.getFeeRates(tt.filter)
-
-			if len(result) != len(tt.expected) {
-				t.Errorf("Expected %d networks, got %d", len(tt.expected), len(result))
-			}
-
-			for network, expectedRate := range tt.expected {
-				actualRate, found := result[network]
-				if !found {
-					t.Errorf("Expected network %s to be in result", network)
-					continue
-				}
-				if actualRate.Cmp(expectedRate) != 0 {
-					t.Errorf("For network %s, expected fee rate %s, got %s",
-						network, expectedRate.String(), actualRate.String())
-				}
-			}
-
-			for network := range result {
-				if _, expected := tt.expected[network]; !expected {
-					t.Errorf("Unexpected network %s in result", network)
-				}
-			}
-		})
+func setSourceWeights(oracle *Oracle, weights map[string]float64) {
+	for name, weight := range weights {
+		oracle.diviners[name] = &diviner{source: &mockSource{name: name, weight: weight}}
 	}
 }
 
@@ -304,19 +64,19 @@ func TestMergePrices(t *testing.T) {
 	tests := []struct {
 		name           string
 		existingPrices map[Ticker]map[string]*priceUpdate
-		sourcedUpdate  *SourcedPriceUpdate
+		update         *OracleUpdate
+		sourceWeights  map[string]float64
 		expectedPrices map[Ticker]map[string]*priceUpdate
 		expectedResult map[Ticker]float64
 	}{
 		{
 			name:           "new ticker from external source",
 			existingPrices: map[Ticker]map[string]*priceUpdate{},
-			sourcedUpdate: &SourcedPriceUpdate{
+			update: &OracleUpdate{
 				Source: "external-oracle",
 				Stamp:  now,
-				Weight: 1.0,
-				Prices: []*SourcedPrice{
-					{Ticker: "BTC", Price: 50000.0},
+				Prices: map[Ticker]float64{
+					"BTC": 50000.0,
 				},
 			},
 			expectedPrices: map[Ticker]map[string]*priceUpdate{
@@ -345,12 +105,11 @@ func TestMergePrices(t *testing.T) {
 					},
 				},
 			},
-			sourcedUpdate: &SourcedPriceUpdate{
+			update: &OracleUpdate{
 				Source: "external-oracle",
 				Stamp:  newerStamp,
-				Weight: 1.0,
-				Prices: []*SourcedPrice{
-					{Ticker: "BTC", Price: 50000.0},
+				Prices: map[Ticker]float64{
+					"BTC": 50000.0,
 				},
 			},
 			expectedPrices: map[Ticker]map[string]*priceUpdate{
@@ -379,12 +138,11 @@ func TestMergePrices(t *testing.T) {
 					},
 				},
 			},
-			sourcedUpdate: &SourcedPriceUpdate{
+			update: &OracleUpdate{
 				Source: "external-oracle",
 				Stamp:  oldStamp,
-				Weight: 1.0,
-				Prices: []*SourcedPrice{
-					{Ticker: "BTC", Price: 48000.0},
+				Prices: map[Ticker]float64{
+					"BTC": 48000.0,
 				},
 			},
 			expectedPrices: map[Ticker]map[string]*priceUpdate{
@@ -411,14 +169,16 @@ func TestMergePrices(t *testing.T) {
 					},
 				},
 			},
-			sourcedUpdate: &SourcedPriceUpdate{
+			update: &OracleUpdate{
 				Source: "source2",
 				Stamp:  now,
-				Weight: 0.8,
-				Prices: []*SourcedPrice{
-					{Ticker: "BTC", Price: 51000.0},
-					{Ticker: "ETH", Price: 3000.0},
+				Prices: map[Ticker]float64{
+					"BTC": 51000.0,
+					"ETH": 3000.0,
 				},
+			},
+			sourceWeights: map[string]float64{
+				"source2": 0.8,
 			},
 			expectedPrices: map[Ticker]map[string]*priceUpdate{
 				"BTC": {
@@ -461,12 +221,11 @@ func TestMergePrices(t *testing.T) {
 					},
 				},
 			},
-			sourcedUpdate: &SourcedPriceUpdate{
+			update: &OracleUpdate{
 				Source: "source2",
 				Stamp:  now,
-				Weight: 1.0,
-				Prices: []*SourcedPrice{
-					{Ticker: "BTC", Price: 51000.0},
+				Prices: map[Ticker]float64{
+					"BTC": 51000.0,
 				},
 			},
 			expectedPrices: map[Ticker]map[string]*priceUpdate{
@@ -496,13 +255,19 @@ func TestMergePrices(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			oracle := &Oracle{
-				log:      log,
-				prices:   tt.existingPrices,
-				diviners: make(map[string]*diviner),
+			oracle := newTestOracle(log)
+			oracle.prices = makePriceBuckets(tt.existingPrices)
+			if len(tt.sourceWeights) > 0 {
+				setSourceWeights(oracle, tt.sourceWeights)
 			}
 
-			result := oracle.MergePrices(tt.sourcedUpdate)
+			mergeResult := oracle.Merge(tt.update, "test-sender")
+
+			// Extract price results
+			var result map[Ticker]float64
+			if mergeResult != nil {
+				result = mergeResult.Prices
+			}
 
 			// Verify the merged prices match expected
 			if len(oracle.prices) != len(tt.expectedPrices) {
@@ -510,19 +275,19 @@ func TestMergePrices(t *testing.T) {
 			}
 
 			for ticker, expectedSources := range tt.expectedPrices {
-				actualSources, found := oracle.prices[ticker]
+				actualBucket, found := oracle.prices[ticker]
 				if !found {
 					t.Errorf("Expected ticker %s to be in oracle.prices", ticker)
 					continue
 				}
 
-				if len(actualSources) != len(expectedSources) {
+				if len(actualBucket.sources) != len(expectedSources) {
 					t.Errorf("For ticker %s, expected %d sources, got %d",
-						ticker, len(expectedSources), len(actualSources))
+						ticker, len(expectedSources), len(actualBucket.sources))
 				}
 
 				for source, expectedUpdate := range expectedSources {
-					actualUpdate, found := actualSources[source]
+					actualUpdate, found := actualBucket.sources[source]
 					if !found {
 						t.Errorf("Expected source %s for ticker %s", source, ticker)
 						continue
@@ -587,19 +352,19 @@ func TestMergeFeeRates(t *testing.T) {
 	tests := []struct {
 		name             string
 		existingFeeRates map[Network]map[string]*feeRateUpdate
-		sourcedUpdate    *SourcedFeeRateUpdate
+		update           *OracleUpdate
+		sourceWeights    map[string]float64
 		expectedFeeRates map[Network]map[string]*feeRateUpdate
 		expectedResult   map[Network]*big.Int
 	}{
 		{
 			name:             "new network from external source",
 			existingFeeRates: map[Network]map[string]*feeRateUpdate{},
-			sourcedUpdate: &SourcedFeeRateUpdate{
+			update: &OracleUpdate{
 				Source: "external-oracle",
 				Stamp:  now,
-				Weight: 1.0,
-				FeeRates: []*SourcedFeeRate{
-					{Network: "BTC", FeeRate: []byte{0, 0, 0, 100}},
+				FeeRates: map[Network]*big.Int{
+					"BTC": big.NewInt(100),
 				},
 			},
 			expectedFeeRates: map[Network]map[string]*feeRateUpdate{
@@ -628,12 +393,11 @@ func TestMergeFeeRates(t *testing.T) {
 					},
 				},
 			},
-			sourcedUpdate: &SourcedFeeRateUpdate{
+			update: &OracleUpdate{
 				Source: "external-oracle",
 				Stamp:  newerStamp,
-				Weight: 1.0,
-				FeeRates: []*SourcedFeeRate{
-					{Network: "BTC", FeeRate: []byte{0, 0, 0, 100}},
+				FeeRates: map[Network]*big.Int{
+					"BTC": big.NewInt(100),
 				},
 			},
 			expectedFeeRates: map[Network]map[string]*feeRateUpdate{
@@ -662,12 +426,11 @@ func TestMergeFeeRates(t *testing.T) {
 					},
 				},
 			},
-			sourcedUpdate: &SourcedFeeRateUpdate{
+			update: &OracleUpdate{
 				Source: "external-oracle",
 				Stamp:  oldStamp,
-				Weight: 1.0,
-				FeeRates: []*SourcedFeeRate{
-					{Network: "BTC", FeeRate: []byte{0, 0, 0, 80}},
+				FeeRates: map[Network]*big.Int{
+					"BTC": big.NewInt(80),
 				},
 			},
 			expectedFeeRates: map[Network]map[string]*feeRateUpdate{
@@ -694,14 +457,16 @@ func TestMergeFeeRates(t *testing.T) {
 					},
 				},
 			},
-			sourcedUpdate: &SourcedFeeRateUpdate{
+			update: &OracleUpdate{
 				Source: "source2",
 				Stamp:  now,
-				Weight: 0.8,
-				FeeRates: []*SourcedFeeRate{
-					{Network: "BTC", FeeRate: []byte{0, 0, 0, 120}},
-					{Network: "ETH", FeeRate: []byte{0, 0, 0, 50}},
+				FeeRates: map[Network]*big.Int{
+					"BTC": big.NewInt(120),
+					"ETH": big.NewInt(50),
 				},
+			},
+			sourceWeights: map[string]float64{
+				"source2": 0.8,
 			},
 			expectedFeeRates: map[Network]map[string]*feeRateUpdate{
 				"BTC": {
@@ -744,12 +509,11 @@ func TestMergeFeeRates(t *testing.T) {
 					},
 				},
 			},
-			sourcedUpdate: &SourcedFeeRateUpdate{
+			update: &OracleUpdate{
 				Source: "source2",
 				Stamp:  now,
-				Weight: 1.0,
-				FeeRates: []*SourcedFeeRate{
-					{Network: "BTC", FeeRate: []byte{0, 0, 0, 120}},
+				FeeRates: map[Network]*big.Int{
+					"BTC": big.NewInt(120),
 				},
 			},
 			expectedFeeRates: map[Network]map[string]*feeRateUpdate{
@@ -779,13 +543,19 @@ func TestMergeFeeRates(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			oracle := &Oracle{
-				log:      log,
-				feeRates: tt.existingFeeRates,
-				diviners: make(map[string]*diviner),
+			oracle := newTestOracle(log)
+			oracle.feeRates = makeFeeRateBuckets(tt.existingFeeRates)
+			if len(tt.sourceWeights) > 0 {
+				setSourceWeights(oracle, tt.sourceWeights)
 			}
 
-			result := oracle.MergeFeeRates(tt.sourcedUpdate)
+			mergeResult := oracle.Merge(tt.update, "test-sender")
+
+			// Extract fee rate results
+			var result map[Network]*big.Int
+			if mergeResult != nil {
+				result = mergeResult.FeeRates
+			}
 
 			// Verify the merged fee rates match expected
 			if len(oracle.feeRates) != len(tt.expectedFeeRates) {
@@ -793,19 +563,19 @@ func TestMergeFeeRates(t *testing.T) {
 			}
 
 			for network, expectedSources := range tt.expectedFeeRates {
-				actualSources, found := oracle.feeRates[network]
+				actualBucket, found := oracle.feeRates[network]
 				if !found {
 					t.Errorf("Expected network %s to be in oracle.feeRates", network)
 					continue
 				}
 
-				if len(actualSources) != len(expectedSources) {
+				if len(actualBucket.sources) != len(expectedSources) {
 					t.Errorf("For network %s, expected %d sources, got %d",
-						network, len(expectedSources), len(actualSources))
+						network, len(expectedSources), len(actualBucket.sources))
 				}
 
 				for source, expectedUpdate := range expectedSources {
-					actualUpdate, found := actualSources[source]
+					actualUpdate, found := actualBucket.sources[source]
 					if !found {
 						t.Errorf("Expected source %s for network %s", source, network)
 						continue
@@ -862,26 +632,22 @@ func TestMergeFeeRates(t *testing.T) {
 	}
 }
 
-
 func TestConcurrency(t *testing.T) {
 	backend := slog.NewBackend(os.Stdout)
 	log := backend.Logger("test")
 
 	t.Run("multiple goroutines reading prices simultaneously", func(t *testing.T) {
-		oracle := &Oracle{
-			log:    log,
-			prices: make(map[Ticker]map[string]*priceUpdate),
-		}
-
 		now := time.Now()
-		// Pre-populate with some price data
-		oracle.prices["BTC"] = map[string]*priceUpdate{
-			"source1": {ticker: "BTC", price: 50000.0, stamp: now, weight: 1.0},
-			"source2": {ticker: "BTC", price: 51000.0, stamp: now, weight: 1.0},
-		}
-		oracle.prices["ETH"] = map[string]*priceUpdate{
-			"source1": {ticker: "ETH", price: 3000.0, stamp: now, weight: 1.0},
-		}
+		oracle := newTestOracle(log)
+		oracle.prices = makePriceBuckets(map[Ticker]map[string]*priceUpdate{
+			"BTC": {
+				"source1": {ticker: "BTC", price: 50000.0, stamp: now, weight: 1.0},
+				"source2": {ticker: "BTC", price: 51000.0, stamp: now, weight: 1.0},
+			},
+			"ETH": {
+				"source1": {ticker: "ETH", price: 3000.0, stamp: now, weight: 1.0},
+			},
+		})
 
 		// Launch multiple readers concurrently
 		const numReaders = 50
@@ -890,7 +656,7 @@ func TestConcurrency(t *testing.T) {
 		for i := 0; i < numReaders; i++ {
 			go func() {
 				for j := 0; j < 100; j++ {
-					prices := oracle.Prices()
+					prices := oracle.allPrices()
 					if len(prices) > 0 {
 						// Verify data integrity
 						if btcPrice, found := prices["BTC"]; found {
@@ -911,20 +677,17 @@ func TestConcurrency(t *testing.T) {
 	})
 
 	t.Run("multiple goroutines reading fee rates simultaneously", func(t *testing.T) {
-		oracle := &Oracle{
-			log:      log,
-			feeRates: make(map[Network]map[string]*feeRateUpdate),
-		}
-
 		now := time.Now()
-		// Pre-populate with some fee rate data
-		oracle.feeRates["BTC"] = map[string]*feeRateUpdate{
-			"source1": {network: "BTC", feeRate: big.NewInt(100), stamp: now, weight: 1.0},
-			"source2": {network: "BTC", feeRate: big.NewInt(120), stamp: now, weight: 1.0},
-		}
-		oracle.feeRates["ETH"] = map[string]*feeRateUpdate{
-			"source1": {network: "ETH", feeRate: big.NewInt(50), stamp: now, weight: 1.0},
-		}
+		oracle := newTestOracle(log)
+		oracle.feeRates = makeFeeRateBuckets(map[Network]map[string]*feeRateUpdate{
+			"BTC": {
+				"source1": {network: "BTC", feeRate: big.NewInt(100), stamp: now, weight: 1.0},
+				"source2": {network: "BTC", feeRate: big.NewInt(120), stamp: now, weight: 1.0},
+			},
+			"ETH": {
+				"source1": {network: "ETH", feeRate: big.NewInt(50), stamp: now, weight: 1.0},
+			},
+		})
 
 		const numReaders = 50
 		done := make(chan bool, numReaders)
@@ -932,7 +695,7 @@ func TestConcurrency(t *testing.T) {
 		for i := 0; i < numReaders; i++ {
 			go func() {
 				for j := 0; j < 100; j++ {
-					feeRates := oracle.FeeRates()
+					feeRates := oracle.allFeeRates()
 					if len(feeRates) > 0 {
 						// Verify data integrity
 						if btcRate, found := feeRates["BTC"]; found {
@@ -953,11 +716,7 @@ func TestConcurrency(t *testing.T) {
 	})
 
 	t.Run("concurrent reads and writes of prices", func(t *testing.T) {
-		oracle := &Oracle{
-			log:      log,
-			prices:   make(map[Ticker]map[string]*priceUpdate),
-			diviners: make(map[string]*diviner),
-		}
+		oracle := newTestOracle(log)
 
 		const numReaders = 20
 		const numWriters = 5
@@ -969,8 +728,8 @@ func TestConcurrency(t *testing.T) {
 		for i := 0; i < numReaders; i++ {
 			go func() {
 				for j := 0; j < 50; j++ {
-					_ = oracle.Prices()
-					_ = oracle.getPrices(map[Ticker]bool{"BTC": true})
+					_ = oracle.allPrices()
+					_, _ = oracle.Price("BTC")
 				}
 				done <- true
 			}()
@@ -981,16 +740,15 @@ func TestConcurrency(t *testing.T) {
 			writerID := i
 			go func() {
 				for j := 0; j < 10; j++ {
-					sourcedUpdate := &SourcedPriceUpdate{
+					update := &OracleUpdate{
 						Source: fmt.Sprintf("writer-%d", writerID),
 						Stamp:  now.Add(time.Duration(j) * time.Millisecond),
-						Weight: 1.0,
-						Prices: []*SourcedPrice{
-							{Ticker: "BTC", Price: float64(50000 + j)},
-							{Ticker: "ETH", Price: float64(3000 + j)},
+						Prices: map[Ticker]float64{
+							"BTC": float64(50000 + j),
+							"ETH": float64(3000 + j),
 						},
 					}
-					oracle.MergePrices(sourcedUpdate)
+					oracle.Merge(update, fmt.Sprintf("writer-%d", writerID))
 				}
 				done <- true
 			}()
@@ -1003,11 +761,7 @@ func TestConcurrency(t *testing.T) {
 	})
 
 	t.Run("concurrent reads and writes of fee rates", func(t *testing.T) {
-		oracle := &Oracle{
-			log:      log,
-			feeRates: make(map[Network]map[string]*feeRateUpdate),
-			diviners: make(map[string]*diviner),
-		}
+		oracle := newTestOracle(log)
 
 		const numReaders = 20
 		const numWriters = 5
@@ -1019,8 +773,8 @@ func TestConcurrency(t *testing.T) {
 		for i := 0; i < numReaders; i++ {
 			go func() {
 				for j := 0; j < 50; j++ {
-					_ = oracle.FeeRates()
-					_ = oracle.getFeeRates(map[Network]bool{"BTC": true})
+					_ = oracle.allFeeRates()
+					_, _ = oracle.FeeRate("BTC")
 				}
 				done <- true
 			}()
@@ -1031,16 +785,15 @@ func TestConcurrency(t *testing.T) {
 			writerID := i
 			go func() {
 				for j := 0; j < 10; j++ {
-					sourcedUpdate := &SourcedFeeRateUpdate{
+					update := &OracleUpdate{
 						Source: fmt.Sprintf("writer-%d", writerID),
 						Stamp:  now.Add(time.Duration(j) * time.Millisecond),
-						Weight: 1.0,
-						FeeRates: []*SourcedFeeRate{
-							{Network: "BTC", FeeRate: bigIntToBytes(big.NewInt(int64(100 + j)))},
-							{Network: "ETH", FeeRate: bigIntToBytes(big.NewInt(int64(50 + j)))},
+						FeeRates: map[Network]*big.Int{
+							"BTC": big.NewInt(int64(100 + j)),
+							"ETH": big.NewInt(int64(50 + j)),
 						},
 					}
-					oracle.MergeFeeRates(sourcedUpdate)
+					oracle.Merge(update, fmt.Sprintf("writer-%d", writerID))
 				}
 				done <- true
 			}()
@@ -1053,12 +806,7 @@ func TestConcurrency(t *testing.T) {
 	})
 
 	t.Run("concurrent merge and read operations", func(t *testing.T) {
-		oracle := &Oracle{
-			log:      log,
-			prices:   make(map[Ticker]map[string]*priceUpdate),
-			feeRates: make(map[Network]map[string]*feeRateUpdate),
-			diviners: make(map[string]*diviner),
-		}
+		oracle := newTestOracle(log)
 
 		const numReaders = 20
 		const numMergers = 10
@@ -1070,8 +818,8 @@ func TestConcurrency(t *testing.T) {
 		for i := 0; i < numReaders; i++ {
 			go func() {
 				for j := 0; j < 50; j++ {
-					_ = oracle.Prices()
-					_ = oracle.FeeRates()
+					_ = oracle.allPrices()
+					_ = oracle.allFeeRates()
 				}
 				done <- true
 			}()
@@ -1082,25 +830,17 @@ func TestConcurrency(t *testing.T) {
 			mergerID := i
 			go func() {
 				for j := 0; j < 10; j++ {
-					sourcedPrices := &SourcedPriceUpdate{
+					update := &OracleUpdate{
 						Source: fmt.Sprintf("merger-%d", mergerID),
 						Stamp:  now.Add(time.Duration(j) * time.Millisecond),
-						Weight: 1.0,
-						Prices: []*SourcedPrice{
-							{Ticker: "BTC", Price: float64(50000 + j)},
+						Prices: map[Ticker]float64{
+							"BTC": float64(50000 + j),
+						},
+						FeeRates: map[Network]*big.Int{
+							"BTC": big.NewInt(int64(100 + j)),
 						},
 					}
-					oracle.MergePrices(sourcedPrices)
-
-					sourcedFeeRates := &SourcedFeeRateUpdate{
-						Source: fmt.Sprintf("merger-%d", mergerID),
-						Stamp:  now.Add(time.Duration(j) * time.Millisecond),
-						Weight: 1.0,
-						FeeRates: []*SourcedFeeRate{
-							{Network: "BTC", FeeRate: bigIntToBytes(big.NewInt(int64(100 + j)))},
-						},
-					}
-					oracle.MergeFeeRates(sourcedFeeRates)
+					oracle.Merge(update, fmt.Sprintf("merger-%d", mergerID))
 				}
 				done <- true
 			}()
@@ -1119,19 +859,17 @@ func TestPublicPrices(t *testing.T) {
 	now := time.Now()
 
 	t.Run("returns all prices", func(t *testing.T) {
-		oracle := &Oracle{
-			log: log,
-			prices: map[Ticker]map[string]*priceUpdate{
-				"BTC": {
-					"source1": {ticker: "BTC", price: 50000.0, stamp: now, weight: 1.0},
-				},
-				"ETH": {
-					"source1": {ticker: "ETH", price: 3000.0, stamp: now, weight: 1.0},
-				},
+		oracle := newTestOracle(log)
+		oracle.prices = makePriceBuckets(map[Ticker]map[string]*priceUpdate{
+			"BTC": {
+				"source1": {ticker: "BTC", price: 50000.0, stamp: now, weight: 1.0},
 			},
-		}
+			"ETH": {
+				"source1": {ticker: "ETH", price: 3000.0, stamp: now, weight: 1.0},
+			},
+		})
 
-		result := oracle.Prices()
+		result := oracle.allPrices()
 
 		if len(result) != 2 {
 			t.Errorf("Expected 2 prices, got %d", len(result))
@@ -1147,12 +885,9 @@ func TestPublicPrices(t *testing.T) {
 	})
 
 	t.Run("returns empty map for empty oracle", func(t *testing.T) {
-		oracle := &Oracle{
-			log:    log,
-			prices: make(map[Ticker]map[string]*priceUpdate),
-		}
+		oracle := newTestOracle(log)
 
-		result := oracle.Prices()
+		result := oracle.allPrices()
 
 		if len(result) != 0 {
 			t.Errorf("Expected 0 prices, got %d", len(result))
@@ -1166,19 +901,17 @@ func TestPublicFeeRates(t *testing.T) {
 	now := time.Now()
 
 	t.Run("returns all fee rates", func(t *testing.T) {
-		oracle := &Oracle{
-			log: log,
-			feeRates: map[Network]map[string]*feeRateUpdate{
-				"BTC": {
-					"source1": {network: "BTC", feeRate: big.NewInt(100), stamp: now, weight: 1.0},
-				},
-				"ETH": {
-					"source1": {network: "ETH", feeRate: big.NewInt(50), stamp: now, weight: 1.0},
-				},
+		oracle := newTestOracle(log)
+		oracle.feeRates = makeFeeRateBuckets(map[Network]map[string]*feeRateUpdate{
+			"BTC": {
+				"source1": {network: "BTC", feeRate: big.NewInt(100), stamp: now, weight: 1.0},
 			},
-		}
+			"ETH": {
+				"source1": {network: "ETH", feeRate: big.NewInt(50), stamp: now, weight: 1.0},
+			},
+		})
 
-		result := oracle.FeeRates()
+		result := oracle.allFeeRates()
 
 		if len(result) != 2 {
 			t.Errorf("Expected 2 fee rates, got %d", len(result))
@@ -1194,12 +927,9 @@ func TestPublicFeeRates(t *testing.T) {
 	})
 
 	t.Run("returns empty map for empty oracle", func(t *testing.T) {
-		oracle := &Oracle{
-			log:      log,
-			feeRates: make(map[Network]map[string]*feeRateUpdate),
-		}
+		oracle := newTestOracle(log)
 
-		result := oracle.FeeRates()
+		result := oracle.allFeeRates()
 
 		if len(result) != 0 {
 			t.Errorf("Expected 0 fee rates, got %d", len(result))
@@ -1211,15 +941,11 @@ func TestMergeWithEmptyUpdates(t *testing.T) {
 	backend := slog.NewBackend(os.Stdout)
 	log := backend.Logger("test")
 
-	t.Run("MergePrices with nil", func(t *testing.T) {
-		oracle := &Oracle{
-			log:      log,
-			prices:   make(map[Ticker]map[string]*priceUpdate),
-			diviners: make(map[string]*diviner),
-		}
+	t.Run("Merge with nil", func(t *testing.T) {
+		oracle := newTestOracle(log)
 
 		// Should not panic
-		result := oracle.MergePrices(nil)
+		result := oracle.Merge(nil, "test-sender")
 
 		if result != nil {
 			t.Errorf("Expected nil result, got %v", result)
@@ -1230,53 +956,26 @@ func TestMergeWithEmptyUpdates(t *testing.T) {
 		}
 	})
 
-	t.Run("MergeFeeRates with nil", func(t *testing.T) {
-		oracle := &Oracle{
-			log:      log,
-			feeRates: make(map[Network]map[string]*feeRateUpdate),
-			diviners: make(map[string]*diviner),
-		}
+	t.Run("Merge with empty prices map", func(t *testing.T) {
+		oracle := newTestOracle(log)
 
-		// Should not panic
-		result := oracle.MergeFeeRates(nil)
-
-		if result != nil {
-			t.Errorf("Expected nil result, got %v", result)
-		}
-
-		if len(oracle.feeRates) != 0 {
-			t.Errorf("Expected no fee rates, got %d", len(oracle.feeRates))
-		}
-	})
-
-	t.Run("MergePrices with empty prices slice", func(t *testing.T) {
-		oracle := &Oracle{
-			log:      log,
-			prices:   make(map[Ticker]map[string]*priceUpdate),
-			diviners: make(map[string]*diviner),
-		}
-
-		result := oracle.MergePrices(&SourcedPriceUpdate{
+		result := oracle.Merge(&OracleUpdate{
 			Source: "test",
-			Prices: []*SourcedPrice{},
-		})
+			Prices: map[Ticker]float64{},
+		}, "test-sender")
 
 		if result != nil {
 			t.Errorf("Expected nil result, got %v", result)
 		}
 	})
 
-	t.Run("MergeFeeRates with empty fee rates slice", func(t *testing.T) {
-		oracle := &Oracle{
-			log:      log,
-			feeRates: make(map[Network]map[string]*feeRateUpdate),
-			diviners: make(map[string]*diviner),
-		}
+	t.Run("Merge with empty fee rates map", func(t *testing.T) {
+		oracle := newTestOracle(log)
 
-		result := oracle.MergeFeeRates(&SourcedFeeRateUpdate{
+		result := oracle.Merge(&OracleUpdate{
 			Source:   "test",
-			FeeRates: []*SourcedFeeRate{},
-		})
+			FeeRates: map[Network]*big.Int{},
+		}, "test-sender")
 
 		if result != nil {
 			t.Errorf("Expected nil result, got %v", result)
@@ -1419,58 +1118,6 @@ func TestAgedWeightBoundaries(t *testing.T) {
 	})
 }
 
-func TestGetSourceWeight(t *testing.T) {
-	backend := slog.NewBackend(os.Stdout)
-	log := backend.Logger("test")
-
-	t.Run("returns weight for existing source", func(t *testing.T) {
-		div1 := &diviner{source: &mockSource{name: "source1", weight: 0.8}}
-		div2 := &diviner{source: &mockSource{name: "source2", weight: 0.5}}
-
-		oracle := &Oracle{
-			log:      log,
-			diviners: map[string]*diviner{
-				"source1": div1,
-				"source2": div2,
-			},
-		}
-
-		weight := oracle.GetSourceWeight("source1")
-		if weight != 0.8 {
-			t.Errorf("Expected weight 0.8, got %.1f", weight)
-		}
-
-		weight = oracle.GetSourceWeight("source2")
-		if weight != 0.5 {
-			t.Errorf("Expected weight 0.5, got %.1f", weight)
-		}
-	})
-
-	t.Run("returns default weight for non-existent source", func(t *testing.T) {
-		oracle := &Oracle{
-			log:      log,
-			diviners: make(map[string]*diviner),
-		}
-
-		weight := oracle.GetSourceWeight("non-existent")
-		if weight != 1.0 {
-			t.Errorf("Expected default weight 1.0, got %.1f", weight)
-		}
-	})
-
-	t.Run("returns default weight when diviners is empty", func(t *testing.T) {
-		oracle := &Oracle{
-			log:      log,
-			diviners: make(map[string]*diviner),
-		}
-
-		weight := oracle.GetSourceWeight("any-source")
-		if weight != 1.0 {
-			t.Errorf("Expected default weight 1.0, got %.1f", weight)
-		}
-	})
-}
-
 func TestRescheduleDiviner(t *testing.T) {
 	backend := slog.NewBackend(os.Stdout)
 	log := backend.Logger("test")
@@ -1481,14 +1128,12 @@ func TestRescheduleDiviner(t *testing.T) {
 			resetTimer: make(chan struct{}, 1),
 		}
 
-		oracle := &Oracle{
-			log: log,
-			diviners: map[string]*diviner{
-				"test-source": mockDiv,
-			},
+		oracle := newTestOracle(log)
+		oracle.diviners = map[string]*diviner{
+			"test-source": mockDiv,
 		}
 
-		oracle.rescheduleDiviner("test-source")
+		oracle.rescheduleDiviner("test-source", "other-node")
 
 		// Verify the reschedule signal was sent
 		select {
@@ -1500,23 +1145,17 @@ func TestRescheduleDiviner(t *testing.T) {
 	})
 
 	t.Run("does nothing for non-existent diviner", func(t *testing.T) {
-		oracle := &Oracle{
-			log:      log,
-			diviners: make(map[string]*diviner),
-		}
+		oracle := newTestOracle(log)
 
 		// Should not panic
-		oracle.rescheduleDiviner("non-existent")
+		oracle.rescheduleDiviner("non-existent", "other-node")
 	})
 
 	t.Run("does nothing when diviners is empty", func(t *testing.T) {
-		oracle := &Oracle{
-			log:      log,
-			diviners: make(map[string]*diviner),
-		}
+		oracle := newTestOracle(log)
 
 		// Should not panic
-		oracle.rescheduleDiviner("any-source")
+		oracle.rescheduleDiviner("any-source", "other-node")
 	})
 }
 
@@ -1525,13 +1164,15 @@ func TestRun(t *testing.T) {
 	log := backend.Logger("test")
 
 	t.Run("Run completes with no diviners", func(t *testing.T) {
-		oracle := &Oracle{
-			log:      log,
-			diviners: make(map[string]*diviner),
-		}
+		qm := newQuotaManager(&quotaManagerConfig{
+			log:    log,
+			nodeID: "test-node",
+		})
+		oracle := newTestOracle(log)
+		oracle.diviners = make(map[string]*diviner)
+		oracle.quotaManager = qm
 
 		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
 
 		done := make(chan struct{})
 		go func() {
@@ -1539,26 +1180,51 @@ func TestRun(t *testing.T) {
 			close(done)
 		}()
 
+		// Cancel immediately since there are no diviners
+		cancel()
+
 		select {
 		case <-done:
-			// Success - Run completed immediately
+			// Success - Run exited after cancel
 		case <-time.After(time.Second):
-			t.Error("Run did not complete with empty diviners")
+			t.Error("Run did not complete after context cancellation")
 		}
 	})
 
 	t.Run("Run waits for diviners and exits on context cancellation", func(t *testing.T) {
+		qm := newQuotaManager(&quotaManagerConfig{
+			log:    log,
+			nodeID: "test-node",
+		})
+
 		// Create mock diviners that wait for context
 		mockDiviners := make(map[string]*diviner)
 		for i := 0; i < 2; i++ {
 			name := fmt.Sprintf("source%d", i)
-			mockDiviners[name] = &diviner{source: &mockSource{name: name, minPeriod: time.Hour}}
+			localName := name
+			mockDiviners[name] = &diviner{
+				source: &mockSource{
+					name:      name,
+					minPeriod: time.Hour, // Long period to avoid immediate fetch
+					fetchFunc: func(ctx context.Context) (*sources.RateInfo, error) {
+						<-ctx.Done() // Block until context cancelled
+						return nil, ctx.Err()
+					},
+				},
+				resetTimer: make(chan struct{}),
+				log:        log,
+				getNetworkSchedule: func() networkSchedule {
+					now := time.Now()
+					activePeers := qm.getActivePeersForSource(localName, now)
+					return computeNetworkSchedule(activePeers, "local", time.Hour, now)
+				},
+				onScheduleChanged: func(*OracleSnapshot) {},
+			}
 		}
 
-		oracle := &Oracle{
-			log:      log,
-			diviners: mockDiviners,
-		}
+		oracle := newTestOracle(log)
+		oracle.diviners = mockDiviners
+		oracle.quotaManager = qm
 
 		ctx, cancel := context.WithCancel(context.Background())
 		done := make(chan struct{})
@@ -1589,8 +1255,11 @@ func TestNewOracle(t *testing.T) {
 
 	t.Run("creates oracle with default sources", func(t *testing.T) {
 		cfg := &Config{
-			Log:           log,
-			PublishUpdate: func(ctx context.Context, update *pb.NodeOracleUpdate) error { return nil },
+			Log:                   log,
+			NodeID:                "test-node",
+			PublishUpdate:         func(ctx context.Context, update *OracleUpdate) error { return nil },
+			OnStateUpdate:         func(*OracleSnapshot) {},
+			PublishQuotaHeartbeat: func(ctx context.Context, quotas map[string]*sources.QuotaStatus) error { return nil },
 		}
 
 		oracle, err := New(cfg)
@@ -1617,8 +1286,11 @@ func TestNewOracle(t *testing.T) {
 
 	t.Run("initializes with unauthed sources", func(t *testing.T) {
 		cfg := &Config{
-			Log:           log,
-			PublishUpdate: func(ctx context.Context, update *pb.NodeOracleUpdate) error { return nil },
+			Log:                   log,
+			NodeID:                "test-node",
+			PublishUpdate:         func(ctx context.Context, update *OracleUpdate) error { return nil },
+			OnStateUpdate:         func(*OracleSnapshot) {},
+			PublishQuotaHeartbeat: func(ctx context.Context, quotas map[string]*sources.QuotaStatus) error { return nil },
 		}
 
 		oracle, err := New(cfg)
@@ -1634,9 +1306,12 @@ func TestNewOracle(t *testing.T) {
 
 	t.Run("nil http client uses default client", func(t *testing.T) {
 		cfg := &Config{
-			Log:           log,
-			HTTPClient:    nil,
-			PublishUpdate: func(ctx context.Context, update *pb.NodeOracleUpdate) error { return nil },
+			Log:                   log,
+			NodeID:                "test-node",
+			HTTPClient:            nil,
+			PublishUpdate:         func(ctx context.Context, update *OracleUpdate) error { return nil },
+			OnStateUpdate:         func(*OracleSnapshot) {},
+			PublishQuotaHeartbeat: func(ctx context.Context, quotas map[string]*sources.QuotaStatus) error { return nil },
 		}
 
 		oracle, err := New(cfg)
@@ -1652,9 +1327,12 @@ func TestNewOracle(t *testing.T) {
 	t.Run("custom http client is used", func(t *testing.T) {
 		customClient := &mockHTTPClient{}
 		cfg := &Config{
-			Log:           log,
-			HTTPClient:    customClient,
-			PublishUpdate: func(ctx context.Context, update *pb.NodeOracleUpdate) error { return nil },
+			Log:                   log,
+			NodeID:                "test-node",
+			HTTPClient:            customClient,
+			PublishUpdate:         func(ctx context.Context, update *OracleUpdate) error { return nil },
+			OnStateUpdate:         func(*OracleSnapshot) {},
+			PublishQuotaHeartbeat: func(ctx context.Context, quotas map[string]*sources.QuotaStatus) error { return nil },
 		}
 
 		oracle, err := New(cfg)
@@ -1669,8 +1347,11 @@ func TestNewOracle(t *testing.T) {
 
 	t.Run("initializes empty price and fee rate maps", func(t *testing.T) {
 		cfg := &Config{
-			Log:           log,
-			PublishUpdate: func(ctx context.Context, update *pb.NodeOracleUpdate) error { return nil },
+			Log:                   log,
+			NodeID:                "test-node",
+			PublishUpdate:         func(ctx context.Context, update *OracleUpdate) error { return nil },
+			OnStateUpdate:         func(*OracleSnapshot) {},
+			PublishQuotaHeartbeat: func(ctx context.Context, quotas map[string]*sources.QuotaStatus) error { return nil },
 		}
 
 		oracle, err := New(cfg)

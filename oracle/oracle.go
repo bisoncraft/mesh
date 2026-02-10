@@ -2,6 +2,7 @@ package oracle
 
 import (
 	"context"
+	"fmt"
 	"math/big"
 	"net/http"
 	"sync"
@@ -10,19 +11,6 @@ import (
 	"github.com/decred/slog"
 	"github.com/bisoncraft/mesh/oracle/sources"
 	"github.com/bisoncraft/mesh/oracle/sources/providers"
-	"github.com/bisoncraft/mesh/tatanka/pb"
-)
-
-const (
-	fullValidityPeriod = time.Minute * 5
-	validityExpiration = time.Minute * 30
-	decayPeriod        = validityExpiration - fullValidityPeriod
-	requestTimeout     = time.Second * 5
-
-	// PriceTopicPrefix is the topic prefix for price updates sent to clients.
-	PriceTopicPrefix = "price."
-	// FeeRateTopicPrefix is the topic prefix for fee rate updates sent to clients.
-	FeeRateTopicPrefix = "fee_rate."
 )
 
 // Ticker is the upper-case symbol used to indicate an asset.
@@ -31,48 +19,20 @@ type Ticker string
 // Network is the network symbol of a Blockchain.
 type Network string
 
-// SourcedPrice represents a single price entry within a sourced update batch.
-type SourcedPrice struct {
-	Ticker Ticker
-	Price  float64
-}
-
-// SourcedPriceUpdate is a batch of price updates from a single source, used for
-// sharing with other Tatanka Mesh nodes.
-type SourcedPriceUpdate struct {
-	Source string
-	Stamp  time.Time
-	Weight float64
-	Prices []*SourcedPrice
-}
-
-// SourcedFeeRate represents a single fee rate entry within a sourced update batch.
-type SourcedFeeRate struct {
-	Network Network
-	FeeRate []byte // big-endian encoded big integer
-}
-
-// SourcedFeeRateUpdate is a batch of fee rate updates from a single source, used
-// for sharing with other Tatanka Mesh nodes.
-type SourcedFeeRateUpdate struct {
+// OracleUpdate is the payload published to the mesh for oracle data.
+// At least one of Prices or FeeRates should be populated.
+type OracleUpdate struct {
 	Source   string
 	Stamp    time.Time
-	Weight   float64
-	FeeRates []*SourcedFeeRate
+	Prices   map[Ticker]float64
+	FeeRates map[Network]*big.Int
+	Quota    *sources.QuotaStatus
 }
 
-// PriceUpdate is an aggregated price update. These are emitted when an update
-// is received from a source.
-type PriceUpdate struct {
-	Ticker Ticker
-	Price  float64
-}
-
-// FeeRateUpdate is an aggregated fee rate update. These are emitted when an
-// update is received from a source.
-type FeeRateUpdate struct {
-	Network Network
-	FeeRate *big.Int
+// MergeResult contains the aggregated rates that changed after a merge.
+type MergeResult struct {
+	Prices   map[Ticker]float64
+	FeeRates map[Network]*big.Int
 }
 
 // HTTPClient defines the requirements for implementing an http client.
@@ -80,55 +40,90 @@ type HTTPClient interface {
 	Do(req *http.Request) (*http.Response, error)
 }
 
+// Config contains configuration for the Oracle.
 type Config struct {
-	Log              slog.Logger
-	CMCKey           string
-	TatumKey         string
+	// NodeID is the ID of the local node running the oracle.
+	NodeID string
+
+	// PublishUpdate is called when the oracle has fetched new data from a
+	// source.
+	PublishUpdate func(ctx context.Context, update *OracleUpdate) error
+
+	// OnStateUpdate is called when some state in the oracle has changed.
+	// Only the updated fields are populated. The full snapshot can be fetched
+	// using OracleSnapshot, and then updates received on this function can be
+	// combined with the full snapshot to get the current state.
+	OnStateUpdate func(*OracleSnapshot)
+
+	// PublishQuotaHeartbeat is called periodically to update other nodes with
+	// the current quota status for all sources.
+	PublishQuotaHeartbeat func(ctx context.Context, quotas map[string]*sources.QuotaStatus) error
+
+	// Log is the logger used to log messages.
+	Log slog.Logger
+
+	// CMCKey is the token used to fetch data from the CoinMarketCap API.
+	CMCKey string
+
+	// TatumKey is the token used to fetch data from the Tatum API.
+	TatumKey string
+
+	// BlockcypherToken is the token used to fetch data from the Blockcypher API.
 	BlockcypherToken string
-	HTTPClient       HTTPClient // Optional. If nil, http.DefaultClient is used.
-	PublishUpdate    func(ctx context.Context, update *pb.NodeOracleUpdate) error
+
+	// HTTPClient is the HTTP client used to fetch data from the sources.
+	// If nil, http.DefaultClient is used.
+	HTTPClient HTTPClient
 }
 
+// verify validates the Oracle configuration.
+func (cfg *Config) verify() error {
+	if cfg == nil {
+		return fmt.Errorf("oracle config is nil")
+	}
+	if cfg.PublishUpdate == nil {
+		return fmt.Errorf("publish update callback is required")
+	}
+	if cfg.OnStateUpdate == nil {
+		return fmt.Errorf("state update callback is required")
+	}
+	if cfg.PublishQuotaHeartbeat == nil {
+		return fmt.Errorf("publish quota heartbeat callback is required")
+	}
+	if cfg.NodeID == "" {
+		return fmt.Errorf("node ID is required")
+	}
+	return nil
+}
+
+// Oracle manages price and fee rate data from multiple sources.
 type Oracle struct {
 	log        slog.Logger
 	httpClient HTTPClient
 	srcs       []sources.Source
 
 	feeRatesMtx sync.RWMutex
-	feeRates    map[Network]map[string]*feeRateUpdate
+	feeRates    map[Network]*feeRateBucket
 
 	pricesMtx sync.RWMutex
-	prices    map[Ticker]map[string]*priceUpdate
+	prices    map[Ticker]*priceBucket
 
 	divinersMtx sync.RWMutex
 	diviners    map[string]*diviner
 
-	publishUpdate func(ctx context.Context, update *pb.NodeOracleUpdate) error
+	publishUpdate func(ctx context.Context, update *OracleUpdate) error
+	onStateUpdate func(*OracleSnapshot)
+	quotaManager  *quotaManager
+	fetchTracker  *fetchTracker
+	nodeID        string
 }
 
-// priceUpdate is the internal message used for when a price update is fetched
-// or received from a source.
-type priceUpdate struct {
-	ticker Ticker
-	price  float64
-
-	// Added by Oracle loops
-	stamp  time.Time
-	weight float64
-}
-
-// feeRateUpdate is the internal message used for when a fee rate update is
-// fetched or received from a source.
-type feeRateUpdate struct {
-	network Network
-	feeRate *big.Int
-
-	// Added by Oracle loops
-	stamp  time.Time
-	weight float64
-}
-
+// New creates a new Oracle with the given configuration.
 func New(cfg *Config) (*Oracle, error) {
+	if err := cfg.verify(); err != nil {
+		return nil, err
+	}
+
 	httpClient := cfg.HTTPClient
 	if httpClient == nil {
 		httpClient = http.DefaultClient
@@ -166,228 +161,194 @@ func New(cfg *Config) (*Oracle, error) {
 		allSources = append(allSources, tatumSources.All()...)
 	}
 
+	quotaManager := newQuotaManager(&quotaManagerConfig{
+		log:                   cfg.Log,
+		nodeID:                cfg.NodeID,
+		publishQuotaHeartbeat: cfg.PublishQuotaHeartbeat,
+		onStateUpdate:         cfg.OnStateUpdate,
+		sources:               allSources,
+	})
+
 	oracle := &Oracle{
 		log:           cfg.Log,
 		httpClient:    httpClient,
 		srcs:          allSources,
-		feeRates:      make(map[Network]map[string]*feeRateUpdate),
-		prices:        make(map[Ticker]map[string]*priceUpdate),
+		feeRates:      make(map[Network]*feeRateBucket),
+		prices:        make(map[Ticker]*priceBucket),
 		diviners:      make(map[string]*diviner),
 		publishUpdate: cfg.PublishUpdate,
+		onStateUpdate: cfg.OnStateUpdate,
+		quotaManager:  quotaManager,
+		fetchTracker:  newFetchTracker(),
+		nodeID:        cfg.NodeID,
 	}
 
-	for _, src := range allSources {
-		div := newDiviner(src, oracle.publishUpdate, oracle.log)
+	// Create diviners for each source
+	for _, src := range oracle.srcs {
+		getNetworkSchedule := func(s sources.Source) func() networkSchedule {
+			return func() networkSchedule {
+				return quotaManager.getNetworkSchedule(s.Name(), s.MinPeriod())
+			}
+		}(src)
+		div := newDiviner(src, oracle.publishUpdate, oracle.log, getNetworkSchedule, cfg.OnStateUpdate)
 		oracle.diviners[src.Name()] = div
 	}
 
 	return oracle, nil
 }
 
-// priceWeightCounter is used to calculate weighted averages for prices.
-type priceWeightCounter struct {
-	weightedSum float64
-	totalWeight float64
-}
-
-// feeRateWeightCounter is used to calculate weighted fee rate averages with arbitrary precision.
-type feeRateWeightCounter struct {
-	weightedSum *big.Float
-	totalWeight float64
-}
-
-// agedWeight returns a weight based on the age of an update.
-func agedWeight(weight float64, stamp time.Time) float64 {
-	// Older updates lose weight.
-	age := time.Since(stamp)
-	if age < 0 {
-		age = 0
-	}
-
-	switch {
-	case age < fullValidityPeriod:
-		return weight
-	case age > validityExpiration:
-		return 0
-	default:
-		// Calculate remaining validity as a fraction of the decay period.
-		remainingValidity := validityExpiration - age
-		return weight * (float64(remainingValidity) / float64(decayPeriod))
-	}
-}
-
-func (o *Oracle) getFeeRates(nets map[Network]bool) map[Network]*big.Int {
+// allFeeRates returns the aggregated tx fee rates for all known networks.
+func (o *Oracle) allFeeRates() map[Network]*big.Int {
 	o.feeRatesMtx.RLock()
-	size := len(nets)
-	if nets == nil {
-		size = len(o.feeRates)
-	}
+	defer o.feeRatesMtx.RUnlock()
 
-	counters := make(map[Network]*feeRateWeightCounter, size)
-	for net, updates := range o.feeRates {
-		if nets != nil && !nets[net] {
-			continue
-		}
-
-		counter, found := counters[net]
-		if !found {
-			counter = &feeRateWeightCounter{
-				weightedSum: new(big.Float),
-			}
-			counters[net] = counter
-		}
-
-		for _, entry := range updates {
-			weight := agedWeight(entry.weight, entry.stamp)
-			if weight == 0 {
-				continue
-			}
-			counter.totalWeight += weight
-
-			// Multiply weight (float64) by feeRate (big.Int) using big.Float
-			weightFloat := new(big.Float).SetFloat64(weight)
-			feeRateFloat := new(big.Float).SetInt(entry.feeRate)
-			product := new(big.Float).Mul(weightFloat, feeRateFloat)
-			counter.weightedSum.Add(counter.weightedSum, product)
+	feeRates := make(map[Network]*big.Int, len(o.feeRates))
+	for net, bucket := range o.feeRates {
+		if rate := bucket.aggregatedRate(); rate != nil && rate.Sign() > 0 {
+			feeRates[net] = rate
 		}
 	}
-
-	o.feeRatesMtx.RUnlock()
-
-	// Calculate weighted averages.
-	feeRates := make(map[Network]*big.Int, len(counters))
-	for net, counter := range counters {
-		if counter.totalWeight == 0 {
-			continue
-		}
-
-		// Divide weightedSum (big.Float) by totalWeight (float64)
-		totalWeightFloat := new(big.Float).SetFloat64(counter.totalWeight)
-		avgFloat := new(big.Float).Quo(counter.weightedSum, totalWeightFloat)
-
-		// Round to nearest integer
-		if avgFloat.Sign() >= 0 {
-			avgFloat.Add(avgFloat, new(big.Float).SetFloat64(0.5))
-		} else {
-			avgFloat.Sub(avgFloat, new(big.Float).SetFloat64(0.5))
-		}
-
-		// Convert to big.Int (this truncates towards zero after rounding)
-		rounded := new(big.Int)
-		avgFloat.Int(rounded)
-		feeRates[net] = rounded
-	}
-
 	return feeRates
 }
 
-// FeeRates returns the aggregated tx fee rates for all known networks.
-func (o *Oracle) FeeRates() map[Network]*big.Int {
-	return o.getFeeRates(nil)
-}
-
-// MergeFeeRates merges fee rates from another oracle into this oracle.
-// Returns a map of the networks whose aggregated fee rates were updated.
-func (o *Oracle) MergeFeeRates(sourcedUpdate *SourcedFeeRateUpdate) map[Network]*big.Int {
-	if sourcedUpdate == nil || len(sourcedUpdate.FeeRates) == 0 {
+// Merge merges an oracle update from another node into this oracle.
+// Returns the aggregated rates that changed.
+func (o *Oracle) Merge(update *OracleUpdate, senderID string) *MergeResult {
+	if update == nil || (len(update.Prices) == 0 && len(update.FeeRates) == 0) {
 		return nil
 	}
 
-	o.feeRatesMtx.Lock()
-	updatedNetworks := make(map[Network]bool)
+	weight := o.sourceWeight(update.Source)
+	result := &MergeResult{}
 
-	for _, fr := range sourcedUpdate.FeeRates {
+	if len(update.FeeRates) > 0 {
+		result.FeeRates = o.mergeFeeRates(update, weight)
+	}
+	if len(update.Prices) > 0 {
+		result.Prices = o.mergePrices(update, weight)
+	}
+
+	o.fetchTracker.recordFetch(update.Source, senderID, update.Stamp)
+	o.rescheduleDiviner(update.Source, senderID)
+
+	return result
+}
+
+func (o *Oracle) mergeFeeRates(update *OracleUpdate, weight float64) map[Network]*big.Int {
+	if len(update.FeeRates) == 0 {
+		return nil
+	}
+
+	updatedFeeRates := make(map[Network]*big.Int)
+	snapshotFeeRates := make(map[string]*SnapshotRate)
+	var latestFeeRates map[string]string
+
+	for network, feeRate := range update.FeeRates {
 		proposedUpdate := &feeRateUpdate{
-			network: fr.Network,
-			feeRate: bytesToBigInt(fr.FeeRate),
-			stamp:   sourcedUpdate.Stamp,
-			weight:  sourcedUpdate.Weight,
+			network: network,
+			feeRate: feeRate,
+			stamp:   update.Stamp,
+			weight:  weight,
 		}
-		netSources, found := o.feeRates[fr.Network]
-		if !found {
-			o.feeRates[fr.Network] = map[string]*feeRateUpdate{
-				sourcedUpdate.Source: proposedUpdate,
+
+		bucket := o.getOrCreateFeeRateBucket(network)
+		updated, agg := bucket.mergeAndUpdateAggregate(update.Source, proposedUpdate)
+		if updated && agg.Sign() > 0 {
+			updatedFeeRates[network] = agg
+			snapshotFeeRates[string(network)] = &SnapshotRate{
+				Value: agg.String(),
+				Contributions: map[string]*SourceContribution{
+					update.Source: {
+						Value:  feeRate.String(),
+						Stamp:  update.Stamp,
+						Weight: weight,
+					},
+				},
 			}
-			updatedNetworks[fr.Network] = true
-			continue
-		}
-		existingUpdate, found := netSources[sourcedUpdate.Source]
-		if !found {
-			netSources[sourcedUpdate.Source] = proposedUpdate
-			updatedNetworks[fr.Network] = true
-			continue
-		}
-		if sourcedUpdate.Stamp.After(existingUpdate.stamp) {
-			netSources[sourcedUpdate.Source] = proposedUpdate
-			updatedNetworks[fr.Network] = true
+			if latestFeeRates == nil {
+				latestFeeRates = make(map[string]string)
+			}
+			latestFeeRates[string(network)] = feeRate.String()
 		}
 	}
-	o.feeRatesMtx.Unlock()
 
-	o.rescheduleDiviner(sourcedUpdate.Source)
+	if len(snapshotFeeRates) > 0 {
+		fetchCounts := o.fetchTracker.sourceFetchCounts(update.Source)
+		stamp := update.Stamp
+		o.onStateUpdate(&OracleSnapshot{
+			Sources: map[string]*SourceStatus{
+				update.Source: {
+					LastFetch:  &stamp,
+					Fetches24h: fetchCounts,
+					LatestData: map[string]map[string]string{
+						FeeRateData: latestFeeRates,
+					},
+				},
+			},
+			FeeRates: snapshotFeeRates,
+		})
+	}
 
-	return o.getFeeRates(updatedNetworks)
+	return updatedFeeRates
 }
 
-func (o *Oracle) getPrices(tickers map[Ticker]bool) map[Ticker]float64 {
+// allPrices returns the aggregated prices for all known tickers.
+func (o *Oracle) allPrices() map[Ticker]float64 {
 	o.pricesMtx.RLock()
-	size := len(tickers)
-	if tickers == nil {
-		size = len(o.prices)
-	}
-	counters := make(map[Ticker]*priceWeightCounter, size)
+	defer o.pricesMtx.RUnlock()
 
-	for ticker, updates := range o.prices {
-		if tickers != nil && !tickers[ticker] {
-			continue
-		}
-		counter, found := counters[ticker]
-		if !found {
-			counter = &priceWeightCounter{}
-			counters[ticker] = counter
-		}
-		for _, entry := range updates {
-			weight := agedWeight(entry.weight, entry.stamp)
-			if weight == 0 {
-				continue
-			}
-			counter.totalWeight += weight
-			counter.weightedSum += weight * entry.price
+	prices := make(map[Ticker]float64, len(o.prices))
+	for ticker, bucket := range o.prices {
+		if price := bucket.aggregatedPrice(); price > 0 {
+			prices[ticker] = price
 		}
 	}
-	o.pricesMtx.RUnlock()
-
-	priceMap := make(map[Ticker]float64, len(counters))
-	for ticker, counter := range counters {
-		if counter.totalWeight == 0 {
-			continue
-		}
-		priceMap[ticker] = counter.weightedSum / counter.totalWeight
-	}
-
-	return priceMap
+	return prices
 }
 
-// Prices returns the aggregated prices for all known tickers.
-func (o *Oracle) Prices() map[Ticker]float64 {
-	return o.getPrices(nil)
+// Price returns the cached aggregated price for a single ticker.
+func (o *Oracle) Price(ticker Ticker) (float64, bool) {
+	bucket := o.getPriceBucket(ticker)
+	if bucket == nil {
+		return 0, false
+	}
+	if price := bucket.aggregatedPrice(); price > 0 {
+		return price, true
+	}
+	return 0, false
 }
 
-func (o *Oracle) rescheduleDiviner(name string) {
+// FeeRate returns the cached aggregated fee rate for a single network.
+func (o *Oracle) FeeRate(network Network) (*big.Int, bool) {
+	bucket := o.getFeeRateBucket(network)
+	if bucket == nil {
+		return nil, false
+	}
+	if rate := bucket.aggregatedRate(); rate != nil && rate.Sign() > 0 {
+		return rate, true
+	}
+	return nil, false
+}
+
+func (o *Oracle) rescheduleDiviner(name string, lastFetchNodeID string) {
+	// diviner reschedules itself after a fetch.
+	if lastFetchNodeID == o.nodeID {
+		return
+	}
+
 	o.divinersMtx.RLock()
 	div, found := o.diviners[name]
 	o.divinersMtx.RUnlock()
 	if !found {
-		// Do nothing.
 		return
 	}
 
 	div.reschedule()
 }
 
-// GetSourceWeight returns the configured weight for a source by name.
+// sourceWeight returns the configured weight for a source by name.
 // If the source is not found, returns 1.0 as a default weight.
-func (o *Oracle) GetSourceWeight(sourceName string) float64 {
+func (o *Oracle) sourceWeight(sourceName string) float64 {
 	o.divinersMtx.RLock()
 	div, found := o.diviners[sourceName]
 	o.divinersMtx.RUnlock()
@@ -397,52 +358,76 @@ func (o *Oracle) GetSourceWeight(sourceName string) float64 {
 	return div.source.Weight()
 }
 
-// MergePrices merges prices from another oracle into this oracle.
-// Returns a map of the tickers whose aggregated prices were updated.
-func (o *Oracle) MergePrices(sourcedUpdate *SourcedPriceUpdate) map[Ticker]float64 {
-	if sourcedUpdate == nil || len(sourcedUpdate.Prices) == 0 {
+func (o *Oracle) mergePrices(update *OracleUpdate, weight float64) map[Ticker]float64 {
+	if len(update.Prices) == 0 {
 		return nil
 	}
 
-	o.pricesMtx.Lock()
-	updatedTickers := make(map[Ticker]bool)
+	updatedPrices := make(map[Ticker]float64)
+	snapshotPrices := make(map[string]*SnapshotRate)
+	var latestPrices map[string]string
 
-	for _, p := range sourcedUpdate.Prices {
+	for ticker, price := range update.Prices {
 		proposedUpdate := &priceUpdate{
-			ticker: p.Ticker,
-			price:  p.Price,
-			stamp:  sourcedUpdate.Stamp,
-			weight: sourcedUpdate.Weight,
+			ticker: ticker,
+			price:  price,
+			stamp:  update.Stamp,
+			weight: weight,
 		}
-		tickerSources, found := o.prices[p.Ticker]
-		if !found {
-			o.prices[p.Ticker] = map[string]*priceUpdate{
-				sourcedUpdate.Source: proposedUpdate,
+
+		bucket := o.getOrCreatePriceBucket(ticker)
+		updated, agg := bucket.mergeAndUpdateAggregate(update.Source, proposedUpdate)
+		if updated && agg > 0 {
+			updatedPrices[ticker] = agg
+			snapshotPrices[string(ticker)] = &SnapshotRate{
+				Value: fmt.Sprintf("%f", agg),
+				Contributions: map[string]*SourceContribution{
+					update.Source: {
+						Value:  fmt.Sprintf("%f", price),
+						Stamp:  update.Stamp,
+						Weight: weight,
+					},
+				},
 			}
-			updatedTickers[p.Ticker] = true
-			continue
-		}
-		existingUpdate, found := tickerSources[sourcedUpdate.Source]
-		if !found {
-			tickerSources[sourcedUpdate.Source] = proposedUpdate
-			updatedTickers[p.Ticker] = true
-			continue
-		}
-		if sourcedUpdate.Stamp.After(existingUpdate.stamp) {
-			tickerSources[sourcedUpdate.Source] = proposedUpdate
-			updatedTickers[p.Ticker] = true
+			if latestPrices == nil {
+				latestPrices = make(map[string]string)
+			}
+			latestPrices[string(ticker)] = fmt.Sprintf("%f", price)
 		}
 	}
-	o.pricesMtx.Unlock()
 
-	o.rescheduleDiviner(sourcedUpdate.Source)
+	if len(snapshotPrices) > 0 {
+		fetchCounts := o.fetchTracker.sourceFetchCounts(update.Source)
+		stamp := update.Stamp
+		o.onStateUpdate(&OracleSnapshot{
+			Sources: map[string]*SourceStatus{
+				update.Source: {
+					LastFetch:  &stamp,
+					Fetches24h: fetchCounts,
+					LatestData: map[string]map[string]string{
+						PriceData: latestPrices,
+					},
+				},
+			},
+			Prices: snapshotPrices,
+		})
+	}
 
-	return o.getPrices(updatedTickers)
+	return updatedPrices
 }
 
+// Run starts the oracle and blocks until the context is done.
 func (o *Oracle) Run(ctx context.Context) {
 	var wg sync.WaitGroup
 
+	// Run quota manager.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		o.quotaManager.run(ctx)
+	}()
+
+	// Run all diviners
 	o.divinersMtx.RLock()
 	for _, div := range o.diviners {
 		wg.Add(1)
@@ -456,23 +441,12 @@ func (o *Oracle) Run(ctx context.Context) {
 	wg.Wait()
 }
 
-// bytesToBigInt converts big-endian encoded bytes to big.Int.
-func bytesToBigInt(b []byte) *big.Int {
-	if len(b) == 0 {
-		return big.NewInt(0)
-	}
-	return new(big.Int).SetBytes(b)
+// GetLocalQuotas returns all local source quotas for handshake/heartbeat.
+func (o *Oracle) GetLocalQuotas() map[string]*sources.QuotaStatus {
+	return o.quotaManager.getLocalQuotas()
 }
 
-// bigIntToBytes converts big.Int to big-endian encoded bytes.
-func bigIntToBytes(bi *big.Int) []byte {
-	if bi == nil || bi.Sign() == 0 {
-		return []byte{0}
-	}
-	return bi.Bytes()
-}
-
-// uint64ToBigInt converts uint64 to big.Int.
-func uint64ToBigInt(val uint64) *big.Int {
-	return new(big.Int).SetUint64(val)
+// UpdatePeerSourceQuota processes a single source's quota from a peer node.
+func (o *Oracle) UpdatePeerSourceQuota(peerID string, quota *TimestampedQuotaStatus, source string) {
+	o.quotaManager.handlePeerSourceQuota(peerID, quota, source)
 }
