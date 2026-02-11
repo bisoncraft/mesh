@@ -104,7 +104,8 @@ message Bond {
 }
 
 message PostBondRequest {
-  repeated Bond bonds = 1;
+  bytes accountID = 1;
+  repeated Bond bonds = 2;
 }
 
 

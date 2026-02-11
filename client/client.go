@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/decred/dcrd/crypto/blake256"
 	"github.com/decred/slog"
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/crypto"
@@ -44,6 +45,7 @@ type Config struct {
 // Client represents a tatanka client.
 type Client struct {
 	cfg           *Config
+	accountID     []byte
 	host          host.Host
 	topicRegistry *topicRegistry
 	bondInfo      *bond.BondInfo
@@ -61,6 +63,11 @@ func (c *Client) PeerID() peer.ID {
 	return c.host.ID()
 }
 
+// AccountID returns the account ID of the client.
+func (c *Client) AccountID() []byte {
+	return c.accountID
+}
+
 // ConnectedTatankaNodePeerID returns the peer ID of the currently connected
 // tatanka node. If no tatanka node connection is active, an empty string
 // is returned.
@@ -72,10 +79,28 @@ func (c *Client) ConnectedTatankaNodePeerID() string {
 	return mc.remotePeerID().String()
 }
 
+// accountIDFromPublicKey generates an account ID from a public key using BLAKE256 hash.
+func accountIDFromPublicKey(privKey crypto.PrivKey) ([]byte, error) {
+	pubKey := privKey.GetPublic()
+	pubKeyBytes, err := crypto.MarshalPublicKey(pubKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal public key: %w", err)
+	}
+
+	hash := blake256.Sum256(pubKeyBytes)
+	return hash[:], nil
+}
+
 // NewClient initializes a new tatanka client.
 func NewClient(cfg *Config) (*Client, error) {
+	accountID, err := accountIDFromPublicKey(cfg.PrivateKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate account ID: %w", err)
+	}
+
 	c := &Client{
 		cfg:           cfg,
+		accountID:     accountID,
 		topicRegistry: newTopicRegistry(),
 		bondInfo:      bond.NewBondInfo(),
 		log:           cfg.Logger,
@@ -286,7 +311,7 @@ func (c *Client) Run(ctx context.Context, bonds []*bond.BondParams) error {
 	// Set default connection factory if not already set (tests may override).
 	if c.connFactory == nil {
 		c.connFactory = func(peerID peer.ID) meshConn {
-			return newMeshConnection(c.host, peerID, c.log, c.bondInfo, c.topicRegistry.fetchTopics, c.handlePushMessage)
+			return newMeshConnection(c.host, peerID, c.log, c.bondInfo, c.accountID, c.topicRegistry.fetchTopics, c.handlePushMessage)
 		}
 	}
 

@@ -3,6 +3,7 @@ module github.com/martonp/tatanka-mesh
 go 1.24.9
 
 require (
+	github.com/decred/dcrd/crypto/blake256 v1.1.0
 	github.com/decred/slog v1.2.0
 	github.com/go-chi/chi/v5 v5.2.3
 	github.com/go-chi/cors v1.2.2

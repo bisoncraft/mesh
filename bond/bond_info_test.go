@@ -46,9 +46,14 @@ func TestBondInfo(t *testing.T) {
 	// Ensure a post bond request can be created from a bond info.
 	bInfo.AddBonds([]*BondParams{bond1}, mockTime)
 
-	bondReq, err := PostBondReqFromBondInfo(bInfo)
+	testAccountID := []byte("test-account-id")
+	bondReq, err := PostBondReqFromBondInfo(bInfo, testAccountID)
 	if err != nil {
 		t.Fatalf("Unexpected error creating a post bond request from bond info")
+	}
+
+	if string(bondReq.AccountID) != string(testAccountID) {
+		t.Errorf("Expected account ID %s, got %s", string(testAccountID), string(bondReq.AccountID))
 	}
 
 	if string(bondReq.Bonds[0].BondID) != bond1.ID {

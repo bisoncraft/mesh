@@ -34,6 +34,7 @@ type meshConnection struct {
 	handleMessage func(*protocolsPb.PushMessage)
 	fetchTopics   func() []string
 	bondInfo      *bond.BondInfo
+	accountID     []byte
 	log           slog.Logger
 
 	cancelFuncMtx sync.RWMutex
@@ -45,7 +46,7 @@ type meshConnection struct {
 
 var _ meshConn = (*meshConnection)(nil)
 
-func newMeshConnection(host host.Host, peerID peer.ID, logger slog.Logger, bondInfo *bond.BondInfo, fetchTopics func() []string, handleMessage func(*protocolsPb.PushMessage)) *meshConnection {
+func newMeshConnection(host host.Host, peerID peer.ID, logger slog.Logger, bondInfo *bond.BondInfo, accountID []byte, fetchTopics func() []string, handleMessage func(*protocolsPb.PushMessage)) *meshConnection {
 	return &meshConnection{
 		host:          host,
 		peerID:        peerID,
@@ -53,6 +54,7 @@ func newMeshConnection(host host.Host, peerID peer.ID, logger slog.Logger, bondI
 		handleMessage: handleMessage,
 		fetchTopics:   fetchTopics,
 		bondInfo:      bondInfo,
+		accountID:     accountID,
 		readyCh:       make(chan struct{}, 1),
 	}
 }
@@ -210,7 +212,7 @@ func (m *meshConnection) postBondInternal(ctx context.Context, req *protocolsPb.
 func (m *meshConnection) postBond(ctx context.Context) error {
 	hostID := m.host.ID()
 	for range maxPostBondRetries {
-		req, err := bond.PostBondReqFromBondInfo(m.bondInfo)
+		req, err := bond.PostBondReqFromBondInfo(m.bondInfo, m.accountID)
 		if err != nil {
 			return fmt.Errorf("failed to create post bond request: %w", err)
 		}

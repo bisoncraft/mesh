@@ -915,7 +915,8 @@ func (x *Bond) GetBondID() []byte {
 
 type PostBondRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Bonds         []*Bond                `protobuf:"bytes,1,rep,name=bonds,proto3" json:"bonds,omitempty"`
+	AccountID     []byte                 `protobuf:"bytes,1,opt,name=accountID,proto3" json:"accountID,omitempty"`
+	Bonds         []*Bond                `protobuf:"bytes,2,rep,name=bonds,proto3" json:"bonds,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -948,6 +949,13 @@ func (x *PostBondRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use PostBondRequest.ProtoReflect.Descriptor instead.
 func (*PostBondRequest) Descriptor() ([]byte, []int) {
 	return file_protocols_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *PostBondRequest) GetAccountID() []byte {
+	if x != nil {
+		return x.AccountID
+	}
+	return nil
 }
 
 func (x *PostBondRequest) GetBonds() []*Bond {
@@ -1683,9 +1691,10 @@ const file_protocols_proto_rawDesc = "" +
 	"\x05addrs\x18\x01 \x03(\fR\x05addrs\"8\n" +
 	"\x04Bond\x12\x18\n" +
 	"\aassetID\x18\x01 \x01(\rR\aassetID\x12\x16\n" +
-	"\x06bondID\x18\x02 \x01(\fR\x06bondID\"1\n" +
-	"\x0fPostBondRequest\x12\x1e\n" +
-	"\x05bonds\x18\x01 \x03(\v2\b.pb.BondR\x05bonds\"6\n" +
+	"\x06bondID\x18\x02 \x01(\fR\x06bondID\"O\n" +
+	"\x0fPostBondRequest\x12\x1c\n" +
+	"\taccountID\x18\x01 \x01(\fR\taccountID\x12\x1e\n" +
+	"\x05bonds\x18\x02 \x03(\v2\b.pb.BondR\x05bonds\"6\n" +
 	"\x10PostBondResponse\x12\"\n" +
 	"\fbondStrength\x18\x01 \x01(\rR\fbondStrength\"0\n" +
 	"\bPeerInfo\x12\x0e\n" +

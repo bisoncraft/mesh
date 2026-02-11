@@ -128,12 +128,14 @@ func (cbi *BondInfo) RemoveBondAtIndex(index uint32) error {
 }
 
 // PostBondReqFromBondInfo converts the provided bond info into a post bond request.
-func PostBondReqFromBondInfo(info *BondInfo) (*protocolsPb.PostBondRequest, error) {
+func PostBondReqFromBondInfo(info *BondInfo, accountID []byte) (*protocolsPb.PostBondRequest, error) {
 	if len(info.bondParams) == 0 {
 		return nil, fmt.Errorf("no bonds provided")
 	}
 
-	req := &protocolsPb.PostBondRequest{}
+	req := &protocolsPb.PostBondRequest{
+		AccountID: accountID,
+	}
 	for _, bp := range info.bondParams {
 		req.Bonds = append(req.Bonds, &protocolsPb.Bond{BondID: []byte(bp.ID)})
 	}

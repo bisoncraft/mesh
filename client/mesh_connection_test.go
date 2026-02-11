@@ -167,6 +167,7 @@ func newMeshConnHarness(t *testing.T, topics []string) *meshConnHarness {
 		h.tatankaHost.ID(),
 		h.logger,
 		bondInfo,
+		[]byte("test-account-id"),
 		func() []string { return topics },
 		func(msg *protocolsPb.PushMessage) {
 			h.clientReceived <- msg
@@ -514,7 +515,7 @@ func TestMeshConnection_PostBondWithRetries(t *testing.T) {
 		},
 	}
 
-	bondReq, err := bond.PostBondReqFromBondInfo(h.meshConn.bondInfo)
+	bondReq, err := bond.PostBondReqFromBondInfo(h.meshConn.bondInfo, h.meshConn.accountID)
 	if err != nil {
 		t.Fatalf("Unexpected error creating post bond request: %v", err)
 	}
