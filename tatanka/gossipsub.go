@@ -10,8 +10,8 @@ import (
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
-	protocolsPb "github.com/martonp/tatanka-mesh/protocols/pb"
-	pb "github.com/martonp/tatanka-mesh/tatanka/pb"
+	protocolsPb "github.com/bisoncraft/mesh/protocols/pb"
+	pb "github.com/bisoncraft/mesh/tatanka/pb"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/protobuf/proto"
 )

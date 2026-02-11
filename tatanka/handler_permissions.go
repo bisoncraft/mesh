@@ -5,7 +5,7 @@ import (
 
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/protocol"
-	"github.com/martonp/tatanka-mesh/codec"
+	"github.com/bisoncraft/mesh/codec"
 )
 
 var errUnauthorized = errors.New("unauthorized")

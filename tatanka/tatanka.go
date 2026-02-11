@@ -19,10 +19,10 @@ import (
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
-	"github.com/martonp/tatanka-mesh/oracle"
-	"github.com/martonp/tatanka-mesh/protocols"
-	protocolsPb "github.com/martonp/tatanka-mesh/protocols/pb"
-	"github.com/martonp/tatanka-mesh/tatanka/admin"
+	"github.com/bisoncraft/mesh/oracle"
+	"github.com/bisoncraft/mesh/protocols"
+	protocolsPb "github.com/bisoncraft/mesh/protocols/pb"
+	"github.com/bisoncraft/mesh/tatanka/admin"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 

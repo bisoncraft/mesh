@@ -1,4 +1,4 @@
-module github.com/martonp/tatanka-mesh
+module github.com/bisoncraft/mesh
 
 go 1.24.9
 

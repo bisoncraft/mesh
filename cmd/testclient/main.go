@@ -14,8 +14,8 @@ import (
 	"github.com/jessevdk/go-flags"
 	"github.com/jrick/logrotate/rotator"
 	"github.com/libp2p/go-libp2p/core/crypto"
-	"github.com/martonp/tatanka-mesh/bond"
-	"github.com/martonp/tatanka-mesh/testing/client"
+	"github.com/bisoncraft/mesh/bond"
+	"github.com/bisoncraft/mesh/testing/client"
 )
 
 // bondParamsFlag wraps bond.BondParams to implement the flag.Value interface.

@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/decred/slog"
-	"github.com/martonp/tatanka-mesh/tatanka/pb"
+	"github.com/bisoncraft/mesh/tatanka/pb"
 )
 
 

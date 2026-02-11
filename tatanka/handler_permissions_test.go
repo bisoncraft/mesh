@@ -7,9 +7,9 @@ import (
 
 	"github.com/libp2p/go-libp2p/core/peer"
 	mocknet "github.com/libp2p/go-libp2p/p2p/net/mock"
-	"github.com/martonp/tatanka-mesh/codec"
-	"github.com/martonp/tatanka-mesh/protocols"
-	protocolsPb "github.com/martonp/tatanka-mesh/protocols/pb"
+	"github.com/bisoncraft/mesh/codec"
+	"github.com/bisoncraft/mesh/protocols"
+	protocolsPb "github.com/bisoncraft/mesh/protocols/pb"
 )
 
 // TestPushPermissions tests the permissions for the push protocol.

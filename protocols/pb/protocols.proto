@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package pb;
 
-option go_package = "github.com/martonp/tatanka-mesh/protocols/pb";
+option go_package = "github.com/bisoncraft/mesh/protocols/pb";
 
 message Response {
   oneof response {

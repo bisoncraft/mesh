@@ -13,10 +13,10 @@ import (
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
-	"github.com/martonp/tatanka-mesh/protocols"
+	"github.com/bisoncraft/mesh/protocols"
 	"google.golang.org/protobuf/proto"
 
-	protocolsPb "github.com/martonp/tatanka-mesh/protocols/pb"
+	protocolsPb "github.com/bisoncraft/mesh/protocols/pb"
 	ma "github.com/multiformats/go-multiaddr"
 )
 

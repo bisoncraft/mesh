@@ -5,7 +5,7 @@ import (
 
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/peer"
-	protocolsPb "github.com/martonp/tatanka-mesh/protocols/pb"
+	protocolsPb "github.com/bisoncraft/mesh/protocols/pb"
 	ma "github.com/multiformats/go-multiaddr"
 )
 

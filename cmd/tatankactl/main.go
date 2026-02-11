@@ -14,7 +14,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/jessevdk/go-flags"
-	"github.com/martonp/tatanka-mesh/tatanka/admin"
+	"github.com/bisoncraft/mesh/tatanka/admin"
 )
 
 // Command definitions
