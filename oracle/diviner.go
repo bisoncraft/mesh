@@ -9,7 +9,7 @@ import (
 
 	"github.com/decred/slog"
 
-	"github.com/martonp/tatanka-mesh/tatanka/pb"
+	"github.com/bisoncraft/mesh/tatanka/pb"
 )
 
 // fetcher returns either a list of price updates or a list of fee rate updates.

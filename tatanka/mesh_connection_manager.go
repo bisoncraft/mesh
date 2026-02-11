@@ -15,8 +15,8 @@ import (
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/peerstore"
-	"github.com/martonp/tatanka-mesh/codec"
-	pb "github.com/martonp/tatanka-mesh/tatanka/pb"
+	"github.com/bisoncraft/mesh/codec"
+	pb "github.com/bisoncraft/mesh/tatanka/pb"
 	ma "github.com/multiformats/go-multiaddr"
 )
 

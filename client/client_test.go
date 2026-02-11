@@ -12,7 +12,7 @@ import (
 
 	"github.com/decred/slog"
 	"github.com/libp2p/go-libp2p/core/peer"
-	protocolsPb "github.com/martonp/tatanka-mesh/protocols/pb"
+	protocolsPb "github.com/bisoncraft/mesh/protocols/pb"
 )
 
 type relayMessageParams struct {

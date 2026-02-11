@@ -1123,7 +1123,7 @@ const file_messages_proto_rawDesc = "" +
 	"\x10NodeOracleUpdate\x12;\n" +
 	"\fprice_update\x18\x01 \x01(\v2\x16.pb.SourcedPriceUpdateH\x00R\vpriceUpdate\x12B\n" +
 	"\x0ffee_rate_update\x18\x02 \x01(\v2\x18.pb.SourcedFeeRateUpdateH\x00R\rfeeRateUpdateB\b\n" +
-	"\x06updateB,Z*github.com/martonp/tatanka-mesh/tatanka/pbb\x06proto3"
+	"\x06updateB,Z*github.com/bisoncraft/mesh/tatanka/pbb\x06proto3"
 
 var (
 	file_messages_proto_rawDescOnce sync.Once

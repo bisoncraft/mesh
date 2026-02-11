@@ -11,9 +11,9 @@ import (
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
-	"github.com/martonp/tatanka-mesh/bond"
+	"github.com/bisoncraft/mesh/bond"
 
-	protocolsPb "github.com/martonp/tatanka-mesh/protocols/pb"
+	protocolsPb "github.com/bisoncraft/mesh/protocols/pb"
 	ma "github.com/multiformats/go-multiaddr"
 )
 

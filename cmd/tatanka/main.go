@@ -12,7 +12,7 @@ import (
 	"github.com/decred/slog"
 	"github.com/jessevdk/go-flags"
 	"github.com/jrick/logrotate/rotator"
-	"github.com/martonp/tatanka-mesh/tatanka"
+	"github.com/bisoncraft/mesh/tatanka"
 )
 
 var log slog.Logger

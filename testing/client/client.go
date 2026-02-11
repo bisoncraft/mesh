@@ -18,10 +18,10 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/cors"
 	"github.com/libp2p/go-libp2p/core/crypto"
-	"github.com/martonp/tatanka-mesh/bond"
-	tmc "github.com/martonp/tatanka-mesh/client"
-	"github.com/martonp/tatanka-mesh/oracle"
-	protocolsPb "github.com/martonp/tatanka-mesh/protocols/pb"
+	"github.com/bisoncraft/mesh/bond"
+	tmc "github.com/bisoncraft/mesh/client"
+	"github.com/bisoncraft/mesh/oracle"
+	protocolsPb "github.com/bisoncraft/mesh/protocols/pb"
 	"google.golang.org/protobuf/proto"
 )
 

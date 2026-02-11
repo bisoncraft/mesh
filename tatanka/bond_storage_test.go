@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/peer"
-	"github.com/martonp/tatanka-mesh/bond"
+	"github.com/bisoncraft/mesh/bond"
 )
 
 func TestMemoryBondStorage(t *testing.T) {

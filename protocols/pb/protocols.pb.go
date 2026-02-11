@@ -1719,7 +1719,7 @@ const file_protocols_proto_rawDesc = "" +
 	"\x12ClientOracleUpdate\x12:\n" +
 	"\fprice_update\x18\x01 \x01(\v2\x15.pb.ClientPriceUpdateH\x00R\vpriceUpdate\x12A\n" +
 	"\x0ffee_rate_update\x18\x02 \x01(\v2\x17.pb.ClientFeeRateUpdateH\x00R\rfeeRateUpdateB\b\n" +
-	"\x06updateB.Z,github.com/martonp/tatanka-mesh/protocols/pbb\x06proto3"
+	"\x06updateB.Z,github.com/bisoncraft/mesh/protocols/pbb\x06proto3"
 
 var (
 	file_protocols_proto_rawDescOnce sync.Once

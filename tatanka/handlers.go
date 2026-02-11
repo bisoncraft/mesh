@@ -9,12 +9,12 @@ import (
 
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
-	"github.com/martonp/tatanka-mesh/bond"
-	"github.com/martonp/tatanka-mesh/codec"
-	"github.com/martonp/tatanka-mesh/oracle"
-	"github.com/martonp/tatanka-mesh/protocols"
-	protocolsPb "github.com/martonp/tatanka-mesh/protocols/pb"
-	"github.com/martonp/tatanka-mesh/tatanka/pb"
+	"github.com/bisoncraft/mesh/bond"
+	"github.com/bisoncraft/mesh/codec"
+	"github.com/bisoncraft/mesh/oracle"
+	"github.com/bisoncraft/mesh/protocols"
+	protocolsPb "github.com/bisoncraft/mesh/protocols/pb"
+	"github.com/bisoncraft/mesh/tatanka/pb"
 	ma "github.com/multiformats/go-multiaddr"
 	"google.golang.org/protobuf/proto"
 )

@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package pb;
 
-option go_package = "github.com/martonp/tatanka-mesh/tatanka/pb";
+option go_package = "github.com/bisoncraft/mesh/tatanka/pb";
 
 // ClientConnectionMsg is used internally by tatanka nodes to share client connection information.
 message ClientConnectionMsg {

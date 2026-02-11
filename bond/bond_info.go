@@ -7,7 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	protocolsPb "github.com/martonp/tatanka-mesh/protocols/pb"
+	protocolsPb "github.com/bisoncraft/mesh/protocols/pb"
 )
 
 const (

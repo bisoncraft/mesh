@@ -18,7 +18,7 @@ import (
 
 	"github.com/decred/slog"
 	"github.com/libp2p/go-libp2p/core/crypto"
-	"github.com/martonp/tatanka-mesh/bond"
+	"github.com/bisoncraft/mesh/bond"
 )
 
 func TestMain(m *testing.M) {
