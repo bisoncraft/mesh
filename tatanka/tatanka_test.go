@@ -52,33 +52,13 @@ func (tbs *testBondStorage) bondStrength(peerID peer.ID) uint32 {
 	return tbs.score
 }
 
-type testOracle struct{}
-
-func (to *testOracle) Run(ctx context.Context) {
-	<-ctx.Done()
-}
-
-func (to *testOracle) Next() <-chan any {
-	return nil
-}
-
-func (to *testOracle) MergePrices(sourcedUpdate *oracle.SourcedPriceUpdate) map[oracle.Ticker]float64 {
-	return make(map[oracle.Ticker]float64)
-}
-func (to *testOracle) MergeFeeRates(sourcedUpdate *oracle.SourcedFeeRateUpdate) map[oracle.Network]*big.Int {
-	return make(map[oracle.Network]*big.Int)
-}
-func (to *testOracle) Prices() map[oracle.Ticker]float64   { return make(map[oracle.Ticker]float64) }
-func (to *testOracle) FeeRates() map[oracle.Network]*big.Int { return make(map[oracle.Network]*big.Int) }
-func (to *testOracle) GetSourceWeight(sourceName string) float64 { return 1.0 }
-
 // tOracle is a test oracle that tracks merged price and fee rate updates.
 type tOracle struct {
-	mtx              sync.Mutex
-	mergedPrices     []*oracle.SourcedPriceUpdate
-	mergedFeeRates   []*oracle.SourcedFeeRateUpdate
-	prices           map[oracle.Ticker]float64
-	feeRates         map[oracle.Network]*big.Int
+	mtx            sync.Mutex
+	mergedPrices   []*oracle.SourcedPriceUpdate
+	mergedFeeRates []*oracle.SourcedFeeRateUpdate
+	prices         map[oracle.Ticker]float64
+	feeRates       map[oracle.Network]*big.Int
 }
 
 var _ Oracle = (*tOracle)(nil)
@@ -191,7 +171,7 @@ func newTestNode(t *testing.T, ctx context.Context, h host.Host, dataDir string,
 	}
 
 	n.bondStorage = &testBondStorage{score: 1}
-	n.oracle = &testOracle{}
+	n.oracle = newTOracle()
 
 	go func() {
 		if err := n.Run(ctx); err != nil {
@@ -204,6 +184,16 @@ func newTestNode(t *testing.T, ctx context.Context, h host.Host, dataDir string,
 	}
 
 	return n
+}
+
+func (to *tOracle) FetchPrice(ticker string) (float64, error) {
+	to.mtx.Lock()
+	defer to.mtx.Unlock()
+	price, ok := to.prices[oracle.Ticker(ticker)]
+	if !ok {
+		return 0, fmt.Errorf("no price found for ticker %s", ticker)
+	}
+	return price, nil
 }
 
 // newTestNodeWithOracle creates a test node with a custom oracle implementation.
