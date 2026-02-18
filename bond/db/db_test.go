@@ -24,7 +24,7 @@ func testStoreBond(t *testing.T) {
 
 	accountID := "test-account"
 	bp := &bond.BondParams{
-		ID:       "0:abc123:0",
+		ID:       "bip122:000000000019d6689c085ae165831e93/slip44:0:abc123:0",
 		Strength: 100,
 		Expiry:   time.Now().Add(time.Hour),
 	}
@@ -54,9 +54,9 @@ func testBondsByAccount(t *testing.T) {
 
 	accountID := "account-1"
 	bonds := []*bond.BondParams{
-		{ID: "0:tx1:0", Strength: 50, Expiry: time.Now().Add(time.Hour)},
-		{ID: "42:tx2:0", Strength: 75, Expiry: time.Now().Add(2 * time.Hour)},
-		{ID: "0:tx3:1", Strength: 100, Expiry: time.Now().Add(3 * time.Hour)},
+		{ID: "bip122:000000000019d6689c085ae165831e93/slip44:0:tx1:0", Strength: 50, Expiry: time.Now().Add(time.Hour)},
+		{ID: "bip122:298e5cc3d985bcc8d3d8ec0a6c0d5755eb8d8374eb5aa635d37c2ab26370498a/slip44:42:tx2:0", Strength: 75, Expiry: time.Now().Add(2 * time.Hour)},
+		{ID: "bip122:000000000019d6689c085ae165831e93/slip44:0:tx3:1", Strength: 100, Expiry: time.Now().Add(3 * time.Hour)},
 	}
 
 	for _, bp := range bonds {
@@ -90,7 +90,7 @@ func testBondsByAccount(t *testing.T) {
 	// Verify different accounts are isolated
 	otherAccountID := "account-2"
 	otherBonds := []*bond.BondParams{
-		{ID: "0:tx4:0", Strength: 200, Expiry: time.Now().Add(time.Hour)},
+		{ID: "bip122:000000000019d6689c085ae165831e93/slip44:0:tx4:0", Strength: 200, Expiry: time.Now().Add(time.Hour)},
 	}
 	for _, bp := range otherBonds {
 		if err := db.StoreBond(otherAccountID, bp); err != nil {
@@ -106,6 +106,17 @@ func testBondsByAccount(t *testing.T) {
 	if len(retrieved2) != len(bonds) {
 		t.Fatalf("account isolation failed: expected %d bonds for account-1, got %d", len(bonds), len(retrieved2))
 	}
+
+	t.Run("empty account", func(t *testing.T) {
+		bonds, err := db.BondsByAccount("never-stored")
+		if err != nil {
+			t.Fatalf("BondsByAccount failed: %v", err)
+		}
+
+		if bonds != nil || len(bonds) != 0 {
+			t.Fatalf("expected nil/empty slice for non-existent account, got %+v", bonds)
+		}
+	})
 }
 
 func testBondStrength(t *testing.T) {
@@ -113,10 +124,11 @@ func testBondStrength(t *testing.T) {
 	defer teardown()
 
 	accountID := "strength-test"
+	now := time.Now()
 	bonds := []*bond.BondParams{
-		{ID: "0:tx1:0", Strength: 100, Expiry: time.Now().Add(time.Hour)},
-		{ID: "42:tx2:0", Strength: 200, Expiry: time.Now().Add(time.Hour)},
-		{ID: "0:tx3:0", Strength: 150, Expiry: time.Now().Add(time.Hour)},
+		{ID: "bip122:000000000019d6689c085ae165831e93/slip44:0:tx1:0", Strength: 100, Expiry: now.Add(time.Hour)},
+		{ID: "bip122:298e5cc3d985bcc8d3d8ec0a6c0d5755eb8d8374eb5aa635d37c2ab26370498a/slip44:42:tx2:0", Strength: 200, Expiry: now.Add(time.Hour)},
+		{ID: "bip122:000000000019d6689c085ae165831e93/slip44:0:tx3:0", Strength: 150, Expiry: now.Add(time.Hour)},
 	}
 
 	for _, bp := range bonds {
@@ -125,7 +137,7 @@ func testBondStrength(t *testing.T) {
 		}
 	}
 
-	strength, err := db.BondStrength(accountID)
+	strength, err := db.BondStrength(accountID, now)
 	if err != nil {
 		t.Fatalf("BondStrength failed: %v", err)
 	}
@@ -134,6 +146,44 @@ func testBondStrength(t *testing.T) {
 	if strength != expected {
 		t.Fatalf("expected strength %d, got %d", expected, strength)
 	}
+
+	// Test that expired bonds are not counted
+	t.Run("expired bonds excluded", func(t *testing.T) {
+		strength, err := db.BondStrength(accountID, now.Add(2*time.Hour))
+		if err != nil {
+			t.Fatalf("BondStrength failed: %v", err)
+		}
+
+		if strength != 0 {
+			t.Fatalf("expected strength 0 for all expired bonds, got %d", strength)
+		}
+	})
+
+	t.Run("mixed expiry", func(t *testing.T) {
+		accountID := "mixed-expiry"
+		now := time.Now()
+		bonds := []*bond.BondParams{
+			{ID: "bip122:000000000019d6689c085ae165831e93/slip44:0:bond1:0", Strength: 100, Expiry: now.Add(time.Hour)},
+			{ID: "bip122:000000000019d6689c085ae165831e93/slip44:0:bond2:0", Strength: 200, Expiry: now.Add(2 * time.Hour)},
+			{ID: "bip122:000000000019d6689c085ae165831e93/slip44:0:bond3:0", Strength: 150, Expiry: now.Add(3 * time.Hour)},
+		}
+
+		for _, bp := range bonds {
+			if err := db.StoreBond(accountID, bp); err != nil {
+				t.Fatalf("StoreBond failed: %v", err)
+			}
+		}
+
+		strength, err := db.BondStrength(accountID, now.Add(time.Hour + 30*time.Minute))
+		if err != nil {
+			t.Fatalf("BondStrength failed: %v", err)
+		}
+
+		expected := uint32(350)
+		if strength != expected {
+			t.Fatalf("expected strength %d for non-expired bonds, got %d", expected, strength)
+		}
+	})
 }
 
 func testPruneExpiredBonds(t *testing.T) {
@@ -145,13 +195,13 @@ func testPruneExpiredBonds(t *testing.T) {
 
 	// Store bonds with different expiry times
 	expiredBond := &bond.BondParams{
-		ID:       "0:expired:0",
+		ID:       "bip122:000000000019d6689c085ae165831e93/slip44:0:expired:0",
 		Strength: 50,
 		Expiry:   now.Add(-time.Hour), // Already expired
 	}
 
 	activeBond := &bond.BondParams{
-		ID:       "0:active:0",
+		ID:       "bip122:000000000019d6689c085ae165831e93/slip44:0:active:0",
 		Strength: 100,
 		Expiry:   now.Add(time.Hour), // Not expired
 	}
@@ -179,7 +229,7 @@ func testPruneExpiredBonds(t *testing.T) {
 		t.Fatalf("expired bond not pruned: got %+v", bonds)
 	}
 
-	strength, err := db.BondStrength(accountID)
+	strength, err := db.BondStrength(accountID, now)
 	if err != nil {
 		t.Fatalf("BondStrength failed: %v", err)
 	}
@@ -187,6 +237,160 @@ func testPruneExpiredBonds(t *testing.T) {
 	if strength != activeBond.Strength {
 		t.Fatalf("expected strength %d after prune, got %d", activeBond.Strength, strength)
 	}
+
+	t.Run("prune none (all active)", func(t *testing.T) {
+		db, teardown := setupTestDB(t)
+		defer teardown()
+
+		now := time.Now()
+		bonds := []*bond.BondParams{
+			{ID: "bip122:000000000019d6689c085ae165831e93/slip44:0:active1:0", Strength: 100, Expiry: now.Add(time.Hour)},
+			{ID: "bip122:000000000019d6689c085ae165831e93/slip44:0:active2:0", Strength: 200, Expiry: now.Add(2 * time.Hour)},
+		}
+
+		accountID := "prune-none"
+		for _, bp := range bonds {
+			if err := db.StoreBond(accountID, bp); err != nil {
+				t.Fatalf("StoreBond failed: %v", err)
+			}
+		}
+
+		if err := db.PruneExpiredBonds(now); err != nil {
+			t.Fatalf("PruneExpiredBonds failed: %v", err)
+		}
+
+		retrieved, err := db.BondsByAccount(accountID)
+		if err != nil {
+			t.Fatalf("BondsByAccount failed: %v", err)
+		}
+
+		if len(retrieved) != 2 {
+			t.Fatalf("expected 2 bonds after prune, got %d", len(retrieved))
+		}
+
+		strength, err := db.BondStrength(accountID, now)
+		if err != nil {
+			t.Fatalf("BondStrength failed: %v", err)
+		}
+
+		expected := uint32(300)
+		if strength != expected {
+			t.Fatalf("expected strength %d, got %d", expected, strength)
+		}
+	})
+
+	t.Run("prune all (all expired)", func(t *testing.T) {
+		db, teardown := setupTestDB(t)
+		defer teardown()
+
+		now := time.Now()
+		bonds := []*bond.BondParams{
+			{ID: "bip122:000000000019d6689c085ae165831e93/slip44:0:exp1:0", Strength: 50, Expiry: now.Add(-2 * time.Hour)},
+			{ID: "bip122:000000000019d6689c085ae165831e93/slip44:0:exp2:0", Strength: 75, Expiry: now.Add(-time.Hour)},
+		}
+
+		accountID := "prune-all"
+		for _, bp := range bonds {
+			if err := db.StoreBond(accountID, bp); err != nil {
+				t.Fatalf("StoreBond failed: %v", err)
+			}
+		}
+
+		if err := db.PruneExpiredBonds(now); err != nil {
+			t.Fatalf("PruneExpiredBonds failed: %v", err)
+		}
+
+		retrieved, err := db.BondsByAccount(accountID)
+		if err != nil {
+			t.Fatalf("BondsByAccount failed: %v", err)
+		}
+
+		if len(retrieved) != 0 {
+			t.Fatalf("expected 0 bonds after prune, got %d", len(retrieved))
+		}
+
+		strength, err := db.BondStrength(accountID, now)
+		if err != nil {
+			t.Fatalf("BondStrength failed: %v", err)
+		}
+
+		if strength != 0 {
+			t.Fatalf("expected strength 0, got %d", strength)
+		}
+	})
+
+	t.Run("multiple accounts", func(t *testing.T) {
+		db, teardown := setupTestDB(t)
+		defer teardown()
+
+		now := time.Now()
+
+		account1ExpiredBond := &bond.BondParams{
+			ID:       "bip122:000000000019d6689c085ae165831e93/slip44:0:acc1-exp:0",
+			Strength: 50,
+			Expiry:   now.Add(-time.Hour),
+		}
+		account1ActiveBond := &bond.BondParams{
+			ID:       "bip122:000000000019d6689c085ae165831e93/slip44:0:acc1-active:0",
+			Strength: 100,
+			Expiry:   now.Add(time.Hour),
+		}
+		account2ActiveBond := &bond.BondParams{
+			ID:       "bip122:000000000019d6689c085ae165831e93/slip44:0:acc2-active:0",
+			Strength: 150,
+			Expiry:   now.Add(time.Hour),
+		}
+
+		if err := db.StoreBond("account-1", account1ExpiredBond); err != nil {
+			t.Fatalf("StoreBond failed: %v", err)
+		}
+		if err := db.StoreBond("account-1", account1ActiveBond); err != nil {
+			t.Fatalf("StoreBond failed: %v", err)
+		}
+		if err := db.StoreBond("account-2", account2ActiveBond); err != nil {
+			t.Fatalf("StoreBond failed: %v", err)
+		}
+
+		if err := db.PruneExpiredBonds(now); err != nil {
+			t.Fatalf("PruneExpiredBonds failed: %v", err)
+		}
+
+		bonds1, err := db.BondsByAccount("account-1")
+		if err != nil {
+			t.Fatalf("BondsByAccount failed: %v", err)
+		}
+
+		if len(bonds1) != 1 || bonds1[0].ID != account1ActiveBond.ID {
+			t.Fatalf("account-1: expected 1 active bond, got %+v", bonds1)
+		}
+
+		bonds2, err := db.BondsByAccount("account-2")
+		if err != nil {
+			t.Fatalf("BondsByAccount failed: %v", err)
+		}
+
+		if len(bonds2) != 1 || bonds2[0].ID != account2ActiveBond.ID {
+			t.Fatalf("account-2: expected 1 active bond, got %+v", bonds2)
+		}
+
+		strength1, err := db.BondStrength("account-1", now)
+		if err != nil {
+			t.Fatalf("BondStrength failed: %v", err)
+		}
+
+		if strength1 != account1ActiveBond.Strength {
+			t.Fatalf("account-1: expected strength %d, got %d", account1ActiveBond.Strength, strength1)
+		}
+
+		strength2, err := db.BondStrength("account-2", now)
+		if err != nil {
+			t.Fatalf("BondStrength failed: %v", err)
+		}
+
+		if strength2 != account2ActiveBond.Strength {
+			t.Fatalf("account-2: expected strength %d, got %d", account2ActiveBond.Strength, strength2)
+		}
+	})
 }
 
 func testBackgroundPruning(t *testing.T) {
@@ -197,13 +401,13 @@ func testBackgroundPruning(t *testing.T) {
 	now := time.Now()
 
 	expiredBond := &bond.BondParams{
-		ID:       "0:expired:0",
+		ID:       "bip122:000000000019d6689c085ae165831e93/slip44:0:expired:0",
 		Strength: 50,
 		Expiry:   now.Add(-time.Hour),
 	}
 
 	activeBond := &bond.BondParams{
-		ID:       "0:active:0",
+		ID:       "bip122:000000000019d6689c085ae165831e93/slip44:0:active:0",
 		Strength: 100,
 		Expiry:   now.Add(time.Hour),
 	}
@@ -240,6 +444,15 @@ func testBackgroundPruning(t *testing.T) {
 
 	if len(bonds) != 1 || bonds[0].ID != activeBond.ID {
 		t.Fatalf("background pruning failed: expected 1 active bond, got %d", len(bonds))
+	}
+
+	strength, err := db.BondStrength(accountID, now)
+	if err != nil {
+		t.Fatalf("BondStrength failed: %v", err)
+	}
+
+	if strength != activeBond.Strength {
+		t.Fatalf("expected strength %d after prune, got %d", activeBond.Strength, strength)
 	}
 
 	cancel()

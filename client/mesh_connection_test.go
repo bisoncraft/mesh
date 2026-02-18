@@ -157,7 +157,7 @@ func newMeshConnHarness(t *testing.T, topics []string) *meshConnHarness {
 
 	bondInfo := bond.NewBondInfo()
 	bondInfo.AddBonds([]*bond.BondParams{{
-		ID:       "test-bond",
+		ID:       "bip122:000000000019d6689c085ae165831e93/slip44:0:testbond:0",
 		Expiry:   time.Now().Add(6 * time.Hour),
 		Strength: bond.MinRequiredBondStrength,
 	}}, time.Now())

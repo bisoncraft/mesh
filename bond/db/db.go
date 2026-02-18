@@ -11,6 +11,14 @@ import (
 	"github.com/dgraph-io/badger/v4"
 )
 
+const (
+	bondKeyPrefix       = "bond:"
+	accountIndexPrefix  = "byAccount:"
+	expiryIndexPrefix   = "byExpiry:"
+	expiryPrefixLen     = 9 // len("byExpiry:")
+	expiryTimestampLen  = 20
+)
+
 // DB is a persistent bond storage layer using Badger.
 type DB struct {
 	db  *badger.DB
@@ -32,17 +40,17 @@ func New(dir string, log slog.Logger) (*DB, error) {
 }
 
 func bondKey(id string) []byte {
-	return append([]byte("bond:"), []byte(id)...)
+	return append([]byte(bondKeyPrefix), []byte(id)...)
 }
 
 func accountIndexKey(accountID, bondID string) []byte {
-	prefix := "byAccount:" + accountID + ":"
+	prefix := accountIndexPrefix + accountID + ":"
 	return append([]byte(prefix), []byte(bondID)...)
 }
 
 func expiryIndexKey(expiry time.Time, accountID, bondID string) []byte {
 	// Prefix has a zero-padded timestamp for sorting purposes.
-	prefix := fmt.Sprintf("byExpiry:%020d:%s:", expiry.Unix(), accountID)
+	prefix := fmt.Sprintf(expiryIndexPrefix+"%020d:%s:", expiry.Unix(), accountID)
 	key := []byte(prefix)
 	return append(key, []byte(bondID)...)
 }
@@ -113,7 +121,7 @@ func (d *DB) BondsByAccount(accountID string) ([]*bond.BondParams, error) {
 	var bonds []*bond.BondParams
 
 	err := d.db.View(func(txn *badger.Txn) error {
-		prefix := []byte("byAccount:" + accountID + ":")
+		prefix := []byte(accountIndexPrefix + accountID + ":")
 
 		return scanIndexPrefix(txn, prefix, func(key []byte) error {
 			prefixLen := len(prefix)
@@ -144,7 +152,7 @@ func (d *DB) BondsByAccount(accountID string) ([]*bond.BondParams, error) {
 }
 
 // BondStrength computes the total strength for an account by summing all non-expired bonds.
-func (d *DB) BondStrength(accountID string) (uint32, error) {
+func (d *DB) BondStrength(accountID string, now time.Time) (uint32, error) {
 	bonds, err := d.BondsByAccount(accountID)
 	if err != nil {
 		return 0, err
@@ -152,7 +160,9 @@ func (d *DB) BondStrength(accountID string) (uint32, error) {
 
 	var totalStrength uint32
 	for _, b := range bonds {
-		totalStrength += b.Strength
+		if b.Expiry.After(now) {
+			totalStrength += b.Strength
+		}
 	}
 	return totalStrength, nil
 }
@@ -160,18 +170,13 @@ func (d *DB) BondStrength(accountID string) (uint32, error) {
 // PruneExpiredBonds deletes all expired bonds as of the given time.
 func (d *DB) PruneExpiredBonds(now time.Time) error {
 	return d.db.Update(func(txn *badger.Txn) error {
-		prefix := []byte("byExpiry:")
-		nowThreshold := fmt.Sprintf("byExpiry:%020d:", now.Unix())
+		prefix := []byte(expiryIndexPrefix)
+		nowThreshold := fmt.Sprintf(expiryIndexPrefix+"%020d:", now.Unix())
 
 		opts := badger.DefaultIteratorOptions
 		opts.Prefix = prefix
 		it := txn.NewIterator(opts)
 		defer it.Close()
-
-		var bondsToDelete []*struct {
-			accountID string
-			bp        *bond.BondParams
-		}
 
 		for it.Seek(prefix); it.Valid(); it.Next() {
 			key := string(it.Item().Key())
@@ -179,12 +184,20 @@ func (d *DB) PruneExpiredBonds(now time.Time) error {
 				break
 			}
 
-			parts := strings.SplitN(key, ":", 4)
-			if len(parts) < 4 {
+			// Key format: "byExpiry:{20-digit-timestamp}:{accountID}:{bondID}"
+			if len(key) < expiryPrefixLen+expiryTimestampLen+3 {
 				continue
 			}
-			accountID := parts[2]
-			bondID := parts[3]
+
+			// Extract part after "byExpiry:{timestamp}:"
+			afterTimestamp := key[expiryPrefixLen+expiryTimestampLen+1:]
+			colonIdx := strings.IndexByte(afterTimestamp, ':')
+			if colonIdx < 0 {
+				continue
+			}
+
+			accountID := afterTimestamp[:colonIdx]
+			bondID := afterTimestamp[colonIdx+1:]
 
 			item, err := txn.Get(bondKey(bondID))
 			if err != nil {
@@ -202,14 +215,7 @@ func (d *DB) PruneExpiredBonds(now time.Time) error {
 				continue
 			}
 
-			bondsToDelete = append(bondsToDelete, &struct {
-				accountID string
-				bp        *bond.BondParams
-			}{accountID, &bp})
-		}
-
-		for _, item := range bondsToDelete {
-			if err := deleteBondWithIndices(txn, item.accountID, item.bp); err != nil {
+			if err := deleteBondWithIndices(txn, accountID, &bp); err != nil {
 				return err
 			}
 		}

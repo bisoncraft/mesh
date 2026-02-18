@@ -7,8 +7,8 @@ import (
 
 func TestBondInfo(t *testing.T) {
 	mockTime := time.Now()
-	bond1 := &BondParams{ID: "bond1", Strength: 20, Expiry: mockTime.Add(time.Hour)}
-	bond2 := &BondParams{ID: "bond2", Strength: 20, Expiry: mockTime.Add(time.Hour * 3)}
+	bond1 := &BondParams{ID: "bip122:000000000019d6689c085ae165831e93/slip44:0:tx1:0", Strength: 20, Expiry: mockTime.Add(time.Hour)}
+	bond2 := &BondParams{ID: "bip122:000000000019d6689c085ae165831e93/slip44:0:tx2:0", Strength: 20, Expiry: mockTime.Add(time.Hour * 3)}
 
 	// Ensure a bond info can add bonds.
 	bInfo := NewBondInfo()
@@ -69,7 +69,7 @@ func TestBondParamsMarshalUnmarshal(t *testing.T) {
 		{
 			name: "standard bond params",
 			bond: &BondParams{
-				ID:       "test:bond:id",
+				ID:       "bip122:000000000019d6689c085ae165831e93/slip44:0:abc123:0",
 				Strength: 42,
 				Expiry:   now.Add(time.Hour * 24),
 			},
@@ -106,7 +106,7 @@ func TestBondParamsMarshalUnmarshal(t *testing.T) {
 		{
 			name: "large ID",
 			bond: &BondParams{
-				ID:       "this:is:a:very:long:bond:identifier:with:many:components:12345",
+				ID:       "bip122:000000000019d6689c085ae165831e93/slip44:0:0123456789abcdef0123456789abcdef:0123456789",
 				Strength: 9999,
 				Expiry:   now,
 			},

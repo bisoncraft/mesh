@@ -18,8 +18,10 @@ const (
 	// TODO: this is a placeholder, will be set properly in due time.
 	BondPricePerUnit = 10.0
 
-	AssetBTC uint32 = 0  // Bitcoin SLIP-0044 ID
-	AssetDCR uint32 = 42 // Decred SLIP-0044 ID
+	// Asset IDs in CAIP-19 format: https://standards.chainagnostic.org/CAIPs/caip-19
+	// Format: <chain_id>/<asset_namespace>:<asset_reference>
+	AssetBTC = "bip122:000000000019d6689c085ae165831e93/slip44:0"
+	AssetDCR = "bip122:298e5cc3d985bcc8d3d8ec0a6c0d5755eb8d8374eb5aa635d37c2ab26370498a/slip44:42"
 )
 
 // BondParams contains the parameters of a bond.

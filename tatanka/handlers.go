@@ -272,7 +272,7 @@ func (t *TatankaNode) handlePostBonds(s network.Stream) {
 			sendErrorResponse(fmt.Errorf("failed to decode bond id: %w", err))
 			return
 		}
-		bondID := fmt.Sprintf("%d:%s:%d", pb.AssetID, txHash, vout)
+		bondID := fmt.Sprintf("%s:%s:%d", pb.AssetID, txHash, vout)
 
 		if existingBondIDs[bondID] {
 			continue

@@ -16,57 +16,15 @@ func mockParser(assetValue float64, expiry time.Time, idBytes []byte, err error)
 }
 
 func TestVerifier(t *testing.T) {
-	t.Run("RegisterParser", func(t *testing.T) {
-		cfg := &Config{
-			TxFetcher:  NewTxFetcher(nil),
-			FetchPrice: func(ticker string) (float64, error) { return 1.0, nil },
-		}
-		verifier := NewVerifier(cfg)
-
-		expectedExpiry := time.Now().Add(24 * time.Hour)
-		testIDBytes := []byte{1, 2, 3, 4, 5}
-
-		verifier.RegisterParser(AssetDCR, mockParser(1.5, expectedExpiry, testIDBytes, nil))
-
-		// Verify parser is registered
-		parser, ok := verifier.parsers[AssetDCR]
-		if !ok {
-			t.Fatalf("expected parser to be registered for AssetDCR")
-		}
-
-		// Verify parser returns expected values
-		assetValue, expiry, idBytes, err := parser(0, nil)
-		if err != nil {
-			t.Fatalf("parser failed: %v", err)
-		}
-
-		if assetValue != 1.5 {
-			t.Errorf("expected asset value 1.5, got %f", assetValue)
-		}
-
-		if !expiry.Equal(expectedExpiry) {
-			t.Errorf("expected expiry %v, got %v", expectedExpiry, expiry)
-		}
-
-		if len(idBytes) != len(testIDBytes) {
-			t.Errorf("expected %d id bytes, got %d", len(testIDBytes), len(idBytes))
-		}
-	})
-
 	t.Run("MissingParser", func(t *testing.T) {
 		cfg := &Config{
 			TxFetcher:  NewTxFetcher(nil),
 			FetchPrice: func(ticker string) (float64, error) { return 1.0, nil },
+			Assets:     []string{"unknown:asset"}, // Unknown asset
 		}
-		verifier := NewVerifier(cfg)
-
-		// Try to get parser for asset without registered parser
-		verifier.parsersMtx.RLock()
-		_, ok := verifier.parsers[AssetBTC]
-		verifier.parsersMtx.RUnlock()
-
-		if ok {
-			t.Errorf("expected no parser registered for AssetBTC")
+		_, err := NewVerifier(cfg)
+		if err == nil {
+			t.Errorf("expected error for unsupported asset")
 		}
 	})
 
@@ -87,7 +45,7 @@ func TestVerifier(t *testing.T) {
 			t.Errorf("expected ticker DCR, got %s", ticker)
 		}
 
-		_, err = AssetIDToTicker(999)
+		_, err = AssetIDToTicker("unknown:asset")
 		if err == nil {
 			t.Errorf("expected error for unknown asset")
 		}

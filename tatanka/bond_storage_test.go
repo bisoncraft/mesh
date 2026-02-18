@@ -24,8 +24,8 @@ func TestMemoryBondStorage(t *testing.T) {
 
 	// Add bonds for peer1
 	bonds := []*bond.BondParams{
-		{ID: "bond1", Strength: 100, Expiry: mockTime.Add(time.Hour)},
-		{ID: "bond2", Strength: 50, Expiry: mockTime.Add(2 * time.Hour)},
+		{ID: "bip122:000000000019d6689c085ae165831e93/slip44:0:tx1:0", Strength: 100, Expiry: mockTime.Add(time.Hour)},
+		{ID: "bip122:000000000019d6689c085ae165831e93/slip44:0:tx2:0", Strength: 50, Expiry: mockTime.Add(2 * time.Hour)},
 	}
 	if strength := storage.addBonds(peerID1, bonds); strength != 150 {
 		t.Errorf("Expected strength 150, got %d", strength)
@@ -35,19 +35,19 @@ func TestMemoryBondStorage(t *testing.T) {
 	}
 
 	// Duplicate bonds not added
-	duplicates := []*bond.BondParams{{ID: "bond1", Strength: 100, Expiry: mockTime.Add(time.Hour)}}
+	duplicates := []*bond.BondParams{{ID: "bip122:000000000019d6689c085ae165831e93/slip44:0:tx1:0", Strength: 100, Expiry: mockTime.Add(time.Hour)}}
 	if strength := storage.addBonds(peerID1, duplicates); strength != 150 {
 		t.Errorf("Expected strength 150 (no change), got %d", strength)
 	}
 
 	// Already expired bonds not added
-	expired := []*bond.BondParams{{ID: "bond3", Strength: 200, Expiry: mockTime.Add(-time.Hour)}}
+	expired := []*bond.BondParams{{ID: "bip122:000000000019d6689c085ae165831e93/slip44:0:tx3:0", Strength: 200, Expiry: mockTime.Add(-time.Hour)}}
 	if strength := storage.addBonds(peerID1, expired); strength != 150 {
 		t.Errorf("Expected strength 150 (expired not added), got %d", strength)
 	}
 
 	// Different peer has independent storage
-	bonds2 := []*bond.BondParams{{ID: "bond4", Strength: 75, Expiry: mockTime.Add(time.Hour)}}
+	bonds2 := []*bond.BondParams{{ID: "bip122:000000000019d6689c085ae165831e93/slip44:0:tx4:0", Strength: 75, Expiry: mockTime.Add(time.Hour)}}
 	if strength := storage.addBonds(peerID2, bonds2); strength != 75 {
 		t.Errorf("Expected strength 75 for peer2, got %d", strength)
 	}

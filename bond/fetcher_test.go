@@ -1,7 +1,6 @@
 package bond
 
 import (
-	"context"
 	"encoding/hex"
 	"net/http"
 	"net/http/httptest"
@@ -30,7 +29,7 @@ func TestTxFetcher(t *testing.T) {
 			}
 			client := NewTxFetcher(sources)
 
-			txBytes, err := client.FetchTx(context.Background(), AssetDCR, "abc123")
+			txBytes, err := client.FetchTx(AssetDCR, "abc123")
 			if err != nil {
 				t.Fatalf("FetchTx failed: %v", err)
 			}
@@ -58,7 +57,7 @@ func TestTxFetcher(t *testing.T) {
 			}
 			client := NewTxFetcher(sources)
 
-			_, err := client.FetchTx(context.Background(), AssetDCR, "missing")
+			_, err := client.FetchTx(AssetDCR, "missing")
 			if err == nil {
 				t.Fatal("expected error for 404")
 			}
@@ -99,7 +98,7 @@ func TestTxFetcher(t *testing.T) {
 			}
 			client := NewTxFetcher(sources)
 
-			txBytes, err := client.FetchTx(context.Background(), AssetDCR, "abc123")
+			txBytes, err := client.FetchTx(AssetDCR, "abc123")
 			if err != nil {
 				t.Fatalf("FetchTx failed: %v", err)
 			}
@@ -128,7 +127,7 @@ func TestTxFetcher(t *testing.T) {
 			}
 			client := NewTxFetcher(sources)
 
-			_, err := client.FetchTx(context.Background(), AssetDCR, "abc123")
+			_, err := client.FetchTx(AssetDCR, "abc123")
 			if err == nil {
 				t.Fatal("expected error for invalid hex")
 			}
@@ -136,7 +135,7 @@ func TestTxFetcher(t *testing.T) {
 
 		t.Run("Timeout", func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				time.Sleep(2 * time.Second)
+				time.Sleep(6 * time.Second)
 				w.WriteHeader(http.StatusOK)
 			}))
 			defer server.Close()
@@ -152,10 +151,8 @@ func TestTxFetcher(t *testing.T) {
 			}
 			client := NewTxFetcher(sources)
 
-			ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
-			defer cancel()
 
-			_, err := client.FetchTx(ctx, AssetDCR, "abc123")
+			_, err := client.FetchTx(AssetDCR, "abc123")
 			if err == nil {
 				t.Fatal("expected timeout error")
 			}
@@ -163,7 +160,7 @@ func TestTxFetcher(t *testing.T) {
 
 		t.Run("ContextCanceled", func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				time.Sleep(2 * time.Second)
+				time.Sleep(6 * time.Second)
 				w.WriteHeader(http.StatusOK)
 			}))
 			defer server.Close()
@@ -179,10 +176,8 @@ func TestTxFetcher(t *testing.T) {
 			}
 			client := NewTxFetcher(sources)
 
-			ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-			defer cancel()
 
-			_, err := client.FetchTx(ctx, AssetDCR, "abc123")
+			_, err := client.FetchTx(AssetDCR, "abc123")
 			if err == nil {
 				t.Fatal("expected context deadline exceeded error")
 			}
@@ -191,7 +186,7 @@ func TestTxFetcher(t *testing.T) {
 		t.Run("UnsupportedAsset", func(t *testing.T) {
 			client := NewTxFetcher(nil)
 
-			_, err := client.FetchTx(context.Background(), 999, "abc123")
+			_, err := client.FetchTx("unknown:asset", "abc123")
 			if err == nil {
 				t.Fatal("expected error for unsupported asset")
 			}
@@ -225,7 +220,7 @@ func TestTxFetcher(t *testing.T) {
 			customSources := []TxSource{
 				{
 					name:      "custom",
-					asset:     99,
+					asset:     "custom:test",
 					baseURL:   "https://custom.example.com",
 					txHexPath: "/api/tx/%s",
 					rateLimit: 50 * time.Millisecond,
@@ -233,7 +228,7 @@ func TestTxFetcher(t *testing.T) {
 			}
 			client := NewTxFetcher(customSources)
 
-			_, ok := client.txSources[99]
+			_, ok := client.txSources["custom:test"]
 			if !ok {
 				t.Fatal("custom explorer source not set")
 			}
@@ -246,7 +241,7 @@ func TestTxFetcher(t *testing.T) {
 
 			// Bitcoin Pizza transaction from May 22, 2010
 			txid := "a1075db55d416d3ca199f55b6084e2115b9345e16c5cf302fc80e9d5fbf5d48d"
-			txBytes, err := client.FetchTx(context.Background(), AssetBTC, txid)
+			txBytes, err := client.FetchTx(AssetBTC, txid)
 			if err != nil {
 				t.Fatalf("failed to fetch BTC transaction: %v", err)
 			}
@@ -261,7 +256,7 @@ func TestTxFetcher(t *testing.T) {
 
 			// Known Decred mainnet transaction
 			txid := "c655ccbf4ef501d0d25dce57a58e639d536b7c36fdece01fd29c930f0f6858cc"
-			txBytes, err := client.FetchTx(context.Background(), AssetDCR, txid)
+			txBytes, err := client.FetchTx(AssetDCR, txid)
 			if err != nil {
 				t.Fatalf("failed to fetch DCR transaction: %v", err)
 			}

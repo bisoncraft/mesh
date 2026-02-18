@@ -99,7 +99,7 @@ message ClientAddrResponse {
 }
 
 message Bond {
-  uint32 assetID = 1;
+  string assetID = 1;
   bytes bondID = 2;
 }
 

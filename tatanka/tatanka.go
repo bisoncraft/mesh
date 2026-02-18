@@ -238,10 +238,14 @@ func (t *TatankaNode) Run(ctx context.Context) error {
 		}
 	}
 
-	t.bondVerifier = bond.NewVerifier(&bond.Config{
+	t.bondVerifier, err = bond.NewVerifier(&bond.Config{
 		TxFetcher:  bond.NewTxFetcher(nil),
 		FetchPrice: t.oracle.FetchPrice,
+		Assets:     []string{bond.AssetBTC, bond.AssetDCR},
 	})
+	if err != nil {
+		return fmt.Errorf("failed to create bond verifier: %w", err)
+	}
 
 	// Create admin callback function and setup the admin server if configured.
 	adminCallback := func(peerID peer.ID, connected bool, whitelistMismatch bool, addresses []string, peerWhitelist []string) {

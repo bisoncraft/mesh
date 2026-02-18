@@ -2,13 +2,13 @@ package bond
 
 import (
 	"bytes"
-	"context"
 	"encoding/binary"
 	"fmt"
-	"sync"
 	"time"
 
 	"decred.org/dcrdex/dex"
+	"github.com/bisoncraft/mesh/bond/assets/btc"
+	"github.com/bisoncraft/mesh/bond/assets/dcr"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/decred/dcrd/crypto/blake256"
 	"github.com/libp2p/go-libp2p/core/crypto"
@@ -33,42 +33,56 @@ func AccountIDFromPublicKey(pubKey crypto.PubKey) ([]byte, error) {
 type Config struct {
 	TxFetcher  *TxFetcher
 	FetchPrice func(ticker string) (float64, error)
+	Assets     []string
 }
 
 type Verifier struct {
 	config     *Config
-	parsers    map[uint32]ParseFunc
-	parsersMtx sync.RWMutex
+	parsers    map[string]ParseFunc
 	txFetcher  *TxFetcher
 	fetchPrice func(ticker string) (float64, error)
 }
 
-// NewVerifier creates a new bond verifier with the provided configuration.
-func NewVerifier(cfg *Config) *Verifier {
-	return &Verifier{
-		config:     cfg,
-		parsers:    make(map[uint32]ParseFunc),
-		txFetcher:  cfg.TxFetcher,
-		fetchPrice: cfg.FetchPrice,
+// parserForAsset returns the appropriate parser for the given asset ID.
+func parserForAsset(assetID string) (ParseFunc, error) {
+	switch assetID {
+	case AssetBTC:
+		return btc.ParseBondTx, nil
+	case AssetDCR:
+		return dcr.ParseBondTx, nil
+	default:
+		return nil, fmt.Errorf("unsupported asset %s", assetID)
 	}
 }
 
-// RegisterParser registers a bond parser function for an asset.
-func (v *Verifier) RegisterParser(asset uint32, parser ParseFunc) {
-	v.parsersMtx.Lock()
-	v.parsers[asset] = parser
-	v.parsersMtx.Unlock()
+// NewVerifier creates a new bond verifier with the provided configuration.
+func NewVerifier(cfg *Config) (*Verifier, error) {
+	parsers := make(map[string]ParseFunc)
+	for _, assetID := range cfg.Assets {
+		parser, err := parserForAsset(assetID)
+		if err != nil {
+			return nil, err
+		}
+		parsers[assetID] = parser
+	}
+
+	return &Verifier{
+		config:     cfg,
+		parsers:    parsers,
+		txFetcher:  cfg.TxFetcher,
+		fetchPrice: cfg.FetchPrice,
+	}, nil
 }
 
 // AssetIDToTicker converts an asset ID to its ticker string.
-func AssetIDToTicker(assetID uint32) (string, error) {
+func AssetIDToTicker(assetID string) (string, error) {
 	switch assetID {
 	case AssetBTC:
 		return "BTC", nil
 	case AssetDCR:
 		return "DCR", nil
 	default:
-		return "", fmt.Errorf("unknown asset %d", assetID)
+		return "", fmt.Errorf("unknown asset %s", assetID)
 	}
 }
 
@@ -84,13 +98,10 @@ func DecodeCoinID(coinID dex.Bytes) (string, uint32, error) {
 }
 
 // VerifyBond verifies a single bond transaction and returns asset value, expiry, and account ID.
-func (v *Verifier) VerifyBond(assetID uint32, bondID []byte, peerID peer.ID) (bool, float64, time.Time, string, error) {
-	v.parsersMtx.RLock()
+func (v *Verifier) VerifyBond(assetID string, bondID []byte, peerID peer.ID) (bool, float64, time.Time, string, error) {
 	parser, ok := v.parsers[assetID]
-	v.parsersMtx.RUnlock()
-
 	if !ok {
-		return false, 0, time.Time{}, "", fmt.Errorf("no parser registered for asset %d", assetID)
+		return false, 0, time.Time{}, "", fmt.Errorf("no parser registered for asset %s", assetID)
 	}
 
 	txHash, _, err := DecodeCoinID(bondID)
@@ -98,10 +109,7 @@ func (v *Verifier) VerifyBond(assetID uint32, bondID []byte, peerID peer.ID) (bo
 		return false, 0, time.Time{}, "", fmt.Errorf("failed to decode coin id: %w", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
-	defer cancel()
-
-	rawTx, err := v.txFetcher.FetchTx(ctx, assetID, txHash)
+	rawTx, err := v.txFetcher.FetchTx(assetID, txHash)
 	if err != nil {
 		return false, 0, time.Time{}, "", fmt.Errorf("failed to fetch transaction: %w", err)
 	}
@@ -130,6 +138,6 @@ func (v *Verifier) VerifyBond(assetID uint32, bondID []byte, peerID peer.ID) (bo
 
 // VerifyBondStub is a stub implementation that returns a default valid bond with raw values.
 // TODO: use VerifyBond instead once clients are ready to perform actual verification.
-func (v *Verifier) VerifyBondStub(assetID uint32, bondID []byte, peerID peer.ID) (bool, float64, time.Time, string, error) {
+func (v *Verifier) VerifyBondStub(assetID string, bondID []byte, peerID peer.ID) (bool, float64, time.Time, string, error) {
 	return true, 1.0, time.Now().Add(time.Hour * 12), "account-id", nil
 }

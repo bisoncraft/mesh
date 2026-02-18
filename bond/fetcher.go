@@ -6,14 +6,19 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
+)
+
+const (
+	defaultFetchTimeout = time.Second * 5
 )
 
 // TxSource is a block explorer API source for fetching raw transaction data.
 type TxSource struct {
 	name      string
-	asset     uint32
+	asset     string
 	baseURL   string
 	txHexPath string
 	rateLimit time.Duration
@@ -53,8 +58,8 @@ var defaultTxSources = []TxSource{
 // TxFetcher fetches raw transaction data from block explorers.
 type TxFetcher struct {
 	httpClient *http.Client
-	txSources  map[uint32][]TxSource
-	rateLimits map[uint32]time.Time
+	txSources  map[string][]TxSource
+	rateLimits map[string]time.Time
 	rateMutex  sync.Mutex
 }
 
@@ -62,8 +67,8 @@ type TxFetcher struct {
 func NewTxFetcher(txSources []TxSource) *TxFetcher {
 	tf := &TxFetcher{
 		httpClient: &http.Client{Timeout: 30 * time.Second},
-		txSources:  make(map[uint32][]TxSource),
-		rateLimits: make(map[uint32]time.Time),
+		txSources:  make(map[string][]TxSource),
+		rateLimits: make(map[string]time.Time),
 	}
 
 	sources := txSources
@@ -79,63 +84,34 @@ func NewTxFetcher(txSources []TxSource) *TxFetcher {
 }
 
 // FetchTx fetches raw transaction bytes from block explorers with fallback logic.
-func (tf *TxFetcher) FetchTx(ctx context.Context, asset uint32, txid string) ([]byte, error) {
+func (tf *TxFetcher) FetchTx(asset string, txid string) ([]byte, error) {
 	sources, ok := tf.txSources[asset]
 	if !ok {
-		return nil, fmt.Errorf("no explorers configured for asset %d", asset)
+		return nil, fmt.Errorf("no explorers configured for asset %s", asset)
 	}
 
 	if len(sources) == 0 {
-		return nil, fmt.Errorf("no explorers available for asset %d", asset)
+		return nil, fmt.Errorf("no explorers available for asset %s", asset)
 	}
 
 	var lastErr error
 	for i, source := range sources {
-		if err := tf.applyRateLimit(asset, source.rateLimit); err != nil {
+		if err := tf.applyRateLimit(source); err != nil {
 			lastErr = err
 			continue
 		}
 
-		url := fmt.Sprintf("%s%s", source.baseURL, fmt.Sprintf(source.txHexPath, txid))
-		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-		if err != nil {
-			lastErr = fmt.Errorf("failed to create request: %w", err)
-			continue
+		txBytes, err := tf.fetchFromSource(source, txid)
+		if err == nil {
+			return txBytes, nil
 		}
 
-		resp, err := tf.httpClient.Do(req)
-		if err != nil {
-			lastErr = fmt.Errorf("explorer %d request failed: %w", i, err)
-			continue
+		// Preserve exact transaction not found error
+		if strings.Contains(err.Error(), "transaction not found") {
+			return nil, err
 		}
 
-		if resp.StatusCode == http.StatusNotFound {
-			resp.Body.Close()
-			return nil, fmt.Errorf("transaction not found")
-		}
-
-		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
-			lastErr = fmt.Errorf("explorer %d returned %d: %s", i, resp.StatusCode, string(body))
-			continue
-		}
-
-		body, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if err != nil {
-			lastErr = fmt.Errorf("failed to read response: %w", err)
-			continue
-		}
-
-		txHex := string(body)
-		txBytes, err := hex.DecodeString(txHex)
-		if err != nil {
-			lastErr = fmt.Errorf("invalid hex in response: %w", err)
-			continue
-		}
-
-		return txBytes, nil
+		lastErr = fmt.Errorf("explorer %d failed: %w", i, err)
 	}
 
 	if lastErr == nil {
@@ -145,24 +121,63 @@ func (tf *TxFetcher) FetchTx(ctx context.Context, asset uint32, txid string) ([]
 	return nil, lastErr
 }
 
-func (tf *TxFetcher) applyRateLimit(asset uint32, limit time.Duration) error {
+func (tf *TxFetcher) fetchFromSource(source TxSource, txid string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), defaultFetchTimeout)
+	defer cancel()
+
+	url := fmt.Sprintf("%s%s", source.baseURL, fmt.Sprintf(source.txHexPath, txid))
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	resp, err := tf.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("transaction not found")
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("returned %d: %s", resp.StatusCode, string(body))
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	txHex := string(body)
+	txBytes, err := hex.DecodeString(txHex)
+	if err != nil {
+		return nil, fmt.Errorf("invalid hex in response: %w", err)
+	}
+
+	return txBytes, nil
+}
+
+func (tf *TxFetcher) applyRateLimit(source TxSource) error {
 	tf.rateMutex.Lock()
 	defer tf.rateMutex.Unlock()
 
-	lastRequest := tf.rateLimits[asset]
+	lastRequest := tf.rateLimits[source.name]
 	now := time.Now()
 
 	if !lastRequest.IsZero() {
 		elapsed := now.Sub(lastRequest)
-		if elapsed < limit {
-			// Sleep until rate limit expires
-			sleepDuration := limit - elapsed
+		if elapsed < source.rateLimit {
+			sleepDuration := source.rateLimit - elapsed
 			time.Sleep(sleepDuration)
-			tf.rateLimits[asset] = now.Add(sleepDuration)
+			now = time.Now()
+			tf.rateLimits[source.name] = now.Add(source.rateLimit)
 			return nil
 		}
 	}
 
-	tf.rateLimits[asset] = now
+	tf.rateLimits[source.name] = now.Add(source.rateLimit)
 	return nil
 }
