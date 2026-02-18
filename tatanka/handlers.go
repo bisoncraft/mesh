@@ -239,9 +239,47 @@ func (t *TatankaNode) handlePostBonds(s network.Stream) {
 		}
 	}
 
+	pubKey, err := client.ExtractPublicKey()
+	if err != nil {
+		sendErrorResponse(err)
+		return
+	}
+
+	accountIDBytes, err := bond.AccountIDFromPublicKey(pubKey)
+	if err != nil {
+		sendErrorResponse(err)
+		return
+	}
+
+	accountID := string(accountIDBytes)
+	existingBonds, err := t.bondDB.BondsByAccount(accountID)
+	if err != nil {
+		sendErrorResponse(fmt.Errorf("failed to check existing bonds: %w", err))
+		return
+	}
+
+	existingBondIDs := make(map[string]bool)
+	for _, b := range existingBonds {
+		existingBondIDs[b.ID] = true
+	}
+
+	// Only verify new bonds
 	bondsParams := make([]*bond.BondParams, 0, len(postBondMessage.Bonds))
-	for i, bp := range postBondMessage.Bonds {
-		valid, expiry, strength, err := t.bondVerifier.verifyBond(bp.AssetID, bp.BondID, client)
+	for i, pb := range postBondMessage.Bonds {
+		// Construct bond ID in format "assetID:txid:vout"
+		txHash, vout, err := bond.DecodeCoinID(pb.BondID)
+		if err != nil {
+			sendErrorResponse(fmt.Errorf("failed to decode bond id: %w", err))
+			return
+		}
+		bondID := fmt.Sprintf("%s:%s:%d", pb.AssetID, txHash, vout)
+
+		if existingBondIDs[bondID] {
+			continue
+		}
+
+		// TODO: Remove the stub once the bond pipeline is fully implemented.
+		valid, assetValue, expiry, _, err := t.bondVerifier.VerifyBondStub(pb.AssetID, pb.BondID, client)
 		if err != nil {
 			sendErrorResponse(err)
 			return
@@ -250,11 +288,40 @@ func (t *TatankaNode) handlePostBonds(s network.Stream) {
 			sendInvalidBondIndex(uint32(i))
 			return
 		}
+
+		ticker, err := bond.AssetIDToTicker(pb.AssetID)
+		if err != nil {
+			sendErrorResponse(err)
+			return
+		}
+
+		price, err := t.oracle.FetchPrice(ticker)
+		if err != nil {
+			sendErrorResponse(fmt.Errorf("failed to fetch price for %s: %w", ticker, err))
+			return
+		}
+
+		usdValue := assetValue * price
+		strength := uint32(usdValue / bond.BondPricePerUnit)
+		if strength == 0 {
+			sendErrorResponse(fmt.Errorf("bond %s has zero strength: USD value too low", bondID))
+			return
+		}
+
 		bondsParams = append(bondsParams, &bond.BondParams{
-			ID:       string(bp.BondID),
+			ID:       bondID,
 			Expiry:   expiry,
 			Strength: strength,
 		})
+	}
+
+	// Only persist new bonds
+	for _, bp := range bondsParams {
+		if !existingBondIDs[bp.ID] {
+			if err := t.bondDB.StoreBond(accountID, bp); err != nil {
+				t.log.Errorf("Failed to store bond %s: %v", bp.ID, err)
+			}
+		}
 	}
 
 	totalStrength := t.bondStorage.addBonds(client, bondsParams)

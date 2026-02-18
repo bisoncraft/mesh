@@ -14,15 +14,17 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/bisoncraft/mesh/bond"
+	bonddb "github.com/bisoncraft/mesh/bond/db"
+	"github.com/bisoncraft/mesh/oracle"
+	"github.com/bisoncraft/mesh/protocols"
+	protocolsPb "github.com/bisoncraft/mesh/protocols/pb"
+	"github.com/bisoncraft/mesh/tatanka/admin"
 	"github.com/decred/slog"
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
-	"github.com/bisoncraft/mesh/oracle"
-	"github.com/bisoncraft/mesh/protocols"
-	protocolsPb "github.com/bisoncraft/mesh/protocols/pb"
-	"github.com/bisoncraft/mesh/tatanka/admin"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
@@ -51,6 +53,7 @@ type Config struct {
 	MetricsPort   int
 	AdminPort     int
 	WhitelistPath string
+	BondDBPath    string
 
 	// Oracle Configuration
 	CMCKey        string
@@ -76,6 +79,7 @@ type Oracle interface {
 	Prices() map[oracle.Ticker]float64
 	FeeRates() map[oracle.Network]*big.Int
 	GetSourceWeight(sourceName string) float64
+	FetchPrice(ticker string) (float64, error)
 }
 
 // TatankaNode is a permissioned node in the tatanka mesh
@@ -88,8 +92,9 @@ type TatankaNode struct {
 	readyOnce    sync.Once
 	readyErr     atomic.Value // error
 	privateKey   crypto.PrivKey
-	bondVerifier *bondVerifier
+	bondVerifier *bond.Verifier
 	bondStorage  bondStorage
+	bondDB       *bonddb.DB
 
 	gossipSub               *gossipSub
 	clientConnectionManager *clientConnectionManager
@@ -115,14 +120,23 @@ func NewTatankaNode(config *Config, opts ...Option) (*TatankaNode, error) {
 		return nil, err
 	}
 
+	bondDBPath := config.BondDBPath
+	if bondDBPath == "" {
+		bondDBPath = filepath.Join(config.DataDir, "bonds.db")
+	}
+	bondDB, err := bonddb.New(bondDBPath, config.Logger)
+	if err != nil {
+		return nil, fmt.Errorf("error creating bond database: %w", err)
+	}
+
 	t := &TatankaNode{
 		config:                  config,
 		log:                     config.Logger,
 		privateKey:              privateKey,
 		clientConnectionManager: newClientConnectionManager(config.Logger),
 		subscriptionManager:     newSubscriptionManager(),
-		bondVerifier:            newBondVerifier(),
 		bondStorage:             newMemoryBondStorage(time.Now),
+		bondDB:                  bondDB,
 		readyCh:                 make(chan struct{}),
 	}
 	t.whitelist.Store(whitelist)
@@ -224,6 +238,15 @@ func (t *TatankaNode) Run(ctx context.Context) error {
 		}
 	}
 
+	t.bondVerifier, err = bond.NewVerifier(&bond.Config{
+		TxFetcher:  bond.NewTxFetcher(nil),
+		FetchPrice: t.oracle.FetchPrice,
+		Assets:     []string{bond.AssetBTC, bond.AssetDCR},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create bond verifier: %w", err)
+	}
+
 	// Create admin callback function and setup the admin server if configured.
 	adminCallback := func(peerID peer.ID, connected bool, whitelistMismatch bool, addresses []string, peerWhitelist []string) {
 	}
@@ -301,6 +324,20 @@ func (t *TatankaNode) Run(ctx context.Context) error {
 
 	// Wait for the initial connectivity pass to finish before reporting ready.
 	t.connectionManager.waitInitial(ctx)
+
+	if err := t.bondDB.PruneExpiredBonds(time.Now()); err != nil {
+		t.log.Errorf("error pruning expired bonds at startup: %v", err)
+	}
+
+	// Run expired bond pruning process
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := t.bondDB.Run(ctx); err != nil {
+			t.log.Errorf("error in bond pruning goroutine: %v", err)
+		}
+	}()
+
 	t.markReady(nil)
 
 	// Run Oracle
@@ -313,6 +350,13 @@ func (t *TatankaNode) Run(ctx context.Context) error {
 	wg.Wait()
 
 	t.log.Infof("Shutting down tatanka node...")
+
+	if t.bondDB != nil {
+		if err := t.bondDB.Close(); err != nil {
+			t.log.Errorf("error closing bond database: %v", err)
+		}
+	}
+
 	err = t.metricsServer.Shutdown(ctx)
 	if err != nil {
 		return err

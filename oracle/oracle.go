@@ -2,6 +2,7 @@ package oracle
 
 import (
 	"context"
+	"fmt"
 	"math/big"
 	"net/http"
 	"slices"
@@ -415,6 +416,18 @@ func (o *Oracle) MergePrices(sourcedUpdate *SourcedPriceUpdate) map[Ticker]float
 	o.rescheduleDiviner(sourcedUpdate.Source)
 
 	return o.getPrices(updatedTickers)
+}
+
+// FetchPrice returns the price of the provided ticker.
+func (o *Oracle) FetchPrice(ticker string) (float64, error) {
+	v := Ticker(ticker)
+	prices := o.getPrices(map[Ticker]bool{v: true})
+	price, ok := prices[v]
+	if !ok {
+		return 0, fmt.Errorf("no price found for ticker %s", ticker)
+	}
+
+	return price, nil
 }
 
 func (o *Oracle) Run(ctx context.Context) {

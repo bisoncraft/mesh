@@ -1,6 +1,7 @@
 package bond
 
 import (
+	"encoding/binary"
 	"fmt"
 	"sort"
 	"sync"
@@ -13,6 +14,14 @@ import (
 const (
 	// MinRequiredBondStrength is the minimum required bond strength for a client.
 	MinRequiredBondStrength = 1
+	// BondPricePerUnit is the USD price per bond unit (e.g., $10 per bond).
+	// TODO: this is a placeholder, will be set properly in due time.
+	BondPricePerUnit = 10.0
+
+	// Asset IDs in CAIP-19 format: https://standards.chainagnostic.org/CAIPs/caip-19
+	// Format: <chain_id>/<asset_namespace>:<asset_reference>
+	AssetBTC = "bip122:000000000019d6689c085ae165831e93/slip44:0"
+	AssetDCR = "bip122:298e5cc3d985bcc8d3d8ec0a6c0d5755eb8d8374eb5aa635d37c2ab26370498a/slip44:42"
 )
 
 // BondParams contains the parameters of a bond.
@@ -20,6 +29,51 @@ type BondParams struct {
 	ID       string
 	Expiry   time.Time
 	Strength uint32
+}
+
+// MarshalBinary encodes the BondParams into binary format.
+func (bp *BondParams) MarshalBinary() ([]byte, error) {
+	const bondParamsVer = 0
+	idBytes := []byte(bp.ID)
+	b := make([]byte, 1+4+len(idBytes)+4+8)
+
+	b[0] = bondParamsVer
+	binary.BigEndian.PutUint32(b[1:5], uint32(len(idBytes)))
+	copy(b[5:5+len(idBytes)], idBytes)
+	offset := 5 + len(idBytes)
+	binary.BigEndian.PutUint32(b[offset:offset+4], bp.Strength)
+	binary.BigEndian.PutUint64(b[offset+4:offset+12], uint64(bp.Expiry.Unix()))
+
+	return b, nil
+}
+
+// UnmarshalBinary decodes binary data into BondParams.
+func (bp *BondParams) UnmarshalBinary(b []byte) error {
+	const bondParamsVer = 0
+	if len(b) < 1 {
+		return fmt.Errorf("insufficient data for bond params version")
+	}
+
+	ver := b[0]
+	if ver != bondParamsVer {
+		return fmt.Errorf("unknown bond params version %d", ver)
+	}
+
+	if len(b) < 5 {
+		return fmt.Errorf("insufficient data for ID length")
+	}
+
+	idLen := binary.BigEndian.Uint32(b[1:5])
+	if len(b) < 5+int(idLen)+4+8 {
+		return fmt.Errorf("insufficient data for bond params")
+	}
+
+	bp.ID = string(b[5 : 5+int(idLen)])
+	offset := 5 + int(idLen)
+	bp.Strength = binary.BigEndian.Uint32(b[offset : offset+4])
+	bp.Expiry = time.Unix(int64(binary.BigEndian.Uint64(b[offset+4:offset+12])), 0)
+
+	return nil
 }
 
 // BondInfo stores the bond information for a client.
