@@ -228,8 +228,14 @@ func (m *meshConnectionManager) run(ctx context.Context) {
 			m.setPrimaryConnection(conn)
 			runErrCh = errCh
 		} else {
+			// No available nodes - schedule retry with backoff
 			if errCh != nil {
 				runErrCh = errCh
+			}
+			reconnectTimer.Reset(backoff)
+			backoff *= 2
+			if backoff > maxReconnectDelay {
+				backoff = maxReconnectDelay
 			}
 		}
 	}
@@ -250,11 +256,8 @@ func (m *meshConnectionManager) run(ctx context.Context) {
 				return
 			}
 
-			reconnectTimer.Reset(backoff)
-			backoff *= 2
-			if backoff > maxReconnectDelay {
-				backoff = maxReconnectDelay
-			}
+			// Primary connection failed, immediately try alternatives
+			attemptConnect()
 		}
 	}
 }
