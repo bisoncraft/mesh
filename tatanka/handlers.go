@@ -2,7 +2,9 @@ package tatanka
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"math/big"
 	"strings"
 	"time"
@@ -77,8 +79,10 @@ func (t *TatankaNode) handleClientPush(s network.Stream) {
 	initialSubs := &protocolsPb.InitialSubscriptions{}
 	if err := codec.ReadLengthPrefixedMessage(s, initialSubs); err != nil {
 		t.log.Errorf("Failed to read initial subscriptions from client %s: %v", client.ShortString(), err)
-		if err := t.banManager.recordInfraction(ip, client, MalformedMessage); err != nil {
-			t.log.Errorf("Failed to record infraction: %v", err)
+		if !errors.Is(err, io.EOF) {
+			if err := t.banManager.recordInfraction(ip, client, MalformedMessage); err != nil {
+				t.log.Errorf("Failed to record infraction for client %s (%s): %v", client.ShortString(), ip, err)
+			}
 		}
 		return
 	}
@@ -127,8 +131,10 @@ func (t *TatankaNode) handleClientSubscribe(s network.Stream) {
 	subscribeMessage := &protocolsPb.SubscribeRequest{}
 	if err := codec.ReadLengthPrefixedMessage(s, subscribeMessage); err != nil {
 		t.log.Debugf("Failed to read/unmarshal subscribe message from client %s: %v.", client.ShortString(), err)
-		if err := t.banManager.recordInfraction(ip, client, MalformedMessage); err != nil {
-			t.log.Errorf("Failed to record infraction: %v", err)
+		if !errors.Is(err, io.EOF) {
+			if err := t.banManager.recordInfraction(ip, client, MalformedMessage); err != nil {
+				t.log.Errorf("Failed to record infraction for client %s (%s): %v", client.ShortString(), ip, err)
+			}
 		}
 		return
 	}
@@ -212,8 +218,10 @@ func (t *TatankaNode) handleClientPublish(s network.Stream) {
 	publishMessage := &protocolsPb.PublishRequest{}
 	if err := codec.ReadLengthPrefixedMessage(s, publishMessage); err != nil {
 		t.log.Debugf("Failed to read/unmarshal publish message from client %s: %v.", client.ShortString(), err)
-		if err := t.banManager.recordInfraction(ip, client, MalformedMessage); err != nil {
-			t.log.Errorf("Failed to record infraction: %v", err)
+		if !errors.Is(err, io.EOF) {
+			if err := t.banManager.recordInfraction(ip, client, MalformedMessage); err != nil {
+				t.log.Errorf("Failed to record infraction for client %s (%s): %v", client.ShortString(), ip, err)
+			}
 		}
 		return
 	}
@@ -242,21 +250,9 @@ func (t *TatankaNode) handleClientPublish(s network.Stream) {
 		if infractionType != 0 {
 			err = t.banManager.recordInfraction(ip, client, infractionType)
 			if err != nil {
-				t.log.Errorf("Failed to record rate limit infraction: %v", err)
+				t.log.Errorf("Failed to record infraction for client %s (%s): %v", client.ShortString(), ip, err)
 			}
 		}
-		return
-	}
-
-	if strings.HasPrefix(publishMessage.Topic, clientInfractionsTopicName) {
-		t.log.Warnf("Client %s attempted to publish to restricted client infractions topic %s",
-			client.ShortString(), publishMessage.Topic)
-		sendError("cannot publish to restricted topic")
-		err = t.banManager.recordInfraction(ip, client, NodeImpersonation)
-		if err != nil {
-			t.log.Errorf("Failed to record infraction: %v", err)
-		}
-
 		return
 	}
 
@@ -302,8 +298,10 @@ func (t *TatankaNode) handlePostBonds(s network.Stream) {
 	postBondMessage := &protocolsPb.PostBondRequest{}
 	if err := codec.ReadLengthPrefixedMessage(s, postBondMessage); err != nil {
 		t.log.Debugf("Failed to read/unmarshal post bond message from client %s: %v.", client.ShortString(), err)
-		if err := t.banManager.recordInfraction(ip, client, MalformedMessage); err != nil {
-			t.log.Errorf("Failed to record infraction: %v", err)
+		if !errors.Is(err, io.EOF) {
+			if err := t.banManager.recordInfraction(ip, client, MalformedMessage); err != nil {
+				t.log.Errorf("Failed to record infraction for client %s (%s): %v", client.ShortString(), ip, err)
+			}
 		}
 		return
 	}
@@ -332,7 +330,7 @@ func (t *TatankaNode) handlePostBonds(s network.Stream) {
 		if !valid {
 			err = t.banManager.recordInfraction(ip, client, InvalidBond)
 			if err != nil {
-				t.log.Errorf("Failed to record infraction: %v", err)
+				t.log.Errorf("Failed to record infraction for client %s (%s): %v", client.ShortString(), ip, err)
 				return
 			}
 			sendInvalidBondIndex(uint32(i))
@@ -399,8 +397,10 @@ func (t *TatankaNode) handleClientRelayMessage(s network.Stream) {
 	requestMessage := &protocolsPb.ClientRelayMessageRequest{}
 	if err := codec.ReadLengthPrefixedMessage(s, requestMessage); err != nil {
 		t.log.Debugf("Failed to read/unmarshal relay message request from client %s: %v.", client.ShortString(), err)
-		if err := t.banManager.recordInfraction(ip, client, MalformedMessage); err != nil {
-			t.log.Errorf("Failed to record infraction: %v", err)
+		if !errors.Is(err, io.EOF) {
+			if err := t.banManager.recordInfraction(ip, client, MalformedMessage); err != nil {
+				t.log.Errorf("Failed to record infraction for client %s (%s): %v", client.ShortString(), ip, err)
+			}
 		}
 		return
 	}

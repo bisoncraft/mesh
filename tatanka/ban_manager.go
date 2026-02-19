@@ -105,10 +105,11 @@ func (bm *banManager) recordInfraction(ip string, id peer.ID, infractionType inf
 		return err
 	}
 
+	expiry := bm.cfg.now().Add(duration)
 	infractions = append(infractions, infraction{
 		infractionType: infractionType,
 		penalty:        penalty,
-		expiry:         bm.cfg.now().Add(duration),
+		expiry:         expiry,
 	})
 
 	bm.clientInfractions[ip] = infractions
@@ -132,10 +133,12 @@ func (bm *banManager) recordInfraction(ip string, id peer.ID, infractionType inf
 		Reporter:       reporterBytes,
 		InfractionType: uint32(infractionType),
 		Penalty:        penalty,
-		Expiry:         bm.cfg.now().Add(duration).UnixMilli(),
+		Expiry:         expiry.UnixMilli(),
 	}
 
-	if err := bm.cfg.publishInfraction(context.Background(), infractionMsg); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
+	defer cancel()
+	if err := bm.cfg.publishInfraction(ctx, infractionMsg); err != nil {
 		return fmt.Errorf("failed to publish infraction for client %s (%s): %v", id.ShortString(), ip, err)
 	}
 
@@ -265,6 +268,8 @@ func (bm *banManager) getClientBanReason(ip string) string {
 	return ""
 }
 
+// getActiveInfractions returns all non-expired infractions across all clients. It is safe for
+// concurrent use.
 func (bm *banManager) getActiveInfractions() []*pb.ClientInfractionMsg {
 	bm.mtx.RLock()
 	defer bm.mtx.RUnlock()

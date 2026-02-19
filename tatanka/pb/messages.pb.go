@@ -1012,7 +1012,7 @@ func (*ClientInfractionsSnapshotRequest) Descriptor() ([]byte, []int) {
 	return file_messages_proto_rawDescGZIP(), []int{14}
 }
 
-// ClientInfractionsSnapshotResponse contains the snapshot of active client infractions returned in response to a request.
+// ClientInfractionsSnapshotResponse contains the snapshot of active client infractions.
 type ClientInfractionsSnapshotResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Infractions   []*ClientInfractionMsg `protobuf:"bytes,1,rep,name=infractions,proto3" json:"infractions,omitempty"`
@@ -1362,7 +1362,10 @@ const file_messages_proto_rawDesc = "" +
 	"\x10NodeOracleUpdate\x12;\n" +
 	"\fprice_update\x18\x01 \x01(\v2\x16.pb.SourcedPriceUpdateH\x00R\vpriceUpdate\x12B\n" +
 	"\x0ffee_rate_update\x18\x02 \x01(\v2\x18.pb.SourcedFeeRateUpdateH\x00R\rfeeRateUpdateB\b\n" +
-	"\x06updateB'Z%github.com/bisoncraft/mesh/tatanka/pbb\x06proto3"
+	"\x06update\"\"\n" +
+	" ClientInfractionsSnapshotRequest\"^\n" +
+	"!ClientInfractionsSnapshotResponse\x129\n" +
+	"\vinfractions\x18\x01 \x03(\v2\x17.pb.ClientInfractionMsgR\vinfractionsB'Z%github.com/bisoncraft/mesh/tatanka/pbb\x06proto3"
 
 var (
 	file_messages_proto_rawDescOnce sync.Once
