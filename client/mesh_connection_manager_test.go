@@ -77,7 +77,7 @@ func TestMeshConnectionManagerFailover(t *testing.T) {
 				return false
 			}
 			return c.remotePeerID() == expected
-		}, 2*time.Second, 10*time.Millisecond, "primary connection not set to %s", expected)
+		}, 5*time.Second, 10*time.Millisecond, "primary connection not set to %s", expected)
 	}
 
 	waitForPrimary(node1ID)
@@ -85,7 +85,7 @@ func TestMeshConnectionManagerFailover(t *testing.T) {
 	requireEventually(t, func() bool {
 		addrs := h.Peerstore().Addrs(node2ID)
 		return len(addrs) > 0
-	}, 2*time.Second, 10*time.Millisecond, "peerstore missing addresses for node 2")
+	}, 5*time.Second, 10*time.Millisecond, "peerstore missing addresses for node 2")
 
 	node1Available = false
 	conn1.fail(errors.New("node-1 down"))

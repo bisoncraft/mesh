@@ -2,6 +2,7 @@ package tatanka
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/protocol"
@@ -24,6 +25,19 @@ func requireAny(permissions ...permissionDecorator) permissionDecorator {
 		}
 
 		return lastErr
+	}
+}
+
+// requireAll returns a single decorator that succeeds only if ALL
+// underlying permissions pass. It returns an error if ANY permission fails.
+func requireAll(permissions ...permissionDecorator) permissionDecorator {
+	return func(s network.Stream) error {
+		for _, p := range permissions {
+			if err := p(s); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
 }
 
@@ -77,4 +91,18 @@ func (t *TatankaNode) setStreamHandler(protocolID string, handler func(s network
 	}
 
 	t.node.SetStreamHandler(protocol.ID(protocolID), finalHandler)
+}
+
+func (t *TatankaNode) requireNotBanned(s network.Stream) error {
+	ip, err := getIPFromStream(s)
+	if err != nil {
+		return errUnauthorized
+	}
+
+	if t.banManager.isClientBanned(ip) {
+		reason := t.banManager.getClientBanReason(ip)
+		return fmt.Errorf("%w: %s", errUnauthorized, reason)
+	}
+
+	return nil
 }

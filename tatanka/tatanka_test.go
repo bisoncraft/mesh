@@ -1096,8 +1096,10 @@ func TestClientSubscriptionAndBroadcast(t *testing.T) {
 
 	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 
-	// Run 100 iterations of random publish/receive
-	for iteration := 0; iteration < 100; iteration++ {
+	// Run 20 iterations of random publish/receive with sufficient delay to avoid rate limiting.
+	// Rate limiter allows 4 messages/sec per client with burst of 8.
+	// With 6 clients and random publisher selection, 250ms delay ensures we stay within limits.
+	for iteration := 0; iteration < 20; iteration++ {
 		// Randomly select a topic
 		var topic string
 		var subscribers []*testClient
@@ -1148,8 +1150,8 @@ func TestClientSubscriptionAndBroadcast(t *testing.T) {
 				iteration, subscriber.host.ID().ShortString(), topic)
 		}
 
-		// Small delay between iterations
-		time.Sleep(50 * time.Millisecond)
+		// Delay between iterations to stay within rate limits (4 msgs/sec per client)
+		time.Sleep(250 * time.Millisecond)
 	}
 
 	// Terminate clients.
@@ -1672,4 +1674,97 @@ func TestClientSubscriptionEvents(t *testing.T) {
 	for idx := range clients {
 		clients[idx].Close()
 	}
+}
+
+func TestInfractionSnapshotSync(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	mnet, err := mocknet.WithNPeers(3)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	allPeers := mnet.Peers()
+	h1 := mnet.Host(allPeers[0])
+	h2 := mnet.Host(allPeers[1])
+	h3 := mnet.Host(allPeers[2])
+
+	whitelistPeers := []*peer.AddrInfo{
+		{ID: h1.ID(), Addrs: h1.Addrs()},
+		{ID: h2.ID(), Addrs: h2.Addrs()},
+		{ID: h3.ID(), Addrs: h3.Addrs()},
+	}
+	mockWhitelist := &whitelist{peers: whitelistPeers}
+
+	t.Log("Starting Node 1")
+	dir1 := t.TempDir()
+	node1 := newTestNode(t, ctx, h1, dir1, mockWhitelist)
+
+	t.Log("Starting Node 2")
+	dir2 := t.TempDir()
+	if _, err := mnet.LinkPeers(h2.ID(), h1.ID()); err != nil {
+		t.Fatalf("Failed to link h2 to h1: %v", err)
+	}
+	if _, err := mnet.ConnectPeers(h2.ID(), h1.ID()); err != nil {
+		t.Fatalf("Failed to connect h2 to h1: %v", err)
+	}
+	node2 := newTestNode(t, ctx, h2, dir2, mockWhitelist)
+
+	time.Sleep(1 * time.Second)
+	checkFullyConnected(t, []*TatankaNode{node1, node2})
+
+	t.Log("Recording infractions on Node 1")
+	testIPs := []string{"192.168.1.100", "192.168.1.101"}
+	testClientID := peer.ID("test-client-id")
+
+	for _, ip := range testIPs {
+		if err := node1.banManager.recordInfraction(ip, testClientID, MalformedMessage); err != nil {
+			t.Fatalf("Failed to record infraction: %v", err)
+		}
+	}
+
+	time.Sleep(1 * time.Second)
+
+	t.Log("Starting Node 3")
+	dir3 := t.TempDir()
+
+	if _, err := mnet.LinkPeers(h3.ID(), h1.ID()); err != nil {
+		t.Fatalf("Failed to link h3 to h1: %v", err)
+	}
+	if _, err := mnet.ConnectPeers(h3.ID(), h1.ID()); err != nil {
+		t.Fatalf("Failed to connect h3 to h1: %v", err)
+	}
+
+	node3 := newTestNode(t, ctx, h3, dir3, mockWhitelist)
+
+	readyCtx, readyCancel := context.WithTimeout(ctx, 5*time.Second)
+	if err := node3.WaitReady(readyCtx); err != nil {
+		readyCancel()
+		t.Fatalf("Node 3 failed to be ready: %v", err)
+	}
+	readyCancel()
+
+	time.Sleep(500 * time.Millisecond)
+
+	t.Log("Verifying Node 3 synced infractions")
+	node3Infractions := node3.banManager.getActiveInfractions()
+
+	if len(node3Infractions) < len(testIPs) {
+		t.Fatalf("Expected at least %d infractions on node 3, got %d", len(testIPs), len(node3Infractions))
+	}
+
+	infractionIPs := make(map[string]bool)
+	for _, inf := range node3Infractions {
+		infractionIPs[inf.Ip] = true
+	}
+
+	for _, testIP := range testIPs {
+		if !infractionIPs[testIP] {
+			t.Errorf("Expected IP %s in node 3 infractions, but it wasn't found", testIP)
+		}
+	}
+
+	t.Logf("Node 3 synced %d infractions containing all expected IPs", len(node3Infractions))
+	t.Log("SUCCESS: Node 3 successfully synced infractions from peers on startup")
 }

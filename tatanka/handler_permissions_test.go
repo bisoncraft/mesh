@@ -2,15 +2,154 @@ package tatanka
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
+	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	mocknet "github.com/libp2p/go-libp2p/p2p/net/mock"
 	"github.com/bisoncraft/mesh/codec"
 	"github.com/bisoncraft/mesh/protocols"
 	protocolsPb "github.com/bisoncraft/mesh/protocols/pb"
 )
+
+// TestRequireAny tests the requireAny permission combinator.
+func TestRequireAny(t *testing.T) {
+	tests := []struct {
+		name     string
+		perms    []permissionDecorator
+		wantErr  bool
+		wantMsg  string
+	}{
+		{
+			name: "all permissions fail, returns last error",
+			perms: []permissionDecorator{
+				func(s network.Stream) error { return errors.New("error1") },
+				func(s network.Stream) error { return errors.New("error2") },
+				func(s network.Stream) error { return errors.New("error3") },
+			},
+			wantErr: true,
+			wantMsg: "error3",
+		},
+		{
+			name: "first permission succeeds, returns nil",
+			perms: []permissionDecorator{
+				func(s network.Stream) error { return nil },
+				func(s network.Stream) error { return errors.New("error2") },
+				func(s network.Stream) error { return errors.New("error3") },
+			},
+			wantErr: false,
+		},
+		{
+			name: "last permission succeeds, returns nil",
+			perms: []permissionDecorator{
+				func(s network.Stream) error { return errors.New("error1") },
+				func(s network.Stream) error { return errors.New("error2") },
+				func(s network.Stream) error { return nil },
+			},
+			wantErr: false,
+		},
+		{
+			name: "single permission fails",
+			perms: []permissionDecorator{
+				func(s network.Stream) error { return errors.New("fail") },
+			},
+			wantErr: true,
+			wantMsg: "fail",
+		},
+		{
+			name: "single permission succeeds",
+			perms: []permissionDecorator{
+				func(s network.Stream) error { return nil },
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			combined := requireAny(tc.perms...)
+			err := combined(nil)
+
+			if (err != nil) != tc.wantErr {
+				t.Errorf("got error %v, want error %v", err, tc.wantErr)
+			}
+			if tc.wantErr && tc.wantMsg != "" && err.Error() != tc.wantMsg {
+				t.Errorf("got error message %q, want %q", err.Error(), tc.wantMsg)
+			}
+		})
+	}
+}
+
+// TestRequireAll tests the requireAll permission combinator.
+func TestRequireAll(t *testing.T) {
+	tests := []struct {
+		name    string
+		perms   []permissionDecorator
+		wantErr bool
+		wantMsg string
+	}{
+		{
+			name: "all permissions pass, returns nil",
+			perms: []permissionDecorator{
+				func(s network.Stream) error { return nil },
+				func(s network.Stream) error { return nil },
+				func(s network.Stream) error { return nil },
+			},
+			wantErr: false,
+		},
+		{
+			name: "first permission fails, returns error immediately",
+			perms: []permissionDecorator{
+				func(s network.Stream) error { return errors.New("error1") },
+				func(s network.Stream) error { return errors.New("error2") },
+				func(s network.Stream) error { return errors.New("error3") },
+			},
+			wantErr: true,
+			wantMsg: "error1",
+		},
+		{
+			name: "last permission fails, returns error",
+			perms: []permissionDecorator{
+				func(s network.Stream) error { return nil },
+				func(s network.Stream) error { return nil },
+				func(s network.Stream) error { return errors.New("error3") },
+			},
+			wantErr: true,
+			wantMsg: "error3",
+		},
+		{
+			name: "single permission fails",
+			perms: []permissionDecorator{
+				func(s network.Stream) error { return errors.New("fail") },
+			},
+			wantErr: true,
+			wantMsg: "fail",
+		},
+		{
+			name: "single permission succeeds",
+			perms: []permissionDecorator{
+				func(s network.Stream) error { return nil },
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			combined := requireAll(tc.perms...)
+			err := combined(nil)
+
+			if (err != nil) != tc.wantErr {
+				t.Errorf("got error %v, want error %v", err, tc.wantErr)
+			}
+			if tc.wantErr && tc.wantMsg != "" && err.Error() != tc.wantMsg {
+				t.Errorf("got error message %q, want %q", err.Error(), tc.wantMsg)
+			}
+		})
+	}
+}
 
 // TestPushPermissions tests the permissions for the push protocol.
 func TestPushPermissions(t *testing.T) {
