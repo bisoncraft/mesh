@@ -6,14 +6,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bisoncraft/mesh/codec"
+	"github.com/bisoncraft/mesh/protocols"
+	protocolsPb "github.com/bisoncraft/mesh/protocols/pb"
+	pb "github.com/bisoncraft/mesh/tatanka/pb"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	mocknet "github.com/libp2p/go-libp2p/p2p/net/mock"
-	"github.com/martonp/tatanka-mesh/codec"
-	"github.com/martonp/tatanka-mesh/protocols"
-	protocolsPb "github.com/bisoncraft/mesh/protocols/pb"
-	pb "github.com/martonp/tatanka-mesh/tatanka/pb"
 	ma "github.com/multiformats/go-multiaddr"
 )
 
@@ -183,8 +183,10 @@ func testHandleClientPush_Success(t *testing.T) {
 				t.Fatalf("Expected success response, got: %T", response.Response)
 			}
 
-			// Give push stream handler time to register
-			time.Sleep(100 * time.Millisecond)
+			// Wait for push stream handler to register
+			requireEventually(t, func() bool {
+				return hasPushStream(t, node.pushStreamManager, clientHost.ID())
+			}, 2*time.Second, 50*time.Millisecond, "push stream not registered")
 
 			registeredTopics := node.subscriptionManager.topicsForClient(clientHost.ID())
 			if len(registeredTopics) != tc.expectedCount {
@@ -301,8 +303,10 @@ func testHandleClientPush_Subscriptions(t *testing.T) {
 				t.Fatalf("Expected success response, got: %T", response.Response)
 			}
 
-			// Give push stream handler time to register
-			time.Sleep(100 * time.Millisecond)
+			// Wait for push stream handler to register
+			requireEventually(t, func() bool {
+				return hasPushStream(t, node.pushStreamManager, clientHost.ID())
+			}, 2*time.Second, 50*time.Millisecond, "push stream not registered")
 
 			registeredTopics := node.subscriptionManager.topicsForClient(clientHost.ID())
 			if len(registeredTopics) != len(tc.expectedFinal) {
@@ -438,8 +442,10 @@ func testHandleClientPush_ReplacePushStream(t *testing.T) {
 		t.Fatalf("Failed to read response: %v", err)
 	}
 
-	// Give push stream handler time to register
-	time.Sleep(100 * time.Millisecond)
+	// Wait for push stream handler to register
+	requireEventually(t, func() bool {
+		return hasPushStream(t, node.pushStreamManager, clientHost.ID())
+	}, 2*time.Second, 50*time.Millisecond, "push stream not registered")
 
 	if !hasPushStream(t, node.pushStreamManager, clientHost.ID()) {
 		t.Error("First push stream not registered")
@@ -546,8 +552,11 @@ func testHandleClientSubscribe_SubscribeSuccess(t *testing.T) {
 	}
 	_ = stream.Close()
 
-	// Give handler time to process
-	time.Sleep(100 * time.Millisecond)
+	// Wait for subscription handler to process
+	requireEventually(t, func() bool {
+		topics := node.subscriptionManager.topicsForClient(clientHost.ID())
+		return len(topics) > 0
+	}, 2*time.Second, 50*time.Millisecond, "subscription not registered")
 
 	registeredTopics := node.subscriptionManager.topicsForClient(clientHost.ID())
 	if len(registeredTopics) != 1 {

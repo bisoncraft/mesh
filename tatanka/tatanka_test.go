@@ -52,33 +52,13 @@ func (tbs *testBondStorage) bondStrength(peerID peer.ID) uint32 {
 	return tbs.score
 }
 
-type testOracle struct{}
-
-func (to *testOracle) Run(ctx context.Context) {
-	<-ctx.Done()
-}
-
-func (to *testOracle) Next() <-chan any {
-	return nil
-}
-
-func (to *testOracle) MergePrices(sourcedUpdate *oracle.SourcedPriceUpdate) map[oracle.Ticker]float64 {
-	return make(map[oracle.Ticker]float64)
-}
-func (to *testOracle) MergeFeeRates(sourcedUpdate *oracle.SourcedFeeRateUpdate) map[oracle.Network]*big.Int {
-	return make(map[oracle.Network]*big.Int)
-}
-func (to *testOracle) Prices() map[oracle.Ticker]float64   { return make(map[oracle.Ticker]float64) }
-func (to *testOracle) FeeRates() map[oracle.Network]*big.Int { return make(map[oracle.Network]*big.Int) }
-func (to *testOracle) GetSourceWeight(sourceName string) float64 { return 1.0 }
-
 // tOracle is a test oracle that tracks merged price and fee rate updates.
 type tOracle struct {
-	mtx              sync.Mutex
-	mergedPrices     []*oracle.SourcedPriceUpdate
-	mergedFeeRates   []*oracle.SourcedFeeRateUpdate
-	prices           map[oracle.Ticker]float64
-	feeRates         map[oracle.Network]*big.Int
+	mtx            sync.Mutex
+	mergedPrices   []*oracle.SourcedPriceUpdate
+	mergedFeeRates []*oracle.SourcedFeeRateUpdate
+	prices         map[oracle.Ticker]float64
+	feeRates       map[oracle.Network]*big.Int
 }
 
 var _ Oracle = (*tOracle)(nil)
@@ -191,73 +171,6 @@ func (m *mockGossipSub) getPublishedMessages() []*protocolsPb.PushMessage {
 	return msgs
 }
 
-// mockBondVerifier mocks the bondVerifier interface for testing.
-type mockVerifyResult struct {
-	valid    bool
-	expiry   time.Time
-	strength uint32
-	err      error
-}
-
-type mockBondVerifier struct {
-	callCount     int
-	verifyResults []mockVerifyResult
-	mtx           sync.Mutex
-}
-
-func (m *mockBondVerifier) verifyBond(assetID uint32, bondID []byte, peerID peer.ID) (bool, time.Time, uint32, error) {
-	m.mtx.Lock()
-	defer m.mtx.Unlock()
-	if m.callCount >= len(m.verifyResults) {
-		return false, time.Time{}, 0, fmt.Errorf("unexpected call %d", m.callCount)
-	}
-	result := m.verifyResults[m.callCount]
-	m.callCount++
-	return result.valid, result.expiry, result.strength, result.err
-}
-
-func (m *mockBondVerifier) getCallCount() int {
-	m.mtx.Lock()
-	defer m.mtx.Unlock()
-	return m.callCount
-}
-
-// mockBondStorage with call tracking
-type mockBondStorageWithTracking struct {
-	totalStrength uint32
-	addBondsCalls []addBondsCall
-	mtx           sync.Mutex
-}
-
-type addBondsCall struct {
-	peerID peer.ID
-	bonds  []*bond.BondParams
-}
-
-func (m *mockBondStorageWithTracking) addBonds(peerID peer.ID, bonds []*bond.BondParams) uint32 {
-	m.mtx.Lock()
-	defer m.mtx.Unlock()
-	bondsCopy := make([]*bond.BondParams, len(bonds))
-	copy(bondsCopy, bonds)
-	m.addBondsCalls = append(m.addBondsCalls, addBondsCall{
-		peerID: peerID,
-		bonds:  bondsCopy,
-	})
-	return m.totalStrength
-}
-
-func (m *mockBondStorageWithTracking) bondStrength(peerID peer.ID) uint32 {
-	return m.totalStrength
-}
-
-func (m *mockBondStorageWithTracking) getAddBondsCalls() []addBondsCall {
-	m.mtx.Lock()
-	defer m.mtx.Unlock()
-	calls := make([]addBondsCall, len(m.addBondsCalls))
-	copy(calls, m.addBondsCalls)
-	return calls
-}
-
 func newTestNode(t *testing.T, ctx context.Context, h host.Host, dataDir string, whitelist *whitelist) *TatankaNode {
 	logBackend := slog.NewBackend(os.Stdout)
 	log := logBackend.Logger(h.ID().ShortString())
@@ -283,7 +196,7 @@ func newTestNode(t *testing.T, ctx context.Context, h host.Host, dataDir string,
 	}
 
 	n.bondStorage = &testBondStorage{score: 1}
-	n.oracle = &testOracle{}
+	n.oracle = newTOracle()
 
 	go func() {
 		if err := n.Run(ctx); err != nil {
@@ -684,9 +597,9 @@ func fullyConnectedMeshWithClients(ctx context.Context, t *testing.T, numMeshNod
 	}
 
 	// Make sure the mesh is fully connected
-	checkFullyConnected(t, runningNodes)
-
-	time.Sleep(time.Second)
+	requireEventually(t, func() bool {
+		return checkFullyConnected(t, runningNodes)
+	}, 10*time.Second, 100*time.Millisecond, "mesh failed to fully connect")
 
 	clients = make([]*testClient, numClients)
 	for i, clientHost := range clientHosts {
@@ -1184,8 +1097,6 @@ func TestClientSubscriptionAndBroadcast(t *testing.T) {
 		}
 	}
 
-	time.Sleep(time.Second)
-
 	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 
 	// Run 100 iterations of random publish/receive
@@ -1285,8 +1196,6 @@ func TestGossipSubOracleUpdates_PriceUpdates(t *testing.T) {
 		nodes[i] = newTestNodeWithOracle(t, ctx, hosts[i], dir, mockWhitelist, oracle)
 	}
 
-	time.Sleep(time.Second)
-
 	// Node 0 publishes price updates
 	now := time.Now()
 	sourcedUpdate := &oracle.SourcedPriceUpdate{
@@ -1304,8 +1213,18 @@ func TestGossipSubOracleUpdates_PriceUpdates(t *testing.T) {
 		t.Fatalf("Failed to publish oracle update: %v", err)
 	}
 
-	// Wait for gossip propagation
-	time.Sleep(2 * time.Second)
+	// Wait for gossip propagation and price merging
+	requireEventually(t, func() bool {
+		for i := 0; i < numMeshNodes; i++ {
+			oracles[i].mtx.Lock()
+			mergedCount := len(oracles[i].mergedPrices)
+			oracles[i].mtx.Unlock()
+			if mergedCount == 0 {
+				return false
+			}
+		}
+		return true
+	}, 5*time.Second, 100*time.Millisecond, "gossip propagation failed: not all nodes received price update")
 
 	// Verify that all nodes received and merged the updates
 	for i := 0; i < numMeshNodes; i++ {
@@ -1374,8 +1293,6 @@ func TestGossipSubOracleUpdates_FeeRateUpdates(t *testing.T) {
 		nodes[i] = newTestNodeWithOracle(t, ctx, hosts[i], dir, mockWhitelist, oracle)
 	}
 
-	time.Sleep(time.Second)
-
 	// Node 1 publishes fee rate updates
 	now := time.Now()
 	sourcedUpdate := &oracle.SourcedFeeRateUpdate{
@@ -1393,8 +1310,18 @@ func TestGossipSubOracleUpdates_FeeRateUpdates(t *testing.T) {
 		t.Fatalf("Failed to publish oracle update: %v", err)
 	}
 
-	// Wait for gossip propagation
-	time.Sleep(2 * time.Second)
+	// Wait for gossip propagation and fee rate merging
+	requireEventually(t, func() bool {
+		for i := 0; i < numMeshNodes; i++ {
+			oracles[i].mtx.Lock()
+			mergedCount := len(oracles[i].mergedFeeRates)
+			oracles[i].mtx.Unlock()
+			if mergedCount == 0 {
+				return false
+			}
+		}
+		return true
+	}, 5*time.Second, 100*time.Millisecond, "gossip propagation failed: not all nodes received fee rate update")
 
 	// Verify that all nodes received and merged the updates
 	for i := 0; i < numMeshNodes; i++ {
@@ -1463,8 +1390,6 @@ func TestGossipSubOracleUpdates_MultipleNodes(t *testing.T) {
 		nodes[i] = newTestNodeWithOracle(t, ctx, hosts[i], dir, mockWhitelist, oracle)
 	}
 
-	time.Sleep(time.Second)
-
 	now := time.Now()
 
 	// Node 0 publishes price updates
@@ -1506,8 +1431,20 @@ func TestGossipSubOracleUpdates_MultipleNodes(t *testing.T) {
 		t.Fatalf("Failed to publish price update from node 2: %v", err)
 	}
 
-	// Wait for gossip propagation
-	time.Sleep(2 * time.Second)
+	// Wait for gossip propagation of all updates
+	requireEventually(t, func() bool {
+		for _, oracle := range oracles {
+			oracle.mtx.Lock()
+			priceCount := len(oracle.mergedPrices)
+			feeRateCount := len(oracle.mergedFeeRates)
+			oracle.mtx.Unlock()
+			// All nodes should have received 2 price updates and 1 fee rate update
+			if priceCount < 2 || feeRateCount < 1 {
+				return false
+			}
+		}
+		return true
+	}, 5*time.Second, 100*time.Millisecond, "gossip propagation failed: not all nodes received updates")
 
 	// Verify all nodes received all price updates (2 price updates from nodes 0 and 2)
 	for i, oracle := range oracles {
@@ -1595,8 +1532,6 @@ func TestGossipSubOracleUpdates_ClientDelivery(t *testing.T) {
 		t.Fatalf("Failed to connect mesh peers: %v", err)
 	}
 
-	time.Sleep(time.Second)
-
 	// Create clients and connect them to nodes
 	clients := make([]*testClient, numClients)
 	for i := range clients {
@@ -1613,8 +1548,6 @@ func TestGossipSubOracleUpdates_ClientDelivery(t *testing.T) {
 		}
 	}
 
-	time.Sleep(time.Second)
-
 	// Subscribe clients to oracle topics
 	if err := clients[0].Subscribe(ctx, oraclePricesTopic); err != nil {
 		t.Fatalf("Failed to subscribe client 0 to prices: %v", err)
@@ -1622,8 +1555,6 @@ func TestGossipSubOracleUpdates_ClientDelivery(t *testing.T) {
 	if err := clients[1].Subscribe(ctx, oracleFeeRatesTopic); err != nil {
 		t.Fatalf("Failed to subscribe client 1 to fee rates: %v", err)
 	}
-
-	time.Sleep(time.Second)
 
 	// Node 0 publishes price updates via gossipsub
 	now := time.Now()
@@ -1652,11 +1583,8 @@ func TestGossipSubOracleUpdates_ClientDelivery(t *testing.T) {
 		t.Fatalf("Failed to publish fee rate update: %v", err)
 	}
 
-	// Wait for processing and client delivery
-	time.Sleep(2 * time.Second)
-
 	// Verify client 0 received the price update
-	timeoutCtx, timeoutCancel := context.WithTimeout(ctx, 3*time.Second)
+	timeoutCtx, timeoutCancel := context.WithTimeout(ctx, 5*time.Second)
 	msg0, err := clients[0].Next(timeoutCtx, oraclePricesTopic)
 	timeoutCancel()
 	if err != nil {
@@ -1670,7 +1598,7 @@ func TestGossipSubOracleUpdates_ClientDelivery(t *testing.T) {
 	}
 
 	// Verify client 1 received the fee rate update
-	timeoutCtx, timeoutCancel = context.WithTimeout(ctx, 3*time.Second)
+	timeoutCtx, timeoutCancel = context.WithTimeout(ctx, 5*time.Second)
 	msg1, err := clients[1].Next(timeoutCtx, oracleFeeRatesTopic)
 	timeoutCancel()
 	if err != nil {
