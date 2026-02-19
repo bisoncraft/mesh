@@ -68,6 +68,7 @@ create_client_config() {
   local node_addr=$2
   local client_port=$3
   local web_port=$4
+  local spam=$5
   local config_path=$client_dir/testclient.conf
 
   cat <<EOF > $config_path
@@ -76,6 +77,7 @@ loglevel=debug
 nodeaddr=$node_addr
 clientport=$client_port
 webport=$web_port
+spam=$spam
 EOF
 
   echo $config_path
@@ -84,6 +86,7 @@ EOF
 start_harness() {
   local num_nodes=$1
   local num_clients=$2
+  local spam=${3:-false}
 
   mkdir -p $ROOT_DIR
 
@@ -146,7 +149,7 @@ start_harness() {
 
       client_port=$((12455 + i))
       web_port=$((12465 + i))
-      client_cfg=$(create_client_config $client_dir "$node_addr" $client_port $web_port)
+      client_cfg=$(create_client_config $client_dir "$node_addr" $client_port $web_port $spam)
 
       tmux new-window -t $session_name -n client-$i
       tmux send-keys -t $session_name "ROOT_DIR=$ROOT_DIR $TESTCLIENT_BIN -C $client_cfg" C-m
@@ -158,14 +161,31 @@ start_harness() {
 
 # Check if number of nodes and clients are provided
 if [ $# -lt 2 ]; then
-  echo "Usage: $0 <num_nodes> <num_clients>"
+  echo "Usage: $0 <num_nodes> <num_clients> [-s|--spam]"
   echo "  num_nodes:   Number of tatanka nodes to start"
   echo "  num_clients: Number of test clients to start"
+  echo "  -s, --spam:  Enable spam publisher on clients (default: disabled)"
   exit 1
 fi
 
 num_nodes=$1
 num_clients=$2
+spam=false
+
+# Parse remaining arguments for flags
+shift 2
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -s|--spam)
+      spam=true
+      shift
+      ;;
+    *)
+      echo "Error: Unknown option '$1'"
+      exit 1
+      ;;
+  esac
+done
 
 # Validate that the argument is a positive integer
 if ! [[ "$num_nodes" =~ ^[0-9]+$ ]] || [ "$num_nodes" -eq 0 ]; then
@@ -178,6 +198,6 @@ if ! [[ "$num_clients" =~ ^[0-9]+$ ]] || [ "$num_clients" -lt 0 ]; then
   exit 1
 fi
 
-start_harness $num_nodes $num_clients
+start_harness $num_nodes $num_clients $spam
 
 tmux attach-session -t $session_name

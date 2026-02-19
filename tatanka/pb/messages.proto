@@ -12,6 +12,23 @@ message ClientConnectionMsg {
   int64 timestamp = 4;
 }
 
+// ClientBanMsg is used internally by tatanka nodes to share client ban information.
+message ClientBanMsg {
+  string ip = 1;           // banned client IP address
+  bytes reporter = 2;      // peer.ID of reporting node
+  uint32 total_penalties = 3;
+  int64 expiry = 4;
+}
+
+// ClientInfractionMsg is used to gossip individual client infractions between tatanka nodes.
+message ClientInfractionMsg {
+  string ip = 1;                 // client IP address
+  bytes reporter = 2;            // peer.ID of reporting node
+  uint32 infraction_type = 3;    // infractionType enum value
+  uint32 penalty = 4;            // penalty for this infraction
+  int64 expiry = 5;              // when this infraction expires
+}
+
 message TatankaForwardRelayRequest {
   bytes initiator_id = 1; // peer.ID serialized as bytes
   bytes counterparty_id = 2; // peer.ID serialized as bytes
@@ -102,4 +119,12 @@ message NodeOracleUpdate {
     SourcedPriceUpdate price_update = 1;
     SourcedFeeRateUpdate fee_rate_update = 2;
   }
+}
+
+// ClientInfractionsSnapshotRequest is sent by a tatanka node to query another node for its active client infractions.
+message ClientInfractionsSnapshotRequest {}
+
+// ClientInfractionsSnapshotResponse contains the snapshot of active client infractions.
+message ClientInfractionsSnapshotResponse {
+  repeated ClientInfractionMsg infractions = 1;
 }

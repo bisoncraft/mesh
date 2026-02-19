@@ -49,6 +49,7 @@ type Config struct {
 	BondParams []*bondParamsFlag `long:"bondparams" description:"The test client bond params."`
 	ClientPort int               `long:"clientport" description:"The port to listen on for client connections"`
 	WebPort    int               `long:"webport" description:"The web interface port."`
+	Spam       bool              `long:"spam" description:"Enable publish spam feature."`
 }
 
 // defaultAppDataDir returns the default application data directory.
@@ -204,6 +205,7 @@ func main() {
 		ClientPort: cfg.ClientPort,
 		WebPort:    cfg.WebPort,
 		Logger:     log,
+		Spam:       cfg.Spam,
 	}
 
 	tc, err := client.NewClient(tcCfg)

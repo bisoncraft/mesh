@@ -1,9 +1,11 @@
 package client
 
 import (
+	"bytes"
 	"context"
 	"embed"
 	"encoding/base64"
+	"encoding/json"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -42,6 +44,7 @@ type Config struct {
 	ClientPort int
 	WebPort    int
 	Logger     slog.Logger
+	Spam       bool
 }
 
 // Client represents a tatanka test client.
@@ -394,6 +397,57 @@ func writeSSEEvent(w http.ResponseWriter, e Event) error {
 	return err
 }
 
+func (c *Client) publishSpam(ctx context.Context) {
+	// Wait a few seconds for the server to start
+	select {
+	case <-time.After(2 * time.Second):
+	case <-ctx.Done():
+		return
+	}
+
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+
+	client := &http.Client{
+		Timeout: 5 * time.Second,
+	}
+
+	c.log.Infof("Periodically publishing spam messages")
+
+	for {
+		select {
+		case <-ticker.C:
+			now := time.Now().UnixMilli()
+			timeStr := strconv.FormatInt(now, 10)
+
+			payload := map[string]string{
+				"topic": "time",
+				"data":  base64.StdEncoding.EncodeToString([]byte(timeStr)),
+			}
+
+			payloadJSON, err := json.Marshal(payload)
+			if err != nil {
+				c.log.Debugf("Failed to marshal spam payload: %v", err)
+				continue
+			}
+
+			resp, err := client.Post(
+				fmt.Sprintf("http://localhost:%d/broadcast", c.cfg.WebPort),
+				"application/json",
+				bytes.NewReader(payloadJSON),
+			)
+			if err != nil {
+				c.log.Debugf("Failed to publish spam message: %v", err)
+				continue
+			}
+			resp.Body.Close()
+
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
 func (c *Client) Run(ctx context.Context, bonds []*bond.BondParams) {
 	c.log.Infof("Running test client ...")
 
@@ -424,6 +478,14 @@ func (c *Client) Run(ctx context.Context, bonds []*bond.BondParams) {
 			}
 		}
 	}()
+
+	if c.cfg.Spam {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			c.publishSpam(ctx)
+		}()
+	}
 
 	wg.Wait()
 }

@@ -208,6 +208,13 @@ func (h *meshConnHarness) setupDefaultHandlers(t *testing.T) {
 			t.Fatalf("Publish read error: %v", err)
 		}
 		h.publishReceived <- &msg
+
+		resp := &protocolsPb.Response{
+			Response: &protocolsPb.Response_Success{Success: &protocolsPb.Success{}},
+		}
+		if err := codec.WriteLengthPrefixedMessage(s, resp); err != nil {
+			t.Fatalf("Failed to send publish response: %v", err)
+		}
 	})
 
 	h.tatankaHost.SetStreamHandler(protocols.ClientSubscribeProtocol, func(s network.Stream) {
