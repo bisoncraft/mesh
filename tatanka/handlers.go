@@ -84,14 +84,14 @@ func (t *TatankaNode) handleClientPush(s network.Stream) {
 		t.publishClientSubscriptionEvent(client, topic, false)
 	}
 
+	t.pushStreamManager.newPushStream(s)
+
 	if err := codec.WriteLengthPrefixedMessage(s, pbResponseSuccess()); err != nil {
 		t.log.Errorf("Failed to write success response: %v", err)
 		return
 	}
 
 	success = true
-
-	t.pushStreamManager.newPushStream(s)
 }
 
 func (t *TatankaNode) publishClientSubscriptionEvent(client peer.ID, topic string, subscribed bool) {

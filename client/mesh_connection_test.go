@@ -179,6 +179,11 @@ func newMeshConnHarness(t *testing.T, topics []string) *meshConnHarness {
 
 	receiveWithTimeout(t, h.meshConn.readyCh, 2*time.Second)
 
+	// Wait for the push stream to actually be established on the tatanka side
+	requireEventually(t, func() bool {
+		return h.getTatankaPushStream() != nil
+	}, 2*time.Second, 10*time.Millisecond, "push stream not established after readyCh signal")
+
 	return h
 }
 
