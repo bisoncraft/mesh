@@ -10,28 +10,36 @@ import (
 )
 
 type diffModel struct {
-	node         admin.NodeInfo
+	node         admin.PeerInfo
+	api          *apiClient
 	inBoth       []string
 	onlyOurs     []string
 	onlyPeers    []string
 	scrollOffset int
 	height       int
+	confirming   bool
+	statusMsg    string
 }
 
-func newDiffModel(node admin.NodeInfo, state *admin.AdminState) diffModel {
-	ourSet := make(map[string]bool)
-	for _, id := range state.OurWhitelist {
+func newDiffModel(node admin.PeerInfo, state *admin.AdminState, api *apiClient) diffModel {
+	ourWl := getOurWhitelist(state)
+	ourSet := make(map[string]bool, len(ourWl))
+	for _, id := range ourWl {
 		ourSet[id] = true
 	}
 
-	peerSet := make(map[string]bool)
-	for _, id := range node.PeerWhitelist {
+	var peerWl []string
+	if node.WhitelistState != nil {
+		peerWl = peerIDStrings(node.WhitelistState.Current)
+	}
+	peerSet := make(map[string]bool, len(peerWl))
+	for _, id := range peerWl {
 		peerSet[id] = true
 	}
 
 	var inBoth, onlyOurs, onlyPeers []string
 
-	for _, id := range state.OurWhitelist {
+	for _, id := range ourWl {
 		if peerSet[id] {
 			inBoth = append(inBoth, id)
 		} else {
@@ -39,7 +47,7 @@ func newDiffModel(node admin.NodeInfo, state *admin.AdminState) diffModel {
 		}
 	}
 
-	for _, id := range node.PeerWhitelist {
+	for _, id := range peerWl {
 		if !ourSet[id] {
 			onlyPeers = append(onlyPeers, id)
 		}
@@ -51,6 +59,7 @@ func newDiffModel(node admin.NodeInfo, state *admin.AdminState) diffModel {
 
 	return diffModel{
 		node:      node,
+		api:       api,
 		inBoth:    inBoth,
 		onlyOurs:  onlyOurs,
 		onlyPeers: onlyPeers,
@@ -67,6 +76,16 @@ func (m diffModel) Update(msg tea.Msg) (diffModel, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.height = msg.Height
 	case tea.KeyMsg:
+		if m.confirming {
+			switch msg.String() {
+			case "y":
+				m.confirming = false
+				return m, m.api.adoptWhitelist(m.node.PeerID)
+			case "n", "esc":
+				m.confirming = false
+			}
+			return m, nil
+		}
 		switch msg.String() {
 		case "up", "k":
 			if m.scrollOffset > 0 {
@@ -75,6 +94,10 @@ func (m diffModel) Update(msg tea.Msg) (diffModel, tea.Cmd) {
 		case "down", "j":
 			if m.scrollOffset < m.maxOffset() {
 				m.scrollOffset++
+			}
+		case "f":
+			if m.node.WhitelistState != nil {
+				m.confirming = true
 			}
 		case "esc", "q":
 			return m, navBack()
@@ -116,6 +139,22 @@ func (m diffModel) View() string {
 	lines = append(lines,
 		headerStyle.Render(fmt.Sprintf(" Whitelist Diff \u2014 %s", m.node.PeerID)),
 		"",
+	)
+
+	if m.statusMsg != "" {
+		lines = append(lines, fmt.Sprintf(" %s", disconnectedStyle.Render(m.statusMsg)), "")
+	}
+
+	if m.confirming {
+		lines = append(lines,
+			fmt.Sprintf(" %s %s",
+				cursorStyle.Render("Adopt peer's whitelist?"),
+				dimStyle.Render("(y/n)")),
+			"",
+		)
+	}
+
+	lines = append(lines,
 		dimStyle.Render(" "+strings.Repeat("\u2500", 50)),
 		"",
 	)
@@ -147,7 +186,12 @@ func (m diffModel) View() string {
 		lines = append(lines, "")
 	}
 
-	lines = append(lines, helpStyle.Render(" \u2191\u2193 Scroll   Esc: Back to connections"))
+	helpParts := []string{"\u2191\u2193 Scroll"}
+	if m.node.WhitelistState != nil {
+		helpParts = append(helpParts, "f: Adopt peer's whitelist")
+	}
+	helpParts = append(helpParts, "Esc: Back to connections")
+	lines = append(lines, helpStyle.Render(" "+strings.Join(helpParts, "   ")))
 
 	// Apply scroll
 	maxOffset := len(lines) - m.height + 2

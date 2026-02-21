@@ -12,12 +12,13 @@ type menuModel struct {
 	views   []viewID
 	cursor  int
 	height  int
+	peerID  string
 }
 
 func newMenuModel() menuModel {
 	return menuModel{
-		choices: []string{"Connections", "Oracle Sources", "Oracle Data"},
-		views:   []viewID{viewConnections, viewOracleSources, viewOracleAggregated},
+		choices: []string{"Connections", "Whitelist", "Oracle Sources", "Oracle Data"},
+		views:   []viewID{viewConnections, viewWhitelist, viewOracleSources, viewOracleAggregated},
 		cursor:  0,
 	}
 }
@@ -55,6 +56,10 @@ func (m menuModel) View() string {
 	var b strings.Builder
 
 	b.WriteString(titleStyle.Render("Tatanka Admin"))
+	b.WriteString("\n")
+	if m.peerID != "" {
+		b.WriteString(dimStyle.Render("  " + m.peerID))
+	}
 	b.WriteString("\n\n")
 
 	for i, choice := range m.choices {
