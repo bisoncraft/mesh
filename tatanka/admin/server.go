@@ -3,7 +3,10 @@ package admin
 import (
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
+	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -20,6 +23,9 @@ const (
 	StateConnected         NodeConnectionState = "connected"
 	StateDisconnected      NodeConnectionState = "disconnected"
 	StateWhitelistMismatch NodeConnectionState = "whitelist_mismatch"
+
+	adminRequestBodyLimitBytes = 1 << 20 // 1 MiB
+	adminWebSocketReadLimit    = 1 << 20 // 1 MiB
 )
 
 // NodeInfo contains information about a specific peer
@@ -82,26 +88,33 @@ type Oracle interface {
 
 // NewServer initializes the admin server.
 func NewServer(log slog.Logger, addr string, oracle Oracle) *Server {
-	server := &Server{
-		log:      log,
-		upgrader: websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }},
-		clients:  make(map[*Client]bool),
+	return &Server{
+		log: log,
+		upgrader: websocket.Upgrader{
+			CheckOrigin: func(r *http.Request) bool {
+				return allowWebSocketOrigin(r)
+			},
+		},
+		clients: make(map[*Client]bool),
 		state: AdminState{
 			Nodes:        make(map[string]NodeInfo),
 			OurWhitelist: []string{},
 		},
-		httpServer: &http.Server{Addr: addr},
-		oracle:     oracle,
+		httpServer: &http.Server{
+			Addr:              addr,
+			ReadHeaderTimeout: 5 * time.Second,
+			ReadTimeout:       10 * time.Second,
+			WriteTimeout:      10 * time.Second,
+			IdleTimeout:       60 * time.Second,
+		},
+		oracle: oracle,
 	}
-
-	return server
 }
 
 // Start launches the HTTP server
 func (s *Server) Start(ctx context.Context) error {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/admin/state", s.handleGetState)
-	mux.HandleFunc("/admin/ws", s.handleWebSocket)
+	mux.HandleFunc("/admin/ws", s.localOnly(s.handleWebSocket))
 	s.httpServer.Handler = mux
 
 	s.log.Infof("Starting admin server on %s", s.httpServer.Addr)
@@ -114,6 +127,56 @@ func (s *Server) Start(ctx context.Context) error {
 	}()
 
 	return s.httpServer.ListenAndServe()
+}
+
+func (s *Server) localOnly(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !isLoopbackRequest(r) {
+			http.Error(w, "admin interface is only available from localhost", http.StatusForbidden)
+			return
+		}
+		next(w, r)
+	}
+}
+
+func isLoopbackRequest(r *http.Request) bool {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	host = strings.Trim(host, "[]")
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+func allowWebSocketOrigin(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		// Non-browser clients (e.g. tatankactl) usually don't set Origin.
+		return true
+	}
+
+	u, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+
+	return isLocalhostHost(u.Host)
+}
+
+func isLocalhostHost(hostPort string) bool {
+	host := hostPort
+	if parsedHost, _, err := net.SplitHostPort(hostPort); err == nil {
+		host = parsedHost
+	}
+
+	host = strings.Trim(host, "[]")
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // UpdateConnectionState updates a specific peer's info and broadcasts to clients
@@ -172,100 +235,3 @@ func (s *Server) BroadcastOracleUpdate(msgType string, snapshotDiff *oracle.Orac
 	s.broadcast(msg)
 }
 
-// broadcast sends a WSMessage to all connected clients.
-func (s *Server) broadcast(msg WSMessage) {
-	s.clientsMtx.RLock()
-	defer s.clientsMtx.RUnlock()
-
-	for client := range s.clients {
-		select {
-		case client.send <- msg:
-		default:
-			s.log.Errorf("Client buffer full, skipping update")
-		}
-	}
-}
-
-func (s *Server) handleGetState(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "GET" {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	s.stateMtx.RLock()
-	state := s.state.DeepCopy()
-	s.stateMtx.RUnlock()
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(state)
-}
-
-func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
-	conn, err := s.upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		s.log.Warnf("WebSocket upgrade failed: %v", err)
-		return
-	}
-
-	client := &Client{
-		conn: conn,
-		send: make(chan WSMessage, 10),
-	}
-
-	s.clientsMtx.Lock()
-	s.clients[client] = true
-	s.clientsMtx.Unlock()
-
-	// Send initial admin state
-	s.stateMtx.RLock()
-	initialState := s.state.DeepCopy()
-	s.stateMtx.RUnlock()
-	stateData, err := json.Marshal(initialState)
-	if err == nil {
-		select {
-		case client.send <- WSMessage{Type: "admin_state", Data: json.RawMessage(stateData)}:
-		default:
-		}
-	}
-
-	// Send oracle snapshot
-	snapshot := s.oracle.OracleSnapshot()
-	if snapshot != nil {
-		snapshotData, err := json.Marshal(snapshot)
-		if err == nil {
-			select {
-			case client.send <- WSMessage{Type: "oracle_snapshot", Data: json.RawMessage(snapshotData)}:
-			default:
-			}
-		}
-	}
-
-	// 1. Writer Goroutine
-	go func() {
-		defer conn.Close()
-		for msg := range client.send {
-			if err := conn.WriteJSON(msg); err != nil {
-				return
-			}
-		}
-	}()
-
-	// 2. Reader Goroutine
-	go func() {
-		defer func() {
-			s.clientsMtx.Lock()
-			if _, ok := s.clients[client]; ok {
-				delete(s.clients, client)
-				close(client.send)
-			}
-			s.clientsMtx.Unlock()
-			conn.Close()
-		}()
-
-		for {
-			if _, _, err := conn.ReadMessage(); err != nil {
-				break
-			}
-		}
-	}()
-}
