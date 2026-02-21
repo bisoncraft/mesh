@@ -13,7 +13,7 @@ import (
 
 type connectionsModel struct {
 	state           *admin.AdminState
-	nodes           []admin.NodeInfo
+	nodes           []admin.PeerInfo
 	mismatchIndices []int
 	cursor          int // index into mismatchIndices
 	lastUpdate      time.Time
@@ -50,8 +50,8 @@ func (m connectionsModel) Update(msg tea.Msg) (connectionsModel, tea.Cmd) {
 }
 
 func (m *connectionsModel) sortNodes() {
-	nodes := make([]admin.NodeInfo, 0, len(m.state.Nodes))
-	for _, node := range m.state.Nodes {
+	nodes := make([]admin.PeerInfo, 0, len(m.state.Peers))
+	for _, node := range m.state.Peers {
 		nodes = append(nodes, node)
 	}
 
@@ -71,7 +71,7 @@ func (m *connectionsModel) sortNodes() {
 	m.nodes = nodes
 	m.mismatchIndices = nil
 	for i, n := range nodes {
-		if n.State == admin.StateWhitelistMismatch {
+		if n.State == admin.StateWhitelistMismatch && n.WhitelistState != nil {
 			m.mismatchIndices = append(m.mismatchIndices, i)
 		}
 	}
@@ -126,6 +126,9 @@ func (m connectionsModel) View() string {
 	for i, node := range m.nodes {
 		icon := getStateIcon(node.State)
 		stateStr := getStateString(node.State)
+		if node.State == admin.StateWhitelistMismatch && node.WhitelistState == nil {
+			stateStr = mismatchStyle.Render("Not on peer's whitelist")
+		}
 
 		cursorStr := ""
 		if i == selectedNodeIdx {

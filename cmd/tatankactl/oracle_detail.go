@@ -65,7 +65,7 @@ func (m oracleDetailModel) Update(msg tea.Msg) (oracleDetailModel, tea.Cmd) {
 		m.height = msg.Height
 	case tea.KeyMsg:
 		if m.filter.active {
-			if m.filter.handleFilterKey(msg.String()) {
+			if m.filter.handleFilterKey(msg) {
 				m.buildSections()
 			}
 			return m, nil
@@ -188,8 +188,8 @@ func (m oracleDetailModel) View() string {
 	m.filter.renderFilterBar(&b)
 
 	if len(m.sections) == 0 {
-		if m.filter.text != "" {
-			b.WriteString(fmt.Sprintf(" %s\n", dimStyle.Render("No matches for \""+m.filter.text+"\"")))
+		if m.filter.input.text != "" {
+			b.WriteString(fmt.Sprintf(" %s\n", dimStyle.Render("No matches for \""+m.filter.input.text+"\"")))
 		} else {
 			b.WriteString(" " + dimStyle.Render("No data available") + "\n")
 		}

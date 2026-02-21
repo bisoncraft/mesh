@@ -18,6 +18,8 @@ type rootModel struct {
 	menu                   menuModel
 	connections            connectionsModel
 	diff                   diffModel
+	whitelistView          whitelistViewModel
+	whitelistEditor        whitelistEditorModel
 	oracle                 oracleModel
 	oracleDetail           oracleDetailModel
 	oracleAggregated       oracleAggregatedModel
@@ -76,6 +78,12 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case viewDiff:
 			m.diff, cmd = m.diff.Update(msg)
 			return m, cmd
+		case viewWhitelist:
+			m.whitelistView, cmd = m.whitelistView.Update(msg)
+			return m, cmd
+		case viewWhitelistEditor:
+			m.whitelistEditor, cmd = m.whitelistEditor.Update(msg)
+			return m, cmd
 		case viewOracleSources:
 			m.oracle, cmd = m.oracle.Update(msg)
 			return m, cmd
@@ -97,6 +105,11 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.activeView = viewConnections
 			m.connections.height = m.height
 			return m, nil
+		case viewWhitelist:
+			m.whitelistView = newWhitelistViewModel(m.connections.state, m.api)
+			m.whitelistView.height = m.height
+			m.activeView = viewWhitelist
+			return m, nil
 		case viewOracleSources:
 			m.activeView = viewOracleSources
 			m.oracle = newOracleModel(m.oracleData)
@@ -114,6 +127,14 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch m.activeView {
 		case viewConnections:
 			m.activeView = viewMenu
+			return m, nil
+		case viewWhitelist:
+			m.activeView = viewMenu
+			return m, nil
+		case viewWhitelistEditor:
+			m.whitelistView = newWhitelistViewModel(m.connections.state, m.api)
+			m.whitelistView.height = m.height
+			m.activeView = viewWhitelist
 			return m, nil
 		case viewDiff:
 			m.activeView = viewConnections
@@ -165,11 +186,83 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case adminStateMsg:
 		if msg.state != nil {
+			m.menu.peerID = msg.state.OurPeerID
 			m.connections.state = msg.state
 			m.connections.sortNodes()
 			m.connections.lastUpdate = time.Now()
+			if m.activeView == viewWhitelist {
+				m.whitelistView.state = msg.state
+				m.whitelistView.lastUpdate = time.Now()
+				m.whitelistView.buildSections()
+			}
 		}
 		return m, listenForWSUpdates(m.wsCh)
+
+	case peerUpdateMsg:
+		if m.connections.state != nil && msg.peer.PeerID != m.connections.state.OurPeerID {
+			m.connections.state.Peers[msg.peer.PeerID] = msg.peer
+			m.connections.sortNodes()
+			m.connections.lastUpdate = time.Now()
+			if m.activeView == viewWhitelist {
+				m.whitelistView.state = m.connections.state
+				m.whitelistView.lastUpdate = time.Now()
+				m.whitelistView.buildSections()
+			}
+		}
+		return m, listenForWSUpdates(m.wsCh)
+
+	case whitelistStateUpdateMsg:
+		if m.connections.state != nil {
+			m.connections.state.WhitelistState = msg.state
+			if m.activeView == viewWhitelist {
+				m.whitelistView.state = m.connections.state
+				m.whitelistView.lastUpdate = time.Now()
+				m.whitelistView.buildSections()
+			}
+		}
+		return m, listenForWSUpdates(m.wsCh)
+
+	case whitelistUpdateMsg:
+		if m.connections.state != nil {
+			m.connections.state.WhitelistState = msg.update.WhitelistState
+			for _, id := range msg.update.Removed {
+				delete(m.connections.state.Peers, id)
+			}
+			for _, pi := range msg.update.Added {
+				m.connections.state.Peers[pi.PeerID] = pi
+			}
+			m.connections.sortNodes()
+			m.connections.lastUpdate = time.Now()
+			if m.activeView == viewWhitelist {
+				m.whitelistView.state = m.connections.state
+				m.whitelistView.lastUpdate = time.Now()
+				m.whitelistView.buildSections()
+			}
+		}
+		return m, listenForWSUpdates(m.wsCh)
+
+	case navigateToWhitelistEditorMsg:
+		m.whitelistEditor = newWhitelistEditorModel(m.connections.state, m.api)
+		m.whitelistEditor.height = m.height
+		m.activeView = viewWhitelistEditor
+		return m, nil
+
+	case proposeResultMsg:
+		if msg.err != nil {
+			m.whitelistView.statusMsg = fmt.Sprintf("Propose failed: %v", msg.err)
+		} else {
+			m.whitelistView.statusMsg = "Proposal submitted"
+		}
+		return m, nil
+
+	case clearProposalResultMsg:
+		if msg.err != nil {
+			m.whitelistView.statusMsg = fmt.Sprintf("Clear failed: %v", msg.err)
+		} else {
+			m.whitelistView.statusMsg = "Proposal cleared"
+		}
+		return m, nil
+
 
 	case renderTickMsg:
 		if m.isOracleView() {
@@ -191,10 +284,18 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.oracleAggregatedDetail.Init()
 
 	case navigateToDiffMsg:
-		m.diff = newDiffModel(msg.node, m.connections.state)
+		m.diff = newDiffModel(msg.node, m.connections.state, m.api)
 		m.diff.height = m.height
 		m.activeView = viewDiff
 		return m, m.diff.Init()
+
+	case adoptResultMsg:
+		if msg.err != nil {
+			m.diff.statusMsg = fmt.Sprintf("Adopt failed: %v", msg.err)
+		} else {
+			m.activeView = viewConnections
+		}
+		return m, nil
 	}
 
 	// Delegate to active view
@@ -206,6 +307,10 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.connections, cmd = m.connections.Update(msg)
 	case viewDiff:
 		m.diff, cmd = m.diff.Update(msg)
+	case viewWhitelist:
+		m.whitelistView, cmd = m.whitelistView.Update(msg)
+	case viewWhitelistEditor:
+		m.whitelistEditor, cmd = m.whitelistEditor.Update(msg)
 	case viewOracleSources:
 		m.oracle, cmd = m.oracle.Update(msg)
 	case viewOracleDetail:
@@ -226,6 +331,10 @@ func (m rootModel) View() string {
 		return m.connections.View()
 	case viewDiff:
 		return m.diff.View()
+	case viewWhitelist:
+		return m.whitelistView.View()
+	case viewWhitelistEditor:
+		return m.whitelistEditor.View()
 	case viewOracleSources:
 		return m.oracle.View()
 	case viewOracleDetail:

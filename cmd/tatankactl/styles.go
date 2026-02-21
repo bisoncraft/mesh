@@ -61,6 +61,12 @@ var (
 	diffRedStyle = lipgloss.NewStyle().
 			Foreground(colorRedFg)
 
+	diffAddedBgStyle = lipgloss.NewStyle().
+				Background(lipgloss.Color("22"))
+
+	diffRemovedBgStyle = lipgloss.NewStyle().
+				Background(lipgloss.Color("52"))
+
 	menuBoxStyle = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(colorBorder).

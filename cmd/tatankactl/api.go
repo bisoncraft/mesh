@@ -1,8 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
 	"sort"
 	"strings"
@@ -13,6 +16,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/bisoncraft/mesh/oracle"
 	"github.com/bisoncraft/mesh/tatanka/admin"
+	"github.com/bisoncraft/mesh/tatanka/types"
 )
 
 // --- Navigation messages ---
@@ -27,11 +31,13 @@ const (
 	viewOracleDetail
 	viewOracleAggregated
 	viewAggregatedDetail
+	viewWhitelist
+	viewWhitelistEditor
 )
 
 type navigateMsg struct{ view viewID }
 type navigateBackMsg struct{}
-type navigateToDiffMsg struct{ node admin.NodeInfo }
+type navigateToDiffMsg struct{ node admin.PeerInfo }
 type navigateToSourceDetailMsg struct {
 	sourceName string
 }
@@ -39,12 +45,21 @@ type navigateToAggregatedDetailMsg struct {
 	dataType oracle.DataType
 	key      string // ticker or network name
 }
+type navigateToWhitelistEditorMsg struct{}
+
+type proposeResultMsg struct{ err error }
+type clearProposalResultMsg struct{ err error }
+type adoptResultMsg struct{ err error }
 
 // --- Data messages ---
 
 type adminStateMsg struct {
 	state *admin.AdminState
 }
+
+type peerUpdateMsg struct{ peer admin.PeerInfo }
+type whitelistStateUpdateMsg struct{ state *types.WhitelistState }
+type whitelistUpdateMsg struct{ update admin.WhitelistUpdate }
 
 type wsConnectedMsg struct{}
 type wsErrorMsg struct{ err error }
@@ -202,6 +217,7 @@ func updateOracleData(d *oracle.OracleSnapshot, msg tea.Msg) {
 
 type apiClient struct {
 	address string
+	http    *http.Client
 
 	wsMu     sync.Mutex
 	wsConn   *websocket.Conn
@@ -211,6 +227,7 @@ type apiClient struct {
 func newAPIClient(address string) *apiClient {
 	return &apiClient{
 		address: normalizeAddress(address),
+		http:    &http.Client{Timeout: 10 * time.Second},
 	}
 }
 
@@ -287,6 +304,24 @@ func (c *apiClient) connectWebSocket(ch chan<- tea.Msg) tea.Cmd {
 						continue
 					}
 					msg = adminStateMsg{state: &state}
+				case "peer_update":
+					var pi admin.PeerInfo
+					if err := json.Unmarshal(envelope.Data, &pi); err != nil {
+						continue
+					}
+					msg = peerUpdateMsg{peer: pi}
+				case "whitelist_state":
+					var ws types.WhitelistState
+					if err := json.Unmarshal(envelope.Data, &ws); err != nil {
+						continue
+					}
+					msg = whitelistStateUpdateMsg{state: &ws}
+				case "whitelist_update":
+					var wu admin.WhitelistUpdate
+					if err := json.Unmarshal(envelope.Data, &wu); err != nil {
+						continue
+					}
+					msg = whitelistUpdateMsg{update: wu}
 				case "oracle_snapshot":
 					var snapshot oracleSnapshotMsg
 					if err := json.Unmarshal(envelope.Data, &snapshot); err != nil {
@@ -342,3 +377,217 @@ func listenForWSUpdates(ch <-chan tea.Msg) tea.Cmd {
 		return msg
 	}
 }
+
+func (c *apiClient) proposeWhitelist(peers []string) tea.Cmd {
+	return func() tea.Msg {
+		body, _ := json.Marshal(map[string][]string{"peers": peers})
+		resp, err := c.http.Post(c.address+"/admin/propose-whitelist", "application/json", bytes.NewReader(body))
+		if err != nil {
+			return proposeResultMsg{err: err}
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			b, _ := io.ReadAll(resp.Body)
+			return proposeResultMsg{err: fmt.Errorf("%s", strings.TrimSpace(string(b)))}
+		}
+		return proposeResultMsg{}
+	}
+}
+
+func (c *apiClient) adoptWhitelist(peerID string) tea.Cmd {
+	return func() tea.Msg {
+		body, _ := json.Marshal(map[string]string{"peer_id": peerID})
+		resp, err := c.http.Post(c.address+"/admin/adopt-whitelist", "application/json", bytes.NewReader(body))
+		if err != nil {
+			return adoptResultMsg{err: err}
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			b, _ := io.ReadAll(resp.Body)
+			return adoptResultMsg{err: fmt.Errorf("%s", strings.TrimSpace(string(b)))}
+		}
+		return adoptResultMsg{}
+	}
+}
+
+func (c *apiClient) clearProposal() tea.Cmd {
+	return func() tea.Msg {
+		req, _ := http.NewRequest(http.MethodDelete, c.address+"/admin/propose-whitelist", nil)
+		resp, err := c.http.Do(req)
+		if err != nil {
+			return clearProposalResultMsg{err: err}
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			b, _ := io.ReadAll(resp.Body)
+			return clearProposalResultMsg{err: fmt.Errorf("%s", strings.TrimSpace(string(b)))}
+		}
+		return clearProposalResultMsg{}
+	}
+}
+
+// --- Whitelist helpers ---
+
+// peerIDStrings returns sorted peer ID strings from a Whitelist.
+func peerIDStrings(wl *types.Whitelist) []string {
+	if wl == nil {
+		return nil
+	}
+	strs := make([]string, 0, len(wl.PeerIDs))
+	for pid := range wl.PeerIDs {
+		strs = append(strs, pid.String())
+	}
+	sort.Strings(strs)
+	return strs
+}
+
+// getOurWhitelist returns the sorted peer ID strings from our current whitelist.
+func getOurWhitelist(state *admin.AdminState) []string {
+	if state == nil || state.WhitelistState == nil {
+		return nil
+	}
+	return peerIDStrings(state.WhitelistState.Current)
+}
+
+// getOurProposal returns the sorted peer ID strings from our proposed whitelist.
+func getOurProposal(state *admin.AdminState) []string {
+	if state == nil || state.WhitelistState == nil {
+		return nil
+	}
+	return peerIDStrings(state.WhitelistState.Proposed)
+}
+
+// networkProposal represents a proposed whitelist with its supporters.
+type networkProposal struct {
+	proposedPeerIDs []string
+	supporters      map[string]bool // peerID string -> ready
+}
+
+// computeNetworkProposals derives network proposals from peer states.
+func computeNetworkProposals(state *admin.AdminState) []networkProposal {
+	if state == nil {
+		return nil
+	}
+
+	type proposal struct {
+		peerIDs    []string
+		supporters map[string]bool
+	}
+	proposals := make(map[string]*proposal)
+
+	// Include our own proposal from the top-level WhitelistState.
+	if state.WhitelistState != nil && state.WhitelistState.Proposed != nil {
+		hash := state.WhitelistState.Proposed.Hash()
+		np := &proposal{
+			peerIDs:    peerIDStrings(state.WhitelistState.Proposed),
+			supporters: make(map[string]bool),
+		}
+		np.supporters[state.OurPeerID] = state.WhitelistState.Ready
+		proposals[hash] = np
+	}
+
+	for _, peer := range state.Peers {
+		if peer.WhitelistState == nil || peer.WhitelistState.Proposed == nil {
+			continue
+		}
+		hash := peer.WhitelistState.Proposed.Hash()
+		np, ok := proposals[hash]
+		if !ok {
+			np = &proposal{
+				peerIDs:    peerIDStrings(peer.WhitelistState.Proposed),
+				supporters: make(map[string]bool),
+			}
+			proposals[hash] = np
+		}
+		np.supporters[peer.PeerID] = peer.WhitelistState.Ready
+	}
+
+	result := make([]networkProposal, 0, len(proposals))
+	for _, np := range proposals {
+		result = append(result, networkProposal{
+			proposedPeerIDs: np.peerIDs,
+			supporters:      np.supporters,
+		})
+	}
+
+	sort.Slice(result, func(i, j int) bool {
+		if len(result[i].supporters) != len(result[j].supporters) {
+			return len(result[i].supporters) > len(result[j].supporters)
+		}
+		return strings.Join(result[i].proposedPeerIDs, ",") < strings.Join(result[j].proposedPeerIDs, ",")
+	})
+
+	return result
+}
+
+// overlapPeerInfo describes one overlap peer's consensus status.
+type overlapPeerInfo struct {
+	peerID   string
+	agreeing bool
+	ready    bool
+	online   bool
+}
+
+// consensusInfo summarises consensus progress for a whitelist proposal.
+type consensusInfo struct {
+	overlap   []overlapPeerInfo
+	nOverlap  int
+	threshold int
+	agreeing  int
+	blocking  int // online overlap peers not agreeing
+}
+
+// computeConsensusInfo computes consensus progress for a proposal relative
+// to the current whitelist, given its set of supporters.
+func computeConsensusInfo(state *admin.AdminState, currentWl, proposedWl []string, supporters map[string]bool) consensusInfo {
+	currentSet := make(map[string]bool, len(currentWl))
+	for _, id := range currentWl {
+		currentSet[id] = true
+	}
+	proposedSet := make(map[string]bool, len(proposedWl))
+	for _, id := range proposedWl {
+		proposedSet[id] = true
+	}
+
+	// Overlap = peers in both current and proposed whitelists.
+	var overlapIDs []string
+	for id := range currentSet {
+		if proposedSet[id] {
+			overlapIDs = append(overlapIDs, id)
+		}
+	}
+	sort.Strings(overlapIDs)
+
+	nOverlap := len(overlapIDs)
+	threshold := (2*nOverlap + 2) / 3
+
+	info := consensusInfo{nOverlap: nOverlap, threshold: threshold}
+
+	for _, id := range overlapIDs {
+		opi := overlapPeerInfo{peerID: id}
+
+		_, supports := supporters[id]
+		if supports {
+			opi.agreeing = true
+			opi.ready = supporters[id]
+			info.agreeing++
+		}
+
+		if id == state.OurPeerID {
+			opi.online = true
+			if !supports {
+				info.blocking++
+			}
+		} else if peer, ok := state.Peers[id]; ok && (peer.State == admin.StateConnected || peer.State == admin.StateWhitelistMismatch) {
+			opi.online = true
+			if !supports {
+				info.blocking++
+			}
+		}
+
+		info.overlap = append(info.overlap, opi)
+	}
+
+	return info
+}
+
