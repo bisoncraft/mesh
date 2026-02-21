@@ -10,10 +10,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/bisoncraft/mesh/oracle"
+	"github.com/bisoncraft/mesh/tatanka/types"
 	"github.com/decred/slog"
 	"github.com/gorilla/websocket"
-	"github.com/libp2p/go-libp2p/core/peer"
-	"github.com/bisoncraft/mesh/oracle"
 )
 
 // NodeConnectionState defines the status of a peer connection
@@ -28,30 +28,24 @@ const (
 	adminWebSocketReadLimit    = 1 << 20 // 1 MiB
 )
 
-// NodeInfo contains information about a specific peer
-type NodeInfo struct {
-	PeerID        string              `json:"peer_id"`
-	State         NodeConnectionState `json:"state"`
-	Addresses     []string            `json:"addresses,omitempty"`
-	PeerWhitelist []string            `json:"peer_whitelist,omitempty"`
+// PeerInfo contains information about a specific peer
+type PeerInfo struct {
+	PeerID         string                `json:"peer_id"`
+	State          NodeConnectionState   `json:"state"`
+	Addresses      []string              `json:"addresses,omitempty"`
+	WhitelistState *types.WhitelistState `json:"whitelist_state,omitempty"`
 }
 
 // AdminState represents the global admin state
 type AdminState struct {
-	Nodes        map[string]NodeInfo `json:"nodes"`
-	OurWhitelist []string            `json:"our_whitelist"`
+	OurPeerID      string                `json:"our_peer_id"`
+	WhitelistState *types.WhitelistState `json:"whitelist_state"`
+	Peers          map[string]PeerInfo   `json:"peers"` // remote peers only
 }
 
-func (s AdminState) DeepCopy() AdminState {
-	newState := AdminState{
-		Nodes:        make(map[string]NodeInfo, len(s.Nodes)),
-		OurWhitelist: make([]string, len(s.OurWhitelist)),
-	}
-	for k, v := range s.Nodes {
-		newState.Nodes[k] = v
-	}
-	copy(newState.OurWhitelist, s.OurWhitelist)
-	return newState
+// WhitelistUpdate is sent when whitelist membership changes.
+type WhitelistUpdate struct {
+	WhitelistState *types.WhitelistState `json:"whitelist_state"`
 }
 
 // WSMessage is the envelope for all WebSocket messages.
@@ -60,25 +54,62 @@ type WSMessage struct {
 	Data json.RawMessage `json:"data"`
 }
 
-// Client represents a connected WebSocket user.
-type Client struct {
+// client represents a connected WebSocket user.
+type client struct {
 	conn *websocket.Conn
 	send chan WSMessage
 }
 
+// Config holds the configuration for the admin server.
+type Config struct {
+	Log              slog.Logger
+	Addr             string
+	PeerID           string
+	Oracle           Oracle
+	GetState         func() AdminState
+	ProposeWhitelist func(peers []string) error
+	ClearProposal    func()
+	ForceWhitelist   func(peers []string) error
+}
+
+func (c *Config) verify() {
+	if c.Log == nil {
+		panic("admin.Config.Log is nil")
+	}
+	if c.Addr == "" {
+		panic("admin.Config.Addr is empty")
+	}
+	if c.Oracle == nil {
+		panic("admin.Config.Oracle is nil")
+	}
+	if c.GetState == nil {
+		panic("admin.Config.GetState is nil")
+	}
+	if c.ProposeWhitelist == nil {
+		panic("admin.Config.ProposeWhitelist is nil")
+	}
+	if c.ClearProposal == nil {
+		panic("admin.Config.ClearProposal is nil")
+	}
+	if c.ForceWhitelist == nil {
+		panic("admin.Config.ForceWhitelist is nil")
+	}
+}
+
 // Server manages the admin server for a tatanka node.
 type Server struct {
-	log        slog.Logger
+	log              slog.Logger
+	oracle           Oracle
+	getState         func() AdminState
+	proposeWhitelist func(peers []string) error
+	clearProposal    func()
+	forceWhitelist   func(peers []string) error
+
 	httpServer *http.Server
 	upgrader   websocket.Upgrader
 
-	stateMtx sync.RWMutex
-	state    AdminState
-
 	clientsMtx sync.RWMutex
-	clients    map[*Client]bool
-
-	oracle Oracle
+	clients    map[*client]bool
 }
 
 // Oracle supplies data for admin oracle endpoints.
@@ -87,27 +118,28 @@ type Oracle interface {
 }
 
 // NewServer initializes the admin server.
-func NewServer(log slog.Logger, addr string, oracle Oracle) *Server {
+func NewServer(cfg *Config) *Server {
+	cfg.verify()
 	return &Server{
-		log: log,
+		log:              cfg.Log,
+		oracle:           cfg.Oracle,
+		getState:         cfg.GetState,
+		proposeWhitelist: cfg.ProposeWhitelist,
+		clearProposal:    cfg.ClearProposal,
+		forceWhitelist:   cfg.ForceWhitelist,
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool {
 				return allowWebSocketOrigin(r)
 			},
 		},
-		clients: make(map[*Client]bool),
-		state: AdminState{
-			Nodes:        make(map[string]NodeInfo),
-			OurWhitelist: []string{},
-		},
+		clients: make(map[*client]bool),
 		httpServer: &http.Server{
-			Addr:              addr,
+			Addr:              cfg.Addr,
 			ReadHeaderTimeout: 5 * time.Second,
 			ReadTimeout:       10 * time.Second,
 			WriteTimeout:      10 * time.Second,
 			IdleTimeout:       60 * time.Second,
 		},
-		oracle: oracle,
 	}
 }
 
@@ -115,6 +147,8 @@ func NewServer(log slog.Logger, addr string, oracle Oracle) *Server {
 func (s *Server) Start(ctx context.Context) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/admin/ws", s.localOnly(s.handleWebSocket))
+	mux.HandleFunc("/admin/propose-whitelist", s.localOnly(s.handleProposeWhitelist))
+	mux.HandleFunc("/admin/adopt-whitelist", s.localOnly(s.handleAdoptWhitelist))
 	s.httpServer.Handler = mux
 
 	s.log.Infof("Starting admin server on %s", s.httpServer.Addr)
@@ -179,46 +213,34 @@ func isLocalhostHost(hostPort string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-// UpdateConnectionState updates a specific peer's info and broadcasts to clients
-func (s *Server) UpdateConnectionState(peerID peer.ID, state NodeConnectionState, addresses []string, peerWhitelist []string) {
-	s.stateMtx.Lock()
-	node := NodeInfo{
-		PeerID:    peerID.String(),
-		State:     state,
-		Addresses: addresses,
-	}
-	if state == StateWhitelistMismatch {
-		node.PeerWhitelist = peerWhitelist
-	}
-	s.state.Nodes[peerID.String()] = node
-	snapshot := s.state.DeepCopy()
-	s.stateMtx.Unlock()
-
-	s.broadcastState(snapshot)
-}
-
-// UpdateWhitelist updates the local whitelist and broadcasts to clients
-func (s *Server) UpdateWhitelist(whitelist []string) {
-	s.stateMtx.Lock()
-	s.state.OurWhitelist = whitelist
-	snapshot := s.state.DeepCopy()
-	s.stateMtx.Unlock()
-
-	s.broadcastState(snapshot)
-}
-
-// broadcastState sends the admin state to all clients.
-func (s *Server) broadcastState(state AdminState) {
-	data, err := json.Marshal(state)
+// BroadcastPeerUpdate sends a single peer update to all connected clients.
+func (s *Server) BroadcastPeerUpdate(pi PeerInfo) {
+	data, err := json.Marshal(pi)
 	if err != nil {
-		s.log.Errorf("Failed to marshal admin state: %v", err)
+		s.log.Errorf("Failed to marshal peer update: %v", err)
 		return
 	}
-	msg := WSMessage{
-		Type: "admin_state",
-		Data: json.RawMessage(data),
+	s.broadcast(WSMessage{Type: "peer_update", Data: json.RawMessage(data)})
+}
+
+// BroadcastWhitelistState sends our own whitelist state to all connected clients.
+func (s *Server) BroadcastWhitelistState(ws *types.WhitelistState) {
+	data, err := json.Marshal(ws)
+	if err != nil {
+		s.log.Errorf("Failed to marshal whitelist state: %v", err)
+		return
 	}
-	s.broadcast(msg)
+	s.broadcast(WSMessage{Type: "whitelist_state", Data: json.RawMessage(data)})
+}
+
+// BroadcastWhitelistUpdate sends whitelist membership changes to all connected clients.
+func (s *Server) BroadcastWhitelistUpdate(wu WhitelistUpdate) {
+	data, err := json.Marshal(wu)
+	if err != nil {
+		s.log.Errorf("Failed to marshal whitelist update: %v", err)
+		return
+	}
+	s.broadcast(WSMessage{Type: "whitelist_update", Data: json.RawMessage(data)})
 }
 
 // BroadcastOracleUpdate broadcasts a typed oracle update to all connected clients.
@@ -228,10 +250,5 @@ func (s *Server) BroadcastOracleUpdate(msgType string, snapshotDiff *oracle.Orac
 		s.log.Errorf("Failed to marshal oracle update (%s): %v", msgType, err)
 		return
 	}
-	msg := WSMessage{
-		Type: msgType,
-		Data: json.RawMessage(data),
-	}
-	s.broadcast(msg)
+	s.broadcast(WSMessage{Type: msgType, Data: json.RawMessage(data)})
 }
-

@@ -5,15 +5,16 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/bisoncraft/mesh/oracle"
+	"github.com/bisoncraft/mesh/oracle/sources"
+	protocolsPb "github.com/bisoncraft/mesh/protocols/pb"
+	pb "github.com/bisoncraft/mesh/tatanka/pb"
+	"github.com/bisoncraft/mesh/tatanka/types"
 	"github.com/decred/slog"
 	"github.com/klauspost/compress/zstd"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
-	"github.com/bisoncraft/mesh/oracle"
-	"github.com/bisoncraft/mesh/oracle/sources"
-	protocolsPb "github.com/bisoncraft/mesh/protocols/pb"
-	pb "github.com/bisoncraft/mesh/tatanka/pb"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/protobuf/proto"
 )
@@ -34,6 +35,9 @@ const (
 	// quotaHeartbeatTopicName is the name of the pubsub topic used to
 	// periodically share quota information between tatanka nodes.
 	quotaHeartbeatTopicName = "quota_heartbeat"
+
+	// whitelistUpdatesTopicName is the pubsub topic for whitelist updates.
+	whitelistUpdatesTopicName = "whitelist_updates"
 )
 
 type clientConnectionUpdate struct {
@@ -79,6 +83,7 @@ type gossipSubCfg struct {
 	handleClientConnectionMessage func(update *clientConnectionUpdate)
 	handleOracleUpdate            func(senderID peer.ID, update *pb.NodeOracleUpdate)
 	handleQuotaHeartbeat          func(senderID peer.ID, heartbeat *pb.QuotaHandshake)
+	handleWhitelistUpdate         func(senderID peer.ID, ws *types.WhitelistState, timestamp int64)
 }
 
 // gossipSub manages the nodes connection to a gossip sub network between tatanka
@@ -92,6 +97,7 @@ type gossipSub struct {
 	clientConnectionsTopic *pubsub.Topic
 	oracleUpdatesTopic     *pubsub.Topic
 	quotaHeartbeatTopic    *pubsub.Topic
+	whitelistUpdatesTopic  *pubsub.Topic
 	zstdEncoder            *zstd.Encoder
 	zstdDecoder            *zstd.Decoder
 }
@@ -111,10 +117,6 @@ func newGossipSub(ctx context.Context, cfg *gossipSubCfg) (*gossipSub, error) {
 		return nil, err
 	}
 
-	// Currently using a single topic for all client messages, but
-	// we could use separate topics for each client topic to only
-	// send messages to tatanka nodes that have clients subscribed to
-	// a certain topic.
 	clientMessageTopic, err := ps.Join(clientMessageTopicName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to join client message topic: %w", err)
@@ -135,6 +137,11 @@ func newGossipSub(ctx context.Context, cfg *gossipSubCfg) (*gossipSub, error) {
 		return nil, fmt.Errorf("failed to join quota heartbeat topic: %w", err)
 	}
 
+	whitelistUpdatesTopic, err := ps.Join(whitelistUpdatesTopicName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to join whitelist updates topic: %w", err)
+	}
+
 	zstdEncoder, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedDefault))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create zstd encoder: %w", err)
@@ -146,22 +153,22 @@ func newGossipSub(ctx context.Context, cfg *gossipSubCfg) (*gossipSub, error) {
 	}
 
 	return &gossipSub{
-		log:                    cfg.log,
-		ps:                     ps,
-		cfg:                    cfg,
-		clientMessageTopic:     clientMessageTopic,
-		clientConnectionsTopic: clientConnectionsTopic,
-		oracleUpdatesTopic:     oracleUpdatesTopic,
-		quotaHeartbeatTopic:    quotaHeartbeatTopic,
-		zstdEncoder:            zstdEncoder,
-		zstdDecoder:            zstdDecoder,
+		log:                     cfg.log,
+		ps:                      ps,
+		cfg:                     cfg,
+		clientMessageTopic:      clientMessageTopic,
+		clientConnectionsTopic:  clientConnectionsTopic,
+		oracleUpdatesTopic:      oracleUpdatesTopic,
+		quotaHeartbeatTopic:     quotaHeartbeatTopic,
+		whitelistUpdatesTopic:  whitelistUpdatesTopic,
+		zstdEncoder:             zstdEncoder,
+		zstdDecoder:             zstdDecoder,
 	}, nil
 }
 
 // listenForClientMessages subscribes to the pubsub client messages topic, and
 // distributes messages to subscribed clients as they come in.
 func (gs *gossipSub) listenForClientMessages(ctx context.Context) error {
-	// TODO: configure buffer size if needed
 	sub, err := gs.clientMessageTopic.Subscribe()
 	if err != nil {
 		return fmt.Errorf("failed to subscribe to client message topic: %w", err)
@@ -313,6 +320,32 @@ func (gs *gossipSub) listenForQuotaHeartbeats(ctx context.Context) error {
 	}
 }
 
+func (gs *gossipSub) listenForWhitelistUpdates(ctx context.Context) error {
+	sub, err := gs.whitelistUpdatesTopic.Subscribe()
+	if err != nil {
+		return fmt.Errorf("failed to subscribe to whitelist updates topic: %w", err)
+	}
+
+	for {
+		msg, err := sub.Next(ctx)
+		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				return nil
+			}
+			return err
+		}
+
+		if msg != nil && gs.cfg.handleWhitelistUpdate != nil {
+			update := &pb.WhitelistState{}
+			if err := proto.Unmarshal(msg.Data, update); err != nil {
+				gs.log.Errorf("Failed to unmarshal whitelist update: %v", err)
+				continue
+			}
+			gs.cfg.handleWhitelistUpdate(msg.GetFrom(), pbToWhitelistState(update), update.Timestamp)
+		}
+	}
+}
+
 func (gs *gossipSub) publishQuotaHeartbeat(ctx context.Context, quotas map[string]*sources.QuotaStatus) error {
 	heartbeat := &pb.QuotaHandshake{
 		Quotas: quotaStatusesToPb(quotas),
@@ -322,6 +355,14 @@ func (gs *gossipSub) publishQuotaHeartbeat(ctx context.Context, quotas map[strin
 		return fmt.Errorf("failed to marshal quota heartbeat: %w", err)
 	}
 	return gs.quotaHeartbeatTopic.Publish(ctx, data)
+}
+
+func (gs *gossipSub) publishWhitelistUpdate(ctx context.Context, update *pb.WhitelistState) error {
+	data, err := proto.Marshal(update)
+	if err != nil {
+		return fmt.Errorf("failed to marshal whitelist update: %w", err)
+	}
+	return gs.whitelistUpdatesTopic.Publish(ctx, data)
 }
 
 func (gs *gossipSub) run(ctx context.Context) error {
@@ -348,6 +389,12 @@ func (gs *gossipSub) run(ctx context.Context) error {
 	g.Go(func() error {
 		err := gs.listenForQuotaHeartbeats(ctx)
 		gs.log.Debug("Quota heartbeat listener stopped.")
+		return err
+	})
+
+	g.Go(func() error {
+		err := gs.listenForWhitelistUpdates(ctx)
+		gs.log.Debug("Whitelist proposals listener stopped.")
 		return err
 	})
 

@@ -2,7 +2,6 @@ package tatanka
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -19,10 +18,12 @@ import (
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/libp2p/go-libp2p/core/peerstore"
 	mocknet "github.com/libp2p/go-libp2p/p2p/net/mock"
 	"github.com/bisoncraft/mesh/bond"
 	"github.com/bisoncraft/mesh/codec"
 	"github.com/bisoncraft/mesh/oracle"
+	"github.com/bisoncraft/mesh/tatanka/types"
 	"github.com/bisoncraft/mesh/oracle/sources"
 	"github.com/bisoncraft/mesh/protocols"
 	protocolsPb "github.com/bisoncraft/mesh/protocols/pb"
@@ -77,7 +78,7 @@ type tOracle struct {
 	feeRates map[oracle.Network]*big.Int
 }
 
-var _ Oracle = (*tOracle)(nil)
+var _ oracleService = (*tOracle)(nil)
 
 func newTOracle() *tOracle {
 	return &tOracle{
@@ -152,25 +153,19 @@ func (t *tOracle) SetFeeRates(feeRates map[oracle.Network]*big.Int) {
 	t.feeRates = feeRates
 }
 
-func newTestNode(t *testing.T, ctx context.Context, h host.Host, dataDir string, whitelist *whitelist) *TatankaNode {
+func newTestNode(t *testing.T, ctx context.Context, h host.Host, dataDir string, wl *types.Whitelist) *TatankaNode {
 	logBackend := slog.NewBackend(os.Stdout)
 	log := logBackend.Logger(h.ID().ShortString())
 	log.SetLevel(slog.LevelDebug)
 
 	// Write the whitelist to the data directory.
-	whitelistPath := filepath.Join(dataDir, "whitelist.json")
-	whitelistData, err := json.Marshal(whitelist.toFile())
-	if err != nil {
-		t.Fatalf("Failed to marshal whitelist: %v", err)
-	}
-	if err := os.WriteFile(whitelistPath, whitelistData, 0644); err != nil {
+	if err := saveWhitelist(filepath.Join(dataDir, "whitelist.json"), wl); err != nil {
 		t.Fatalf("Failed to write whitelist: %v", err)
 	}
 
 	n, err := NewTatankaNode(&Config{
-		Logger:        log,
-		DataDir:       dataDir,
-		WhitelistPath: filepath.Join(dataDir, "whitelist.json"),
+		Logger:  log,
+		DataDir: dataDir,
 	}, WithHost(h))
 	if err != nil {
 		t.Fatalf("Failed to create test node: %v", err)
@@ -193,25 +188,19 @@ func newTestNode(t *testing.T, ctx context.Context, h host.Host, dataDir string,
 }
 
 // newTestNodeWithOracle creates a test node with a custom oracle implementation.
-func newTestNodeWithOracle(t *testing.T, ctx context.Context, h host.Host, dataDir string, whitelist *whitelist, testOracle Oracle) *TatankaNode {
+func newTestNodeWithOracle(t *testing.T, ctx context.Context, h host.Host, dataDir string, wl *types.Whitelist, testOracle oracleService) *TatankaNode {
 	logBackend := slog.NewBackend(os.Stdout)
 	log := logBackend.Logger(h.ID().ShortString())
 	log.SetLevel(slog.LevelDebug)
 
 	// Write the whitelist to the data directory.
-	whitelistPath := filepath.Join(dataDir, "whitelist.json")
-	whitelistData, err := json.Marshal(whitelist.toFile())
-	if err != nil {
-		t.Fatalf("Failed to marshal whitelist: %v", err)
-	}
-	if err := os.WriteFile(whitelistPath, whitelistData, 0644); err != nil {
+	if err := saveWhitelist(filepath.Join(dataDir, "whitelist.json"), wl); err != nil {
 		t.Fatalf("Failed to write whitelist: %v", err)
 	}
 
 	n, err := NewTatankaNode(&Config{
-		Logger:        log,
-		DataDir:       dataDir,
-		WhitelistPath: filepath.Join(dataDir, "whitelist.json"),
+		Logger:  log,
+		DataDir: dataDir,
 	}, WithHost(h))
 	if err != nil {
 		t.Fatalf("Failed to create test node: %v", err)
@@ -542,7 +531,7 @@ func (tc *testClient) handleIncomingRelay(s network.Stream) {
 }
 
 func fullyConnectedMeshWithClients(ctx context.Context, t *testing.T, numMeshNodes, numClients int, clientToNode func(int) int) (
-	net mocknet.Mocknet, meshNodes []*TatankaNode, clients []*testClient) {
+	meshNodes []*TatankaNode, wl *types.Whitelist, clients []*testClient) {
 	mnet, err := mocknet.WithNPeers(numMeshNodes + numClients)
 	if err != nil {
 		t.Fatal(err)
@@ -559,13 +548,11 @@ func fullyConnectedMeshWithClients(ctx context.Context, t *testing.T, numMeshNod
 		clientHosts[i] = mnet.Host(allPeers[numMeshNodes+i])
 	}
 
-	whitelistPeers := make([]*peer.AddrInfo, numMeshNodes)
+	whitelistPeerIDs := make([]peer.ID, numMeshNodes)
 	for i, h := range meshHosts {
-		whitelistPeers[i] = &peer.AddrInfo{ID: h.ID(), Addrs: h.Addrs()}
+		whitelistPeerIDs[i] = h.ID()
 	}
-	mockWhitelist := &whitelist{
-		peers: whitelistPeers,
-	}
+	mockWhitelist := types.NewWhitelist(whitelistPeerIDs)
 
 	runningNodes := make([]*TatankaNode, 0, numMeshNodes)
 	for i, h := range meshHosts {
@@ -599,7 +586,7 @@ func fullyConnectedMeshWithClients(ctx context.Context, t *testing.T, numMeshNod
 
 	time.Sleep(time.Second)
 
-	return mnet, runningNodes, clients
+	return runningNodes, mockWhitelist, clients
 }
 
 // checkFullyConnected verifies that all provided nodes are connected to each other.
@@ -649,6 +636,10 @@ func linkNodeWithMesh(mesh mocknet.Mocknet, host host.Host, runningNodes []*Tata
 			if _, err := mesh.LinkPeers(host.ID(), otherNode.node.ID()); err != nil {
 				return err
 			}
+			// Add addresses to each other's peerstores so the connection
+			// manager can dial. LinkPeers only creates a virtual link.
+			host.Peerstore().AddAddrs(otherNode.node.ID(), otherNode.node.Addrs(), peerstore.PermanentAddrTTL)
+			otherNode.node.Peerstore().AddAddrs(host.ID(), host.Addrs(), peerstore.PermanentAddrTTL)
 		} else {
 			if err := mesh.DisconnectPeers(host.ID(), otherNode.node.ID()); err != nil {
 				return err
@@ -682,15 +673,13 @@ func TestProgressiveMeshStartup(t *testing.T) {
 	h3 := mesh.Host(peerIDs[2])
 	h4 := mesh.Host(peerIDs[3])
 	h5 := mesh.Host(peerIDs[4])
-	mockWhitelist := &whitelist{
-		peers: []*peer.AddrInfo{
-			{ID: h1.ID(), Addrs: h1.Addrs()},
-			{ID: h2.ID()},
-			{ID: h3.ID(), Addrs: h3.Addrs()},
-			{ID: h4.ID()},
-			{ID: h5.ID()},
-		},
-	}
+	mockWhitelist := types.NewWhitelist([]peer.ID{
+		h1.ID(),
+		h2.ID(),
+		h3.ID(),
+		h4.ID(),
+		h5.ID(),
+	})
 
 	// runningNodes will hold all running nodes that have been connected
 	// to the mesh.
@@ -786,11 +775,11 @@ func TestMeshRecovery(t *testing.T) {
 
 	// Fully connected whitelist (no discovery required)
 	hosts := mesh.Hosts()
-	var whitelistPeers []*peer.AddrInfo
+	var whitelistPeerIDs []peer.ID
 	for _, h := range hosts {
-		whitelistPeers = append(whitelistPeers, &peer.AddrInfo{ID: h.ID(), Addrs: h.Addrs()})
+		whitelistPeerIDs = append(whitelistPeerIDs, h.ID())
 	}
-	mockWhitelist := &whitelist{peers: whitelistPeers}
+	mockWhitelist := types.NewWhitelist(whitelistPeerIDs)
 
 	// Start the nodes
 	var nodes []*TatankaNode
@@ -846,28 +835,24 @@ func TestWhitelistMismatch(t *testing.T) {
 	hosts := mesh.Hosts()
 	h1, h2, h3 := hosts[0], hosts[1], hosts[2]
 
-	goodWhitelist := &whitelist{
-		peers: []*peer.AddrInfo{
-			{ID: h1.ID(), Addrs: h1.Addrs()},
-			{ID: h2.ID(), Addrs: h2.Addrs()},
-			{ID: h3.ID(), Addrs: h3.Addrs()},
-		},
-	}
+	goodWhitelist := types.NewWhitelist([]peer.ID{
+		h1.ID(),
+		h2.ID(),
+		h3.ID(),
+	})
 
-	badWhitelist := &whitelist{
-		peers: []*peer.AddrInfo{
-			{ID: h1.ID(), Addrs: h1.Addrs()},
-			{ID: h2.ID(), Addrs: h2.Addrs()},
-			{ID: h3.ID(), Addrs: h3.Addrs()},
-			{ID: randomPeerID(t), Addrs: nil},
-		},
-	}
+	badWhitelist := types.NewWhitelist([]peer.ID{
+		h1.ID(),
+		h2.ID(),
+		h3.ID(),
+		randomPeerID(t),
+	})
 
 	// Start Nodes
 	// Node 1 & 2 get the Good Whitelist
 	// Node 3 gets the Bad Whitelist
 	var nodes []*TatankaNode
-	startNode := func(h host.Host, whitelist *whitelist) (*TatankaNode, context.CancelFunc) {
+	startNode := func(h host.Host, whitelist *types.Whitelist) (*TatankaNode, context.CancelFunc) {
 		err = linkNodeWithMesh(mesh, h, nodes, true)
 		if err != nil {
 			t.Fatal(err)
@@ -1139,13 +1124,11 @@ func TestGossipSubOracleUpdates_PriceUpdates(t *testing.T) {
 	}
 
 	// Create whitelist with all nodes
-	whitelistPeers := make([]*peer.AddrInfo, numMeshNodes)
+	whitelistPeerIDs := make([]peer.ID, numMeshNodes)
 	for i, h := range hosts {
-		whitelistPeers[i] = &peer.AddrInfo{ID: h.ID(), Addrs: h.Addrs()}
+		whitelistPeerIDs[i] = h.ID()
 	}
-	mockWhitelist := &whitelist{
-		peers: whitelistPeers,
-	}
+	mockWhitelist := types.NewWhitelist(whitelistPeerIDs)
 
 	// Create nodes with custom oracles that track merges
 	nodes := make([]*TatankaNode, numMeshNodes)
@@ -1220,13 +1203,11 @@ func TestGossipSubOracleUpdates_FeeRateUpdates(t *testing.T) {
 	}
 
 	// Create whitelist with all nodes
-	whitelistPeers := make([]*peer.AddrInfo, numMeshNodes)
+	whitelistPeerIDs := make([]peer.ID, numMeshNodes)
 	for i, h := range hosts {
-		whitelistPeers[i] = &peer.AddrInfo{ID: h.ID(), Addrs: h.Addrs()}
+		whitelistPeerIDs[i] = h.ID()
 	}
-	mockWhitelist := &whitelist{
-		peers: whitelistPeers,
-	}
+	mockWhitelist := types.NewWhitelist(whitelistPeerIDs)
 
 	// Create nodes with custom oracles
 	nodes := make([]*TatankaNode, numMeshNodes)
@@ -1301,13 +1282,11 @@ func TestGossipSubOracleUpdates_MultipleNodes(t *testing.T) {
 	}
 
 	// Create whitelist with all nodes
-	whitelistPeers := make([]*peer.AddrInfo, numMeshNodes)
+	whitelistPeerIDs := make([]peer.ID, numMeshNodes)
 	for i, h := range hosts {
-		whitelistPeers[i] = &peer.AddrInfo{ID: h.ID(), Addrs: h.Addrs()}
+		whitelistPeerIDs[i] = h.ID()
 	}
-	mockWhitelist := &whitelist{
-		peers: whitelistPeers,
-	}
+	mockWhitelist := types.NewWhitelist(whitelistPeerIDs)
 
 	// Create nodes with custom oracles
 	nodes := make([]*TatankaNode, numMeshNodes)
@@ -1383,13 +1362,11 @@ func TestGossipSubOracleUpdates_ClientDelivery(t *testing.T) {
 	}
 
 	// Create whitelist
-	whitelistPeers := make([]*peer.AddrInfo, numMeshNodes)
+	whitelistPeerIDs := make([]peer.ID, numMeshNodes)
 	for i, h := range meshHosts {
-		whitelistPeers[i] = &peer.AddrInfo{ID: h.ID(), Addrs: h.Addrs()}
+		whitelistPeerIDs[i] = h.ID()
 	}
-	mockWhitelist := &whitelist{
-		peers: whitelistPeers,
-	}
+	mockWhitelist := types.NewWhitelist(whitelistPeerIDs)
 
 	// Create nodes with custom oracles that return updated prices/fee rates
 	nodes := make([]*TatankaNode, numMeshNodes)
@@ -1572,5 +1549,151 @@ func TestClientSubscriptionEvents(t *testing.T) {
 	// Terminate clients.
 	for idx := range clients {
 		clients[idx].Close()
+	}
+}
+
+// proposeOnAll proposes the same whitelist on every node.
+func proposeOnAll(t *testing.T, nodes []*TatankaNode, proposed *types.Whitelist) {
+	t.Helper()
+	for i, n := range nodes {
+		if err := n.whitelistManager.proposeWhitelist(proposed); err != nil {
+			t.Fatalf("node %d: proposeWhitelist: %v", i, err)
+		}
+	}
+}
+
+// waitTransitionComplete waits until every node's proposal is cleared,
+// indicating the transition committed.
+func waitTransitionComplete(t *testing.T, nodes []*TatankaNode) {
+	t.Helper()
+	for i, n := range nodes {
+		requireEventually(t, func() bool {
+			return n.whitelistManager.getLocalWhitelistState().Proposed == nil
+		}, 30*time.Second, 200*time.Millisecond,
+			"node %d did not complete whitelist transition", i)
+	}
+}
+
+// TestWhitelistTransition_AllAgree verifies the end-to-end wiring: all nodes
+// propose the same whitelist, the proposals propagate via gossipsub, the
+// whitelist manager reaches consensus, and the new whitelist is committed.
+func TestWhitelistTransition_AllAgree(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	nodes, wl, _ := fullyConnectedMeshWithClients(ctx, t, 3, 0, func(int) int { return 0 })
+
+	proposeOnAll(t, nodes, wl)
+	waitTransitionComplete(t, nodes)
+
+	// After commit, every node's current whitelist should match the proposal.
+	for i, n := range nodes {
+		cur := n.whitelistManager.getLocalWhitelistState().Current
+		if !cur.Equals(wl) {
+			t.Fatalf("node %d: current whitelist doesn't match proposed after transition", i)
+		}
+	}
+}
+
+// TestWhitelistTransition_AddNode verifies that adding a new node via whitelist
+// transition works end-to-end: existing nodes propose a whitelist that includes
+// a new node, the transition completes, and the connection manager reconciles
+// trackers so the new node becomes connected.
+func TestWhitelistTransition_AddNode(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	const numPeers = 3
+	mnet, err := mocknet.WithNPeers(numPeers)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	hosts := mnet.Hosts()
+	whitelistPeerIDs := make([]peer.ID, numPeers)
+	for i, h := range hosts {
+		whitelistPeerIDs[i] = h.ID()
+	}
+	initialWL := types.NewWhitelist(whitelistPeerIDs)
+
+	existingNodes := make([]*TatankaNode, 0, numPeers)
+	for i, h := range hosts {
+		if err := linkNodeWithMesh(mnet, h, existingNodes, true); err != nil {
+			t.Fatalf("Failed to link node %d: %v", i, err)
+		}
+		existingNodes = append(existingNodes, newTestNode(t, ctx, h, t.TempDir(), initialWL))
+	}
+	checkFullyConnected(t, existingNodes)
+
+	// Create the 4th host and link it to the existing mesh.
+	newHost, err := mnet.GenPeer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range existingNodes {
+		if _, err := mnet.LinkPeers(newHost.ID(), n.node.ID()); err != nil {
+			t.Fatalf("LinkPeers: %v", err)
+		}
+		newHost.Peerstore().AddAddrs(n.node.ID(), n.node.Addrs(), peerstore.PermanentAddrTTL)
+		n.node.Peerstore().AddAddrs(newHost.ID(), newHost.Addrs(), peerstore.PermanentAddrTTL)
+	}
+
+	// Proposed whitelist: all 3 existing + new node.
+	proposedIDs := make([]peer.ID, 0, 4)
+	for _, n := range existingNodes {
+		proposedIDs = append(proposedIDs, n.node.ID())
+	}
+	proposedIDs = append(proposedIDs, newHost.ID())
+	proposedWL := types.NewWhitelist(proposedIDs)
+
+	// Start the new node with the proposed whitelist as its initial whitelist.
+	_ = newTestNode(t, ctx, newHost, t.TempDir(), proposedWL)
+
+	// All existing nodes propose the new whitelist.
+	proposeOnAll(t, existingNodes, proposedWL)
+	waitTransitionComplete(t, existingNodes)
+
+	// After transition, the existing nodes should have reconciled trackers
+	// and connected to the new node.
+	for i, n := range existingNodes {
+		requireEventually(t, func() bool {
+			return n.node.Network().Connectedness(newHost.ID()) == network.Connected
+		}, 15*time.Second, 200*time.Millisecond,
+			"node %d not connected to new node after transition", i)
+	}
+}
+
+// TestWhitelistTransition_RemoveNode verifies that removing a node via
+// whitelist transition works: overlap nodes agree, the transition completes,
+// and the connection manager stops tracking the removed node.
+func TestWhitelistTransition_RemoveNode(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	nodes, _, _ := fullyConnectedMeshWithClients(ctx, t, 3, 0, func(int) int { return 0 })
+
+	// Proposed whitelist: only nodes 0 and 1 (remove node 2).
+	proposed := types.NewWhitelist([]peer.ID{nodes[0].node.ID(), nodes[1].node.ID()})
+
+	// Both overlap nodes propose.
+	for i := 0; i < 2; i++ {
+		if err := nodes[i].whitelistManager.proposeWhitelist(proposed); err != nil {
+			t.Fatalf("node %d: proposeWhitelist: %v", i, err)
+		}
+	}
+
+	// Transition should complete on the overlap nodes.
+	waitTransitionComplete(t, nodes[:2])
+
+	// After transition, the removed node's tracker should be stopped.
+	removedID := nodes[2].node.ID()
+	for i := 0; i < 2; i++ {
+		requireEventually(t, func() bool {
+			nodes[i].connectionManager.trackersMtx.RLock()
+			_, tracked := nodes[i].connectionManager.peerTrackers[removedID]
+			nodes[i].connectionManager.trackersMtx.RUnlock()
+			return !tracked
+		}, 10*time.Second, 100*time.Millisecond,
+			"node %d still tracking removed node", i)
 	}
 }

@@ -14,17 +14,19 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/decred/slog"
-	"github.com/libp2p/go-libp2p"
-	"github.com/libp2p/go-libp2p/core/crypto"
-	"github.com/libp2p/go-libp2p/core/host"
-	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/bisoncraft/mesh/oracle"
 	"github.com/bisoncraft/mesh/oracle/sources"
 	"github.com/bisoncraft/mesh/protocols"
 	protocolsPb "github.com/bisoncraft/mesh/protocols/pb"
 	"github.com/bisoncraft/mesh/tatanka/admin"
-	"github.com/bisoncraft/mesh/tatanka/pb"
+	pb "github.com/bisoncraft/mesh/tatanka/pb"
+	"github.com/bisoncraft/mesh/tatanka/types"
+	"github.com/decred/slog"
+	"github.com/libp2p/go-libp2p"
+	"github.com/libp2p/go-libp2p/core/crypto"
+	"github.com/libp2p/go-libp2p/core/host"
+	"github.com/libp2p/go-libp2p/core/network"
+	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
@@ -32,6 +34,10 @@ const (
 	// privateKeyFileName is the name of the file that contains the private key
 	// for the tatanka node.
 	privateKeyFileName = "p.key"
+
+	// whitelistFileName is the name of the file that contains the whitelist for
+	// the tatanka node.
+	whitelistFileName = "whitelist.json"
 
 	// forwardRelayProtocol is the protocol used to forward a relay message between two tatanka nodes.
 	forwardRelayProtocol = "/tatanka/forward-relay/1.0.0"
@@ -49,13 +55,18 @@ const (
 
 // Config is the configuration for the tatanka node
 type Config struct {
-	DataDir       string
-	Logger        slog.Logger
-	ListenIP      string
-	ListenPort    int
-	MetricsPort   int
-	AdminPort     int
-	WhitelistPath string
+	DataDir        string
+	Logger         slog.Logger
+	ListenIP       string
+	ListenPort     int
+	MetricsPort    int
+	AdminPort      int
+	WhitelistPath  string // Deprecated: use WhitelistPeers.
+	BootstrapAddrs []string
+	WhitelistPeers []peer.ID
+	// ForceWhitelist overwrites any existing whitelist on disk with the provided
+	// whitelist when WhitelistPeers is non-empty.
+	ForceWhitelist bool
 
 	// Oracle Configuration
 	CMCKey           string
@@ -73,8 +84,8 @@ func WithHost(h host.Host) Option {
 	}
 }
 
-// Oracle defines the requirements for implementing an oracle.
-type Oracle interface {
+// oracleService defines the requirements for implementing an oracle.
+type oracleService interface {
 	Run(ctx context.Context)
 	Merge(update *oracle.OracleUpdate, senderID string) *oracle.MergeResult
 	Price(ticker oracle.Ticker) (float64, bool)
@@ -86,37 +97,58 @@ type Oracle interface {
 
 // TatankaNode is a permissioned node in the tatanka mesh
 type TatankaNode struct {
-	config       *Config
-	node         host.Host
-	log          slog.Logger
-	whitelist    atomic.Value // *whitelist
-	readyCh      chan struct{}
-	readyOnce    sync.Once
-	readyErr     atomic.Value // error
-	privateKey   crypto.PrivKey
-	bondVerifier *bondVerifier
-	bondStorage  bondStorage
+	config        *Config
+	node          host.Host
+	log           slog.Logger
+	initWhitelist *types.Whitelist
+	readyCh       chan struct{}
+	readyOnce     sync.Once
+	readyErr      atomic.Value // error
+	privateKey    crypto.PrivKey
 
+	bondVerifier            *bondVerifier
+	bondStorage             bondStorage
+	peerstoreCache          *peerstoreCache
 	gossipSub               *gossipSub
 	clientConnectionManager *clientConnectionManager
 	subscriptionManager     *subscriptionManager
 	pushStreamManager       *pushStreamManager
+	whitelistManager        *whitelistManager
 	connectionManager       *meshConnectionManager
 	adminServer             *admin.Server
+	adminNotify             adminNotifier
+	metricsServer           *http.Server
+	oracle                  oracleService
+}
 
-	metricsServer *http.Server
+func initTatankaNode(dataDir string) (crypto.PrivKey, error) {
+	if dataDir == "" {
+		return nil, errors.New("no data directory provided")
+	}
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+		return nil, fmt.Errorf("failed to create data directory %q: %w", dataDir, err)
+	}
+	priv, err := getOrCreatePrivateKey(filepath.Join(dataDir, privateKeyFileName))
+	if err != nil {
+		return nil, err
+	}
+	return priv, nil
+}
 
-	oracle Oracle
+// InitTatankaNode ensures the data directory exists, generates (or loads) the
+// node private key, and returns the corresponding peer ID.
+func InitTatankaNode(dataDir string) (peer.ID, error) {
+	priv, err := initTatankaNode(dataDir)
+	if err != nil {
+		return "", err
+	}
+
+	return peer.IDFromPrivateKey(priv)
 }
 
 // NewTatankaNode creates a new TatankaNode with the given configuration and options.
 func NewTatankaNode(config *Config, opts ...Option) (*TatankaNode, error) {
-	privateKey, err := getOrCreatePrivateKey(filepath.Join(config.DataDir, privateKeyFileName))
-	if err != nil {
-		return nil, err
-	}
-
-	whitelist, err := loadWhitelist(config.WhitelistPath)
+	privateKey, err := initTatankaNode(config.DataDir)
 	if err != nil {
 		return nil, err
 	}
@@ -131,21 +163,42 @@ func NewTatankaNode(config *Config, opts ...Option) (*TatankaNode, error) {
 		bondStorage:             newMemoryBondStorage(time.Now),
 		readyCh:                 make(chan struct{}),
 	}
-	t.whitelist.Store(whitelist)
 
 	for _, opt := range opts {
 		opt(t)
 	}
 
+	// Derive local peer ID from the host if one was injected (e.g. tests),
+	// otherwise from the generated private key.
+	var localPeerID peer.ID
+	if t.node != nil {
+		localPeerID = t.node.ID()
+	} else {
+		localPeerID, err = peer.IDFromPrivateKey(privateKey)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	t.initWhitelist, err = initWhitelist(config.DataDir, config.WhitelistPeers, config.ForceWhitelist, localPeerID)
+	if err != nil {
+		return nil, err
+	}
+
 	return t, nil
 }
 
-func (t *TatankaNode) getWhitelist() *whitelist {
-	return t.whitelist.Load().(*whitelist)
-}
-
-func (t *TatankaNode) getWhitelistPeers() map[peer.ID]struct{} {
-	return t.getWhitelist().allPeerIDs()
+// decodePeerIDStrings decodes a slice of peer ID strings into peer.ID values.
+func decodePeerIDStrings(peers []string) ([]peer.ID, error) {
+	peerIDs := make([]peer.ID, 0, len(peers))
+	for _, p := range peers {
+		pid, err := peer.Decode(p)
+		if err != nil {
+			return nil, fmt.Errorf("invalid peer ID %q: %w", p, err)
+		}
+		peerIDs = append(peerIDs, pid)
+	}
+	return peerIDs, nil
 }
 
 func (t *TatankaNode) handleBroadcastMessage(msg *protocolsPb.PushMessage) {
@@ -159,29 +212,71 @@ func (t *TatankaNode) handleClientConnectionMessage(update *clientConnectionUpda
 	t.clientConnectionManager.updateClientConnectionInfo(update)
 }
 
+// peerStates computes the current admin state on demand by querying the
+// connection manager and whitelist manager.
+func (t *TatankaNode) peerStates() admin.AdminState {
+	state := admin.AdminState{
+		OurPeerID:      t.node.ID().String(),
+		WhitelistState: t.whitelistManager.getLocalWhitelistState(),
+		Peers:          make(map[string]admin.PeerInfo),
+	}
+	for pid, pi := range t.connectionManager.peerInfoSnapshot() {
+		state.Peers[pid.String()] = pi
+	}
+	return state
+}
+
 // Run starts the tatanka node and blocks until the context is done.
 func (t *TatankaNode) Run(ctx context.Context) error {
-	wg := sync.WaitGroup{}
+	t.adminNotify = noopAdminNotifier{}
 
-	// Setup libp2p node if not provided in options.
-	if t.node == nil {
-		listenAddrs := []string{
-			fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", t.config.ListenPort),
-			fmt.Sprintf("/ip6/::/tcp/%d", t.config.ListenPort),
-		}
-		var err error
-		t.node, err = libp2p.New(
-			libp2p.Identity(t.privateKey),
-			libp2p.ListenAddrStrings(listenAddrs...),
-			// EnableRelayService for p2p communication between clients
-			libp2p.EnableRelayService(),
-		)
-		if err != nil {
-			t.markReady(err)
-			return err
-		}
+	if err := t.initHost(); err != nil {
+		t.markReady(err)
+		return err
+	}
+	if err := t.initMessaging(ctx); err != nil {
+		t.markReady(err)
+		return err
+	}
+	if err := t.initOracle(); err != nil {
+		t.markReady(err)
+		return err
+	}
+	if err := t.initAdmin(ctx); err != nil {
+		t.markReady(err)
+		return err
+	}
+	if err := t.initConnectivity(); err != nil {
+		t.markReady(err)
+		return err
 	}
 
+	t.setupStreamHandlers()
+	t.setupObservability()
+
+	return t.serve(ctx)
+}
+
+// initHost creates the libp2p host if not already injected (e.g. via WithHost).
+func (t *TatankaNode) initHost() error {
+	if t.node != nil {
+		return nil
+	}
+
+	listenAddrs := []string{
+		fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", t.config.ListenPort),
+		fmt.Sprintf("/ip6/::/tcp/%d", t.config.ListenPort),
+	}
+	var err error
+	t.node, err = libp2p.New(
+		libp2p.Identity(t.privateKey),
+		libp2p.ListenAddrStrings(listenAddrs...),
+	)
+	return err
+}
+
+// initMessaging creates the gossipSub and pushStreamManager.
+func (t *TatankaNode) initMessaging(ctx context.Context) error {
 	t.log.Infof("Node ID: %s", t.node.ID().String())
 
 	listenAddrs := t.node.Network().ListenAddresses()
@@ -192,16 +287,22 @@ func (t *TatankaNode) Run(ctx context.Context) error {
 
 	var err error
 	t.gossipSub, err = newGossipSub(ctx, &gossipSubCfg{
-		node:                          t.node,
-		log:                           t.config.Logger,
-		getWhitelistPeers:             t.getWhitelistPeers,
+		node: t.node,
+		log:  t.config.Logger,
+		getWhitelistPeers: func() map[peer.ID]struct{} {
+			return t.whitelistManager.getWhitelist().PeerIDs
+		},
 		handleBroadcastMessage:        t.handleBroadcastMessage,
 		handleClientConnectionMessage: t.handleClientConnectionMessage,
 		handleOracleUpdate:            t.handleOracleUpdate,
 		handleQuotaHeartbeat:          t.handleQuotaHeartbeat,
+		// t.whitelistManager and t.connectionManager are set in initConnectivity,
+		// after gossipSub is created. The closure is safe because it is only
+		// called during gossipSub.run, which starts in serve() after all init
+		// phases.
+		handleWhitelistUpdate: t.handleWhitelistUpdate,
 	})
 	if err != nil {
-		t.markReady(err)
 		return err
 	}
 
@@ -217,70 +318,149 @@ func (t *TatankaNode) Run(ctx context.Context) error {
 		}
 	})
 
-	// Only create oracle if not provided (e.g., via test setup)
-	if t.oracle == nil {
-		t.oracle, err = oracle.New(&oracle.Config{
-			Log:              t.config.Logger,
-			CMCKey:           t.config.CMCKey,
-			TatumKey:         t.config.TatumKey,
-			BlockcypherToken: t.config.BlockcypherToken,
-			NodeID:           t.node.ID().String(),
-			PublishUpdate:    t.gossipSub.publishOracleUpdate,
-			OnStateUpdate: func(update *oracle.OracleSnapshot) {
-				if t.adminServer != nil {
-					t.adminServer.BroadcastOracleUpdate("oracle_update", update)
-				}
-			},
-			PublishQuotaHeartbeat: t.gossipSub.publishQuotaHeartbeat,
-		})
-		if err != nil {
-			return fmt.Errorf("failed to create oracle: %v", err)
-		}
+	return nil
+}
+
+// initOracle creates the oracle if not already injected (e.g. via test setup).
+func (t *TatankaNode) initOracle() error {
+	if t.oracle != nil {
+		return nil
 	}
 
-	// Create admin callback function and setup the admin server if configured.
-	adminCallback := func(peerID peer.ID, connected bool, whitelistMismatch bool, addresses []string, peerWhitelist []string) {
+	var err error
+	t.oracle, err = oracle.New(&oracle.Config{
+		Log:              t.config.Logger,
+		CMCKey:           t.config.CMCKey,
+		TatumKey:         t.config.TatumKey,
+		BlockcypherToken: t.config.BlockcypherToken,
+		NodeID:           t.node.ID().String(),
+		PublishUpdate:    t.gossipSub.publishOracleUpdate,
+		OnStateUpdate: func(update *oracle.OracleSnapshot) {
+			t.adminNotify.BroadcastOracleUpdate("oracle_update", update)
+		},
+		PublishQuotaHeartbeat: t.gossipSub.publishQuotaHeartbeat,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create oracle: %v", err)
 	}
-	if t.config.AdminPort > 0 {
-		adminAddr := fmt.Sprintf(":%d", t.config.AdminPort)
-		server := admin.NewServer(t.config.Logger, adminAddr, t.oracle)
-		whitelistIDs := t.getWhitelist().allPeerIDs()
-		whitelist := make([]string, 0, len(whitelistIDs))
-		for id := range whitelistIDs {
-			whitelist = append(whitelist, id.String())
-		}
-		server.UpdateWhitelist(whitelist)
 
-		adminCallback = func(peerID peer.ID, connected, whitelistMismatch bool, addresses []string, peerWhitelist []string) {
-			state := admin.StateDisconnected
-			switch {
-			case connected:
-				state = admin.StateConnected
-			case whitelistMismatch:
-				state = admin.StateWhitelistMismatch
+	return nil
+}
+
+// initAdmin creates the admin server when configured (AdminPort > 0) and
+// upgrades adminNotify from the noop to the live implementation.
+func (t *TatankaNode) initAdmin(ctx context.Context) error {
+	if t.config.AdminPort <= 0 {
+		return nil
+	}
+
+	adminAddr := fmt.Sprintf("127.0.0.1:%d", t.config.AdminPort)
+	server := admin.NewServer(&admin.Config{
+		Log:    t.config.Logger,
+		Addr:   adminAddr,
+		PeerID: t.node.ID().String(),
+		Oracle: t.oracle,
+		GetState: func() admin.AdminState {
+			return t.peerStates()
+		},
+		ProposeWhitelist: func(peers []string) error {
+			peerIDs, err := decodePeerIDStrings(peers)
+			if err != nil {
+				return err
 			}
-			server.UpdateConnectionState(peerID, state, addresses, peerWhitelist)
-		}
+			return t.whitelistManager.proposeWhitelist(types.NewWhitelist(peerIDs))
+		},
+		ClearProposal: func() {
+			t.whitelistManager.clearProposal()
+		},
+		ForceWhitelist: func(peers []string) error {
+			peerIDs, err := decodePeerIDStrings(peers)
+			if err != nil {
+				return err
+			}
+			return t.whitelistManager.forceWhitelist(types.NewWhitelist(peerIDs))
+		},
+	})
 
-		t.adminServer = server
+	t.adminServer = server
+	t.adminNotify = &liveAdminNotifier{server: server}
+
+	return nil
+}
+
+// initConnectivity creates the peerstore cache and mesh connection manager.
+func (t *TatankaNode) initConnectivity() error {
+	t.peerstoreCache = newPeerstoreCache(
+		t.log,
+		filepath.Join(t.config.DataDir, "peerstore.json"),
+		t.node,
+		func() map[peer.ID]struct{} {
+			return t.whitelistManager.getWhitelist().PeerIDs
+		},
+	)
+	t.peerstoreCache.load()
+
+	if len(t.config.BootstrapAddrs) > 0 {
+		if err := seedBootstrapAddrs(t.node, t.config.BootstrapAddrs); err != nil {
+			return fmt.Errorf("failed to seed bootstrap addresses: %w", err)
+		}
 	}
 
-	t.connectionManager = newMeshConnectionManager(
-		t.config.Logger, t.node, t.getWhitelist(), adminCallback,
-		func() map[string]*pb.QuotaStatus {
+	whitelistPath := filepath.Join(t.config.DataDir, whitelistFileName)
+	t.whitelistManager = newWhitelistManager(&whitelistManagerConfig{
+		log:    t.config.Logger,
+		peerID: t.node.ID(),
+		isConnected: func(pid peer.ID) bool {
+			return t.node.Network().Connectedness(pid) == network.Connected
+		},
+		whitelist: t.initWhitelist,
+		whitelistUpdated: func(newWl *types.Whitelist) {
+			if err := saveWhitelist(whitelistPath, newWl); err != nil {
+				t.log.Errorf("Failed to save whitelist: %v", err)
+			}
+			t.connectionManager.reconcileTrackers()
+			t.adminNotify.BroadcastWhitelistUpdate(admin.WhitelistUpdate{
+				WhitelistState: t.whitelistManager.getLocalWhitelistState(),
+			})
+			t.peerstoreCache.save()
+		},
+		broadcastLocalState: func(ws *types.WhitelistState) {
+			ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
+			defer cancel()
+			if err := t.gossipSub.publishWhitelistUpdate(ctx, whitelistStateToPb(ws)); err != nil {
+				t.log.Errorf("Failed to publish whitelist update: %v", err)
+			}
+			t.adminNotify.BroadcastWhitelistState(ws)
+		},
+	})
+
+	t.connectionManager = newMeshConnectionManager(&meshConnectionManagerConfig{
+		log:  t.config.Logger,
+		node: t.node,
+		peerStateUpdated: func(pi admin.PeerInfo) {
+			t.adminNotify.BroadcastPeerUpdate(pi)
+		},
+		getPeerWhitelistState: t.whitelistManager.getPeerWhitelistState,
+		getLocalQuotas: func() map[string]*pb.QuotaStatus {
 			return quotaStatusesToPb(t.oracle.GetLocalQuotas())
 		},
-		func(peerID peer.ID, quotas map[string]*pb.QuotaStatus) {
+		handlePeerQuotas: func(peerID peer.ID, quotas map[string]*pb.QuotaStatus) {
 			for source, q := range quotas {
 				t.oracle.UpdatePeerSourceQuota(peerID.String(), pbToTimestampedQuotaStatus(q), source)
 			}
 		},
-	)
+		getLocalWhitelistState:   t.whitelistManager.getLocalWhitelistState,
+		updatePeerWhitelistState: t.whitelistManager.updatePeerWhitelistState,
+	})
 
-	t.log.Infof("Admin interface available (or not) on :%d", t.config.AdminPort)
+	return nil
+}
 
-	t.setupStreamHandlers()
-	t.setupObservability()
+// serve launches all long-running goroutines, waits for the initial connectivity
+// pass to complete, marks the node as ready, then blocks until context
+// cancellation. After all goroutines exit it runs shutdown.
+func (t *TatankaNode) serve(ctx context.Context) error {
+	var wg sync.WaitGroup
 
 	go func() {
 		t.log.Infof("Metrics available on :%d/metrics", t.config.MetricsPort)
@@ -292,7 +472,6 @@ func (t *TatankaNode) Run(ctx context.Context) error {
 		}
 	}()
 
-	// Start admin server if configured
 	if t.adminServer != nil {
 		wg.Add(1)
 		go func() {
@@ -316,7 +495,12 @@ func (t *TatankaNode) Run(ctx context.Context) error {
 		}
 	}()
 
-	// Maintain mesh connectivity
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		t.whitelistManager.run(ctx)
+	}()
+
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -327,28 +511,37 @@ func (t *TatankaNode) Run(ctx context.Context) error {
 	t.connectionManager.waitInitial(ctx)
 	t.markReady(nil)
 
-	// Run Oracle
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		t.oracle.Run(ctx)
 	}()
 
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		t.peerstoreCache.run(ctx)
+	}()
+
 	wg.Wait()
 
+	return t.shutdown()
+}
+
+// shutdown performs graceful teardown of the metrics server and libp2p host.
+func (t *TatankaNode) shutdown() error {
 	t.log.Infof("Shutting down tatanka node...")
-	err = t.metricsServer.Shutdown(ctx)
-	if err != nil {
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer shutdownCancel()
+	if err := t.metricsServer.Shutdown(shutdownCtx); err != nil {
 		return err
 	}
 
-	err = t.node.Close()
-	if err != nil {
+	if err := t.node.Close(); err != nil {
 		return err
 	}
 
 	t.log.Infof("Tatanka node shutdown complete.")
-
 	return nil
 }
 
@@ -376,6 +569,8 @@ func (t *TatankaNode) markReady(err error) {
 	})
 }
 
+// getOrCreatePrivateKey loads an existing private key from filePath, or
+// generates a new Ed25519 key and writes it to filePath if none exists.
 func getOrCreatePrivateKey(filePath string) (crypto.PrivKey, error) {
 	data, err := os.ReadFile(filePath)
 	if err != nil {

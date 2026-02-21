@@ -3,9 +3,9 @@ package tatanka
 import (
 	"errors"
 
+	"github.com/bisoncraft/mesh/codec"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/protocol"
-	"github.com/bisoncraft/mesh/codec"
 )
 
 var errUnauthorized = errors.New("unauthorized")
@@ -49,7 +49,7 @@ func (t *TatankaNode) requireBonds(s network.Stream) error {
 
 func (t *TatankaNode) isWhitelistPeer(s network.Stream) error {
 	peerID := s.Conn().RemotePeer()
-	if _, ok := t.getWhitelist().allPeerIDs()[peerID]; !ok {
+	if _, ok := t.whitelistManager.getWhitelist().PeerIDs[peerID]; !ok {
 		return errUnauthorized
 	}
 	return nil

@@ -10,13 +10,15 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/bisoncraft/mesh/codec"
+	"github.com/bisoncraft/mesh/tatanka/admin"
+	pb "github.com/bisoncraft/mesh/tatanka/pb"
+	"github.com/bisoncraft/mesh/tatanka/types"
 	"github.com/decred/slog"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/peerstore"
-	"github.com/bisoncraft/mesh/codec"
-	pb "github.com/bisoncraft/mesh/tatanka/pb"
 	ma "github.com/multiformats/go-multiaddr"
 )
 
@@ -36,9 +38,6 @@ var (
 	errWhitelistMismatch = errors.New("whitelist mismatch")
 	errDiscoveryNotFound = errors.New("discovery not found")
 )
-
-// AdminUpdateCallback is called when connection states change
-type AdminUpdateCallback func(peerID peer.ID, connected bool, whitelistMismatch bool, addresses []string, peerWhitelist []string)
 
 // retryState tracks exponential backoff state for connection retries.
 type retryState struct {
@@ -71,12 +70,8 @@ type peerTracker struct {
 	// immediately.
 	signalReconnect chan struct{}
 	// whitelistMismatch is set when the most recent connection attempt failed
-	// specifically due to whitelist mismatch. If this is the case, we know
-	// there's no reason to try discovery.
-	whitelistMismatch bool
-	// peerWhitelist contains the peer's whitelist if we received it during
-	// whitelist verification.
-	peerWhitelist []string
+	// due to whitelist mismatch.
+	whitelistMismatch atomic.Bool
 	// initialCh is closed after the first connection attempt.
 	initialCh   chan struct{}
 	initialOnce sync.Once
@@ -86,16 +81,6 @@ func (t *peerTracker) markInitial() {
 	t.initialOnce.Do(func() {
 		close(t.initialCh)
 	})
-}
-
-// getAddresses returns the known addresses for this peer as strings.
-func (t *peerTracker) getAddresses() []string {
-	addrs := t.m.node.Peerstore().Addrs(t.peerID)
-	result := make([]string, len(addrs))
-	for i, addr := range addrs {
-		result[i] = addr.String()
-	}
-	return result
 }
 
 // run starts the main event loop for a single peer connection.
@@ -111,7 +96,7 @@ func (t *peerTracker) run() {
 	}
 
 	success := func() {
-		t.m.adminCallback(t.peerID, true, false, t.getAddresses(), nil)
+		t.m.peerStateUpdated(t.m.getPeerInfo(t.peerID))
 		t.markInitial()
 		retry.onSuccess()
 		resetTimerWithJitter(maxRetryDelay)
@@ -123,7 +108,7 @@ func (t *peerTracker) run() {
 	}
 
 	failure := func() {
-		t.m.adminCallback(t.peerID, false, t.whitelistMismatch, t.getAddresses(), t.peerWhitelist)
+		t.m.peerStateUpdated(t.m.getPeerInfo(t.peerID))
 		t.markInitial()
 		resetTimerWithJitter(retry.backoff)
 		retry.onFailure()
@@ -138,7 +123,7 @@ func (t *peerTracker) run() {
 	// - If we have no addresses: discover immediately on first attempt (pass 0),
 	//   then every N failures.
 	shouldAttemptDiscovery := func() bool {
-		if t.whitelistMismatch {
+		if t.whitelistMismatch.Load() {
 			return false
 		}
 
@@ -158,7 +143,7 @@ func (t *peerTracker) run() {
 
 		case <-t.signalReconnect:
 			// Do not force a reconnect if we just disconnected due to a whitelist mismatch.
-			if t.whitelistMismatch {
+			if t.whitelistMismatch.Load() && t.m.node.Network().Connectedness(t.peerID) != network.Connected {
 				continue
 			}
 			if !timer.Stop() {
@@ -168,8 +153,9 @@ func (t *peerTracker) run() {
 				}
 			}
 			forceReconnect()
+
 		case <-timer.C:
-			if t.m.node.Network().Connectedness(t.peerID) == network.Connected {
+			if !t.whitelistMismatch.Load() && t.m.node.Network().Connectedness(t.peerID) == network.Connected {
 				success()
 				continue
 			}
@@ -203,8 +189,6 @@ func (t *peerTracker) connect() error {
 	dialCtx, dialCancel := context.WithTimeout(t.ctx, connectToPeerTimeout)
 	defer dialCancel()
 
-	t.whitelistMismatch = false
-
 	if err := t.m.node.Connect(dialCtx, peer.AddrInfo{ID: t.peerID}); err != nil {
 		return err
 	}
@@ -212,10 +196,13 @@ func (t *peerTracker) connect() error {
 	err := t.verifyWhitelist()
 	if err != nil {
 		if errors.Is(err, errWhitelistMismatch) {
-			t.whitelistMismatch = true
+			t.whitelistMismatch.Store(true)
 		}
 		return fmt.Errorf("failed to verify whitelist for peer %s: %w", t.peerID, err)
 	}
+
+	// Whitelist verified — clear any prior mismatch.
+	t.whitelistMismatch.Store(false)
 
 	go t.exchangeOracleQuotas()
 
@@ -238,12 +225,14 @@ func (t *peerTracker) exchangeOracleQuotas() {
 	req := &pb.QuotaHandshake{Quotas: localQuotas}
 	if err := codec.WriteLengthPrefixedMessage(stream, req); err != nil {
 		t.m.log.Debugf("Failed to send quota handshake to %s: %v", t.peerID, err)
+		_ = stream.Reset()
 		return
 	}
 
 	resp := &pb.QuotaHandshake{}
 	if err := codec.ReadLengthPrefixedMessage(stream, resp); err != nil {
 		t.m.log.Debugf("Failed to read quota handshake from %s: %v", t.peerID, err)
+		_ = stream.Reset()
 		return
 	}
 
@@ -252,16 +241,16 @@ func (t *peerTracker) exchangeOracleQuotas() {
 
 // discoverAddresses asks connected whitelist peers for the address of the target.
 func (t *peerTracker) discoverAddresses() bool {
-	whitelist := t.m.getWhitelist()
+	whitelist := t.m.getLocalWhitelistState().Current
 
 	var wg sync.WaitGroup
 	var success atomic.Bool
 
-	for _, p := range whitelist.peers {
-		if p.ID == t.m.node.ID() || p.ID == t.peerID {
+	for pid := range whitelist.PeerIDs {
+		if pid == t.m.node.ID() || pid == t.peerID {
 			continue
 		}
-		if t.m.node.Network().Connectedness(p.ID) != network.Connected {
+		if t.m.node.Network().Connectedness(pid) != network.Connected {
 			continue
 		}
 
@@ -276,7 +265,7 @@ func (t *peerTracker) discoverAddresses() bool {
 			} else if !errors.Is(err, errDiscoveryNotFound) {
 				t.m.log.Warnf("Failed to discover addresses for %s via %s: %v", t.peerID, helper, err)
 			}
-		}(p.ID)
+		}(pid)
 	}
 
 	wg.Wait()
@@ -284,54 +273,66 @@ func (t *peerTracker) discoverAddresses() bool {
 	return success.Load()
 }
 
-// verifyWhitelist sends a whitelist request to the peer and verifies the response.
-// If the response is a success, we protect the connection and return nil. Otherwise,
-// we close the connection and return an error.
+// verifyWhitelist performs a whitelist handshake with the peer. Both sides
+// exchange a WhitelistState, check for a match, and protect or close the connection.
 func (t *peerTracker) verifyWhitelist() error {
-	var success bool
-	defer func() {
-		if success {
-			t.m.node.ConnManager().Protect(t.peerID, "tatanka-node")
-		} else {
-			_ = t.m.node.Network().ClosePeer(t.peerID)
-		}
-	}()
+	ctx, cancel := context.WithTimeout(t.ctx, connectToPeerTimeout)
+	defer cancel()
 
-	stream, err := t.m.node.NewStream(t.ctx, t.peerID, whitelistProtocol)
+	stream, err := t.m.node.NewStream(ctx, t.peerID, whitelistProtocol)
 	if err != nil {
+		_ = t.m.node.Network().ClosePeer(t.peerID)
 		return err
 	}
 	defer func() { _ = stream.Close() }()
 
-	req := &pb.WhitelistRequest{PeerIDs: t.m.getWhitelist().peerIDsBytes()}
-	if err := codec.WriteLengthPrefixedMessage(stream, req); err != nil {
+	// 1. Send our state.
+	state := t.m.getLocalWhitelistState()
+	currentWl := state.Current
+	proposedWl := state.Proposed
+	ownState := &pb.WhitelistState{
+		PeerIDs:   currentWl.PeerIDsBytes(),
+		Timestamp: time.Now().UnixNano(),
+		Ready:     state.Ready,
+	}
+	if proposedWl != nil {
+		ownState.ProposedPeerIDs = proposedWl.PeerIDsBytes()
+	}
+	if err := codec.WriteLengthPrefixedMessage(stream, ownState); err != nil {
+		_ = stream.Reset()
+		_ = t.m.node.Network().ClosePeer(t.peerID)
 		return err
 	}
 
-	resp := &pb.WhitelistResponse{}
-	if err := codec.ReadLengthPrefixedMessage(stream, resp); err != nil {
+	// 2. Read peer's state.
+	peerState := &pb.WhitelistState{}
+	if err := codec.ReadLengthPrefixedMessage(stream, peerState); err != nil {
+		_ = stream.Reset()
+		_ = t.m.node.Network().ClosePeer(t.peerID)
 		return err
 	}
 
-	if resp.GetSuccess() != nil {
-		success = true
+	// 3. An empty PeerIDs means the peer rejected our handshake (the
+	// permission decorator sent a generic Response, not a WhitelistState).
+	if len(peerState.PeerIDs) == 0 {
+		t.m.updatePeerWhitelistState(t.peerID, nil, 0)
+		_ = t.m.node.Network().ClosePeer(t.peerID)
+		return fmt.Errorf("%w: peer %s rejected handshake", errWhitelistMismatch, t.peerID)
+	}
+
+	// 4. Record peer's whitelist info regardless of match.
+	ws := pbToWhitelistState(peerState)
+	t.m.updatePeerWhitelistState(t.peerID, ws, peerState.Timestamp)
+
+	// 5. Check match.
+	matched := flexibleWhitelistMatch(currentWl, proposedWl, peerState.PeerIDs, peerState.ProposedPeerIDs)
+
+	if matched {
+		t.m.node.ConnManager().Protect(t.peerID, "tatanka-node")
 		return nil
 	}
 
-	if resp.GetMismatch() != nil {
-		// Extract peer's whitelist from mismatch response
-		peerIDs := resp.GetMismatch().GetPeerIDs()
-		t.peerWhitelist = make([]string, len(peerIDs))
-		for i, peerIDBytes := range peerIDs {
-			peerID, err := peer.IDFromBytes(peerIDBytes)
-			if err != nil {
-				t.m.log.Warnf("Failed to parse peer ID from mismatch response: %v", err)
-				continue
-			}
-			t.peerWhitelist[i] = peerID.String()
-		}
-	}
-
+	_ = t.m.node.Network().ClosePeer(t.peerID)
 	return fmt.Errorf("%w for peer %s", errWhitelistMismatch, t.peerID)
 }
 
@@ -340,60 +341,65 @@ type meshConnectionManager struct {
 	log       slog.Logger
 	node      host.Host
 	ctx       context.Context
-	whitelist atomic.Value // *whitelist
+	cancelCtx context.CancelFunc
 
 	trackersMtx  sync.RWMutex
 	peerTrackers map[peer.ID]*peerTracker
 
-	initialCh     chan struct{}
-	initialOnce   sync.Once
-	initialErr    atomic.Value // error
-	adminCallback AdminUpdateCallback
+	initialCh   chan struct{}
+	initialOnce sync.Once
 
-	// Quota exchange callbacks
+	peerStateUpdated func(admin.PeerInfo)
+
+	// Whitelist handshake callbacks
+	getLocalWhitelistState   func() *types.WhitelistState
+	updatePeerWhitelistState func(peerID peer.ID, ws *types.WhitelistState, timestamp int64) bool
+	getPeerWhitelistState    func(peerID peer.ID) *types.WhitelistState
+
+	// Oracle quota handshake callbacks
 	getLocalQuotas   func() map[string]*pb.QuotaStatus
 	handlePeerQuotas func(peerID peer.ID, quotas map[string]*pb.QuotaStatus)
 }
 
-func newMeshConnectionManager(
-	log slog.Logger,
-	node host.Host,
-	whitelist *whitelist,
-	adminCallback AdminUpdateCallback,
-	getLocalQuotas func() map[string]*pb.QuotaStatus,
-	handlePeerQuotas func(peerID peer.ID, quotas map[string]*pb.QuotaStatus),
-) *meshConnectionManager {
+// meshConnectionManagerConfig holds configuration for creating a meshConnectionManager.
+type meshConnectionManagerConfig struct {
+	log                      slog.Logger
+	node                     host.Host
+	peerStateUpdated         func(admin.PeerInfo)
+	getLocalQuotas           func() map[string]*pb.QuotaStatus
+	handlePeerQuotas         func(peerID peer.ID, quotas map[string]*pb.QuotaStatus)
+	getLocalWhitelistState   func() *types.WhitelistState
+	updatePeerWhitelistState func(peerID peer.ID, ws *types.WhitelistState, timestamp int64) bool
+	getPeerWhitelistState    func(peerID peer.ID) *types.WhitelistState
+}
+
+func newMeshConnectionManager(cfg *meshConnectionManagerConfig) *meshConnectionManager {
 	m := &meshConnectionManager{
-		log:              log,
-		node:             node,
-		peerTrackers:     make(map[peer.ID]*peerTracker),
-		initialCh:        make(chan struct{}),
-		adminCallback:    adminCallback,
-		getLocalQuotas:   getLocalQuotas,
-		handlePeerQuotas: handlePeerQuotas,
-	}
-	m.whitelist.Store(whitelist)
-
-	// Add all bootstrap addresses to the peerstore.
-	for _, whitelistPeer := range whitelist.peers {
-		if whitelistPeer.ID == m.node.ID() || len(whitelistPeer.Addrs) == 0 {
-			continue
-		}
-		m.node.Peerstore().AddAddrs(whitelistPeer.ID, whitelistPeer.Addrs, peerstore.PermanentAddrTTL)
+		log:                      cfg.log,
+		node:                     cfg.node,
+		peerTrackers:             make(map[peer.ID]*peerTracker),
+		initialCh:                make(chan struct{}),
+		peerStateUpdated:         cfg.peerStateUpdated,
+		getLocalQuotas:           cfg.getLocalQuotas,
+		handlePeerQuotas:         cfg.handlePeerQuotas,
+		getLocalWhitelistState:   cfg.getLocalWhitelistState,
+		updatePeerWhitelistState: cfg.updatePeerWhitelistState,
+		getPeerWhitelistState:    cfg.getPeerWhitelistState,
 	}
 
-	// Register for network events to react instantly to disconnects.
-	node.Network().Notify(&network.NotifyBundle{
+	m.ctx, m.cancelCtx = context.WithCancel(context.Background())
+
+	// Register for network events to react instantly to connects and disconnects.
+	cfg.node.Network().Notify(&network.NotifyBundle{
+		ConnectedF: func(_ network.Network, conn network.Conn) {
+			m.triggerReconnect(conn.RemotePeer())
+		},
 		DisconnectedF: func(_ network.Network, conn network.Conn) {
 			m.triggerReconnect(conn.RemotePeer())
 		},
 	})
 
 	return m
-}
-
-func (m *meshConnectionManager) getWhitelist() *whitelist {
-	return m.whitelist.Load().(*whitelist)
 }
 
 // triggerReconnect signals the specific peer tracker to wake up and retry immediately.
@@ -437,7 +443,6 @@ func (m *meshConnectionManager) startTracker(ctx context.Context, pid peer.ID) *
 		cancel:          cancel,
 		signalReconnect: make(chan struct{}, 1),
 		initialCh:       make(chan struct{}),
-		initialOnce:     sync.Once{},
 	}
 	m.peerTrackers[pid] = t
 	go t.run()
@@ -461,7 +466,10 @@ func (m *meshConnectionManager) stopTracker(pid peer.ID) {
 
 // sendDiscoveryRequest sends a discovery request to reqPeerID for the addresses of targetPeerID.
 func (t *peerTracker) sendDiscoveryRequest(reqPeerID, targetPeerID peer.ID) ([]ma.Multiaddr, error) {
-	s, err := t.m.node.NewStream(t.ctx, reqPeerID, discoveryProtocol)
+	ctx, cancel := context.WithTimeout(t.ctx, connectToPeerTimeout)
+	defer cancel()
+
+	s, err := t.m.node.NewStream(ctx, reqPeerID, discoveryProtocol)
 	if err != nil {
 		return nil, err
 	}
@@ -469,11 +477,13 @@ func (t *peerTracker) sendDiscoveryRequest(reqPeerID, targetPeerID peer.ID) ([]m
 
 	request := &pb.DiscoveryRequest{Id: []byte(targetPeerID)}
 	if err := codec.WriteLengthPrefixedMessage(s, request); err != nil {
+		_ = s.Reset()
 		return nil, err
 	}
 
 	response := &pb.DiscoveryResponse{}
 	if err := codec.ReadLengthPrefixedMessage(s, response); err != nil {
+		_ = s.Reset()
 		return nil, err
 	}
 
@@ -492,10 +502,99 @@ func (t *peerTracker) sendDiscoveryRequest(reqPeerID, targetPeerID peer.ID) ([]m
 	return nil, errDiscoveryNotFound
 }
 
-func (m *meshConnectionManager) updateWhitelist(whitelist *whitelist) {
-	m.whitelist.Store(whitelist)
-	// TODO: Stop trackers for peers removed from whitelist and
-	// start trackers for new peers.
+// reconcileTrackers should be called when the whitelist changes. It stops
+// trackers for peers not in the new whitelist and starts trackers for peers
+// in the new whitelist that aren't already tracked.
+func (m *meshConnectionManager) reconcileTrackers() {
+	whitelistState := m.getLocalWhitelistState()
+	currentPeers := whitelistState.Current.PeerIDs
+
+	// Stop trackers for peers not in the new whitelist.
+	m.trackersMtx.RLock()
+	var toStop []peer.ID
+	for pid := range m.peerTrackers {
+		if _, ok := currentPeers[pid]; !ok {
+			toStop = append(toStop, pid)
+		}
+	}
+	m.trackersMtx.RUnlock()
+
+	for _, pid := range toStop {
+		m.stopTracker(pid)
+		_ = m.node.Network().ClosePeer(pid)
+	}
+
+	// Start trackers for new peers.
+	m.trackersMtx.RLock()
+	var toStart []peer.ID
+	for pid := range currentPeers {
+		if pid == m.node.ID() {
+			continue
+		}
+		if _, ok := m.peerTrackers[pid]; ok {
+			continue // already tracked
+		}
+		toStart = append(toStart, pid)
+	}
+	m.trackersMtx.RUnlock()
+
+	for _, pid := range toStart {
+		m.startTracker(m.ctx, pid)
+	}
+
+	// Clear stale mismatch flags on existing trackers and signal them to
+	// reconnect immediately. After a whitelist change, prior mismatches may
+	// no longer apply.
+	m.trackersMtx.RLock()
+	for _, t := range m.peerTrackers {
+		t.whitelistMismatch.Store(false)
+	}
+	m.trackersMtx.RUnlock()
+	m.triggerReconnectAll()
+}
+
+// getPeerInfo builds an admin.PeerInfo for a single peer.
+func (m *meshConnectionManager) getPeerInfo(pid peer.ID) admin.PeerInfo {
+	state := admin.StateDisconnected
+
+	m.trackersMtx.RLock()
+	t := m.peerTrackers[pid]
+	m.trackersMtx.RUnlock()
+
+	if t != nil && t.whitelistMismatch.Load() {
+		state = admin.StateWhitelistMismatch
+	} else if m.node.Network().Connectedness(pid) == network.Connected {
+		state = admin.StateConnected
+	}
+
+	addrs := m.node.Peerstore().Addrs(pid)
+	addrStrs := make([]string, len(addrs))
+	for i, addr := range addrs {
+		addrStrs[i] = addr.String()
+	}
+
+	return admin.PeerInfo{
+		PeerID:         pid.String(),
+		State:          state,
+		Addresses:      addrStrs,
+		WhitelistState: m.getPeerWhitelistState(pid),
+	}
+}
+
+// peerInfoSnapshot returns a snapshot of all tracked peers' connection info.
+func (m *meshConnectionManager) peerInfoSnapshot() map[peer.ID]admin.PeerInfo {
+	m.trackersMtx.RLock()
+	pids := make([]peer.ID, 0, len(m.peerTrackers))
+	for pid := range m.peerTrackers {
+		pids = append(pids, pid)
+	}
+	m.trackersMtx.RUnlock()
+
+	result := make(map[peer.ID]admin.PeerInfo, len(pids))
+	for _, pid := range pids {
+		result[pid] = m.getPeerInfo(pid)
+	}
+	return result
 }
 
 // waitInitial blocks until the initial connectivity pass is marked complete.
@@ -515,9 +614,13 @@ func (m *meshConnectionManager) markInitial() {
 
 // run starts the connection manager.
 func (m *meshConnectionManager) run(ctx context.Context) {
-	m.ctx = ctx
+	// Link the lifecycle of our internal context to the run context
+	go func() {
+		<-ctx.Done()
+		m.cancelCtx()
+	}()
 
-	whitelist := m.getWhitelist()
+	whitelist := m.getLocalWhitelistState().Current
 	allTrackers := make(map[peer.ID]*peerTracker)
 
 	waitForAllTrackers := func() {
@@ -533,26 +636,26 @@ func (m *meshConnectionManager) run(ctx context.Context) {
 	// PASS 1: Start trackers for peers with addresses. Wait for
 	// them all to finish their initial connection loop before
 	// starting trackers for peers without addresses.
-	for _, p := range whitelist.peers {
-		if p.ID == m.node.ID() {
+	for pid := range whitelist.PeerIDs {
+		if pid == m.node.ID() {
 			continue
 		}
-		hasAddrs := len(m.node.Peerstore().Addrs(p.ID)) > 0
+		hasAddrs := len(m.node.Peerstore().Addrs(pid)) > 0
 		if hasAddrs {
-			allTrackers[p.ID] = m.startTracker(ctx, p.ID)
+			allTrackers[pid] = m.startTracker(ctx, pid)
 		}
 	}
 
 	waitForAllTrackers()
 
 	// PASS 2: Start peers WITHOUT addresses as well.
-	for _, p := range whitelist.peers {
-		if p.ID == m.node.ID() {
+	for pid := range whitelist.PeerIDs {
+		if pid == m.node.ID() {
 			continue
 		}
 		// no-op if already started.
-		t := m.startTracker(ctx, p.ID)
-		allTrackers[p.ID] = t
+		t := m.startTracker(ctx, pid)
+		allTrackers[pid] = t
 	}
 
 	waitForAllTrackers()

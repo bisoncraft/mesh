@@ -8,6 +8,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	mocknet "github.com/libp2p/go-libp2p/p2p/net/mock"
 	"github.com/bisoncraft/mesh/codec"
+	"github.com/bisoncraft/mesh/tatanka/types"
 	"github.com/bisoncraft/mesh/protocols"
 	protocolsPb "github.com/bisoncraft/mesh/protocols/pb"
 )
@@ -28,9 +29,7 @@ func TestPushPermissions(t *testing.T) {
 	clientHost := mnet.Host(allPeers[1])
 
 	// Create a whitelist with just the mesh node
-	mockWhitelist := &whitelist{
-		peers: []*peer.AddrInfo{{ID: meshHost.ID(), Addrs: meshHost.Addrs()}},
-	}
+	mockWhitelist := types.NewWhitelist([]peer.ID{meshHost.ID()})
 
 	// Create the test node with bondStorage initially set to score 0
 	dir := t.TempDir()

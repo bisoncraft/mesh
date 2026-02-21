@@ -6,14 +6,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/libp2p/go-libp2p/core/network"
-	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/bisoncraft/mesh/bond"
 	"github.com/bisoncraft/mesh/codec"
 	"github.com/bisoncraft/mesh/oracle"
 	"github.com/bisoncraft/mesh/protocols"
 	protocolsPb "github.com/bisoncraft/mesh/protocols/pb"
 	"github.com/bisoncraft/mesh/tatanka/pb"
+	"github.com/bisoncraft/mesh/tatanka/types"
+	"github.com/libp2p/go-libp2p/core/network"
+	"github.com/libp2p/go-libp2p/core/peer"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -570,7 +571,7 @@ func (t *TatankaNode) handleDiscovery(s network.Stream) {
 	}
 
 	// Only share addresses for whitelist peers.
-	if _, ok := t.getWhitelist().allPeerIDs()[targetPeerID]; !ok {
+	if _, ok := t.whitelistManager.getWhitelist().PeerIDs[targetPeerID]; !ok {
 		t.log.Warnf("Tatanka peer %s attempted to discover addresses for non-whitelist peer %s.", remotePeerID.ShortString(), targetPeerID.ShortString())
 		if err := codec.WriteLengthPrefixedMessage(s, pbDiscoveryResponseNotFound()); err != nil {
 			t.log.Warnf("Failed to write discovery response to peer %s: %v.", remotePeerID.ShortString(), err)
@@ -591,51 +592,50 @@ func (t *TatankaNode) handleDiscovery(s network.Stream) {
 	}
 }
 
-// handleWhitelist handles a request from another tatanka node to verify the
-// whitelist alignment. The counterparty sends the list of peer IDs in their
-// whitelist. If they match with ours, we send a success response, otherwise
-// we send our whitelist peer IDs so the counterparty can see the difference.
+// handleWhitelist handles a symmetric whitelist handshake with another tatanka
+// node. Both sides exchange a WhitelistState, check for a match, and protect
+// or close the connection based on the result. The receiver waits a few seconds
+// to close the connection to allow the initiator to read the mismatch result
 func (t *TatankaNode) handleWhitelist(s network.Stream) {
 	defer func() { _ = s.Close() }()
 
 	remotePeerID := s.Conn().RemotePeer()
 
-	req := &pb.WhitelistRequest{}
-	if err := codec.ReadLengthPrefixedMessage(s, req); err != nil {
-		t.log.Warnf("Failed to read whitelist request from %s: %v", remotePeerID.ShortString(), err)
+	// 1. Read peer's state.
+	peerState := &pb.WhitelistState{}
+	if err := codec.ReadLengthPrefixedMessage(s, peerState); err != nil {
+		t.log.Warnf("Failed to read whitelist handshake from %s: %v", remotePeerID.ShortString(), err)
 		return
 	}
 
-	whitelist := t.getWhitelist()
-	localPeerIDs := whitelist.allPeerIDs()
-	var mismatch bool
-
-	// Check if the incoming peer IDs are in the local whitelist.
-	for _, idBytes := range req.PeerIDs {
-		id, err := peer.IDFromBytes(idBytes)
-		if err != nil {
-			mismatch = true
-			break
-		}
-		if _, ok := localPeerIDs[id]; !ok {
-			mismatch = true
-			break
-		}
+	// 2. Send our state.
+	ownWs := t.whitelistManager.getLocalWhitelistState()
+	if err := codec.WriteLengthPrefixedMessage(s, whitelistStateToPb(ownWs)); err != nil {
+		t.log.Warnf("Failed to write whitelist handshake to %s: %v", remotePeerID.ShortString(), err)
+		return
 	}
 
-	// Make sure there aren't additional peer IDs in the local whitelist.
-	mismatch = mismatch || len(req.PeerIDs) != len(localPeerIDs)
+	// 3. Check match independently.
+	matched := flexibleWhitelistMatch(ownWs.Current, ownWs.Proposed, peerState.PeerIDs, peerState.ProposedPeerIDs)
 
-	var resp *pb.WhitelistResponse
-	if mismatch {
-		resp = pbWhitelistResponseMismatch(whitelist.peerIDsBytes())
+	// 4. Protect if matched. On mismatch the initiator's verifyWhitelist
+	// handles ClosePeer; doing it here synchronously races with the
+	// client's stream read and can prevent the mismatch from being
+	// detected. A delayed close acts as a safety net in case the
+	// initiator never cleans up.
+	if matched {
+		t.node.ConnManager().Protect(remotePeerID, "tatanka-node")
 	} else {
-		resp = pbWhitelistResponseSuccess()
+		go func() {
+			time.Sleep(5 * time.Second)
+			if !t.node.ConnManager().IsProtected(remotePeerID, "tatanka-node") {
+				_ = t.node.Network().ClosePeer(remotePeerID)
+			}
+		}()
 	}
 
-	if err := codec.WriteLengthPrefixedMessage(s, resp); err != nil {
-		t.log.Warnf("Failed to write whitelist response to %s: %v", remotePeerID.ShortString(), err)
-	}
+	// 5. Record peer's whitelist info regardless of match.
+	t.whitelistManager.updatePeerWhitelistState(remotePeerID, pbToWhitelistState(peerState), peerState.Timestamp)
 }
 
 // handleAvailableMeshNodes handles a request from a client to get a list of
@@ -643,14 +643,14 @@ func (t *TatankaNode) handleWhitelist(s network.Stream) {
 func (t *TatankaNode) handleAvailableMeshNodes(s network.Stream) {
 	defer func() { _ = s.Close() }()
 
-	whitelist := t.getWhitelist()
+	whitelistPeers := t.whitelistManager.getWhitelist().PeerIDs
 	peerStore := t.node.Peerstore()
 
 	var peers []*protocolsPb.PeerInfo
 
-	for _, p := range whitelist.peers {
+	for pid := range whitelistPeers {
 		// Include ourselves
-		if p.ID == t.node.ID() {
+		if pid == t.node.ID() {
 			peers = append(peers, libp2pPeerInfoToPb(peer.AddrInfo{
 				ID:    t.node.ID(),
 				Addrs: t.node.Addrs(),
@@ -659,13 +659,13 @@ func (t *TatankaNode) handleAvailableMeshNodes(s network.Stream) {
 		}
 
 		// Only include connected peers
-		if t.node.Network().Connectedness(p.ID) != network.Connected {
+		if t.node.Network().Connectedness(pid) != network.Connected {
 			continue
 		}
 
-		addrs := peerStore.Addrs(p.ID)
+		addrs := peerStore.Addrs(pid)
 		peers = append(peers, libp2pPeerInfoToPb(peer.AddrInfo{
-			ID:    p.ID,
+			ID:    pid,
 			Addrs: addrs,
 		}))
 	}
@@ -681,6 +681,17 @@ func (t *TatankaNode) handleQuotaHeartbeat(senderID peer.ID, heartbeat *pb.Quota
 	for source, q := range heartbeat.Quotas {
 		t.oracle.UpdatePeerSourceQuota(senderID.String(), pbToTimestampedQuotaStatus(q), source)
 	}
+}
+
+func (t *TatankaNode) handleWhitelistUpdate(senderID peer.ID, ws *types.WhitelistState, timestamp int64) {
+	if senderID == t.node.ID() {
+		return
+	}
+	if !t.whitelistManager.updatePeerWhitelistState(senderID, ws, timestamp) {
+		return
+	}
+	pi := t.connectionManager.getPeerInfo(senderID)
+	t.adminNotify.BroadcastPeerUpdate(pi)
 }
 
 // handleQuotaHandshake handles a quota handshake request from another tatanka node.
