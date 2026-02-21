@@ -10,8 +10,31 @@ import (
 	"github.com/bisoncraft/mesh/oracle/sources"
 	protocolsPb "github.com/bisoncraft/mesh/protocols/pb"
 	"github.com/bisoncraft/mesh/tatanka/pb"
+	"github.com/bisoncraft/mesh/tatanka/types"
 	ma "github.com/multiformats/go-multiaddr"
 )
+
+// whitelistStateToPb converts a types.WhitelistState to a pb.WhitelistState.
+func whitelistStateToPb(ws *types.WhitelistState) *pb.WhitelistState {
+	state := &pb.WhitelistState{
+		PeerIDs:   ws.Current.PeerIDsBytes(),
+		Timestamp: time.Now().UnixNano(),
+		Ready:     ws.Ready,
+	}
+	if ws.Proposed != nil {
+		state.ProposedPeerIDs = ws.Proposed.PeerIDsBytes()
+	}
+	return state
+}
+
+// pbToWhitelistState converts a pb.WhitelistState to a types.WhitelistState.
+func pbToWhitelistState(state *pb.WhitelistState) *types.WhitelistState {
+	return &types.WhitelistState{
+		Current:  types.DecodePeerIDBytes(state.PeerIDs),
+		Proposed: types.DecodePeerIDBytes(state.ProposedPeerIDs),
+		Ready:    state.Ready,
+	}
+}
 
 // libp2pPeerInfoToPb converts a peer.AddrInfo to a protocolsPb.PeerInfo.
 func libp2pPeerInfoToPb(peerInfo peer.AddrInfo) *protocolsPb.PeerInfo {
@@ -303,24 +326,6 @@ func pbTatankaForwardRelayError(message string) *pb.TatankaForwardRelayResponse 
 	return &pb.TatankaForwardRelayResponse{
 		Response: &pb.TatankaForwardRelayResponse_Error{
 			Error: message,
-		},
-	}
-}
-
-func pbWhitelistResponseSuccess() *pb.WhitelistResponse {
-	return &pb.WhitelistResponse{
-		Response: &pb.WhitelistResponse_Success_{
-			Success: &pb.WhitelistResponse_Success{},
-		},
-	}
-}
-
-func pbWhitelistResponseMismatch(mismatchedPeerIDs [][]byte) *pb.WhitelistResponse {
-	return &pb.WhitelistResponse{
-		Response: &pb.WhitelistResponse_Mismatch_{
-			Mismatch: &pb.WhitelistResponse_Mismatch{
-				PeerIDs: mismatchedPeerIDs,
-			},
 		},
 	}
 }

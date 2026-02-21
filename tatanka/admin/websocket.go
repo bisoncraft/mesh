@@ -10,9 +10,9 @@ func (s *Server) broadcast(msg WSMessage) {
 	s.clientsMtx.RLock()
 	defer s.clientsMtx.RUnlock()
 
-	for client := range s.clients {
+	for c := range s.clients {
 		select {
-		case client.send <- msg:
+		case c.send <- msg:
 		default:
 			s.log.Errorf("Client buffer full, skipping update")
 		}
@@ -27,23 +27,21 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 	conn.SetReadLimit(adminWebSocketReadLimit)
 
-	client := &Client{
+	c := &client{
 		conn: conn,
 		send: make(chan WSMessage, 10),
 	}
 
 	s.clientsMtx.Lock()
-	s.clients[client] = true
+	s.clients[c] = true
 	s.clientsMtx.Unlock()
 
 	// Send initial admin state
-	s.stateMtx.RLock()
-	initialState := s.state.DeepCopy()
-	s.stateMtx.RUnlock()
+	initialState := s.getState()
 	stateData, err := json.Marshal(initialState)
 	if err == nil {
 		select {
-		case client.send <- WSMessage{Type: "admin_state", Data: json.RawMessage(stateData)}:
+		case c.send <- WSMessage{Type: "admin_state", Data: json.RawMessage(stateData)}:
 		default:
 		}
 	}
@@ -54,7 +52,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		snapshotData, err := json.Marshal(snapshot)
 		if err == nil {
 			select {
-			case client.send <- WSMessage{Type: "oracle_snapshot", Data: json.RawMessage(snapshotData)}:
+			case c.send <- WSMessage{Type: "oracle_snapshot", Data: json.RawMessage(snapshotData)}:
 			default:
 			}
 		}
@@ -63,7 +61,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	// Writer goroutine
 	go func() {
 		defer conn.Close()
-		for msg := range client.send {
+		for msg := range c.send {
 			if err := conn.WriteJSON(msg); err != nil {
 				return
 			}
@@ -74,9 +72,9 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		defer func() {
 			s.clientsMtx.Lock()
-			if _, ok := s.clients[client]; ok {
-				delete(s.clients, client)
-				close(client.send)
+			if _, ok := s.clients[c]; ok {
+				delete(s.clients, c)
+				close(c.send)
 			}
 			s.clientsMtx.Unlock()
 			conn.Close()

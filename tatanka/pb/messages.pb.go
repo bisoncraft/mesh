@@ -2,7 +2,7 @@
 // versions:
 // 	protoc-gen-go v1.36.10
 // 	protoc        v6.33.1
-// source: tatanka/pb/messages.proto
+// source: messages.proto
 
 package pb
 
@@ -34,7 +34,7 @@ type ClientConnectionMsg struct {
 
 func (x *ClientConnectionMsg) Reset() {
 	*x = ClientConnectionMsg{}
-	mi := &file_tatanka_pb_messages_proto_msgTypes[0]
+	mi := &file_messages_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -46,7 +46,7 @@ func (x *ClientConnectionMsg) String() string {
 func (*ClientConnectionMsg) ProtoMessage() {}
 
 func (x *ClientConnectionMsg) ProtoReflect() protoreflect.Message {
-	mi := &file_tatanka_pb_messages_proto_msgTypes[0]
+	mi := &file_messages_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -59,7 +59,7 @@ func (x *ClientConnectionMsg) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClientConnectionMsg.ProtoReflect.Descriptor instead.
 func (*ClientConnectionMsg) Descriptor() ([]byte, []int) {
-	return file_tatanka_pb_messages_proto_rawDescGZIP(), []int{0}
+	return file_messages_proto_rawDescGZIP(), []int{0}
 }
 
 func (x *ClientConnectionMsg) GetId() []byte {
@@ -101,7 +101,7 @@ type TatankaForwardRelayRequest struct {
 
 func (x *TatankaForwardRelayRequest) Reset() {
 	*x = TatankaForwardRelayRequest{}
-	mi := &file_tatanka_pb_messages_proto_msgTypes[1]
+	mi := &file_messages_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -113,7 +113,7 @@ func (x *TatankaForwardRelayRequest) String() string {
 func (*TatankaForwardRelayRequest) ProtoMessage() {}
 
 func (x *TatankaForwardRelayRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_tatanka_pb_messages_proto_msgTypes[1]
+	mi := &file_messages_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -126,7 +126,7 @@ func (x *TatankaForwardRelayRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TatankaForwardRelayRequest.ProtoReflect.Descriptor instead.
 func (*TatankaForwardRelayRequest) Descriptor() ([]byte, []int) {
-	return file_tatanka_pb_messages_proto_rawDescGZIP(), []int{1}
+	return file_messages_proto_rawDescGZIP(), []int{1}
 }
 
 func (x *TatankaForwardRelayRequest) GetInitiatorId() []byte {
@@ -165,7 +165,7 @@ type TatankaForwardRelayResponse struct {
 
 func (x *TatankaForwardRelayResponse) Reset() {
 	*x = TatankaForwardRelayResponse{}
-	mi := &file_tatanka_pb_messages_proto_msgTypes[2]
+	mi := &file_messages_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -177,7 +177,7 @@ func (x *TatankaForwardRelayResponse) String() string {
 func (*TatankaForwardRelayResponse) ProtoMessage() {}
 
 func (x *TatankaForwardRelayResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_tatanka_pb_messages_proto_msgTypes[2]
+	mi := &file_messages_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -190,7 +190,7 @@ func (x *TatankaForwardRelayResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TatankaForwardRelayResponse.ProtoReflect.Descriptor instead.
 func (*TatankaForwardRelayResponse) Descriptor() ([]byte, []int) {
-	return file_tatanka_pb_messages_proto_rawDescGZIP(), []int{2}
+	return file_messages_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *TatankaForwardRelayResponse) GetResponse() isTatankaForwardRelayResponse_Response {
@@ -273,7 +273,7 @@ type DiscoveryRequest struct {
 
 func (x *DiscoveryRequest) Reset() {
 	*x = DiscoveryRequest{}
-	mi := &file_tatanka_pb_messages_proto_msgTypes[3]
+	mi := &file_messages_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -285,7 +285,7 @@ func (x *DiscoveryRequest) String() string {
 func (*DiscoveryRequest) ProtoMessage() {}
 
 func (x *DiscoveryRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_tatanka_pb_messages_proto_msgTypes[3]
+	mi := &file_messages_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -298,7 +298,7 @@ func (x *DiscoveryRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DiscoveryRequest.ProtoReflect.Descriptor instead.
 func (*DiscoveryRequest) Descriptor() ([]byte, []int) {
-	return file_tatanka_pb_messages_proto_rawDescGZIP(), []int{3}
+	return file_messages_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *DiscoveryRequest) GetId() []byte {
@@ -321,7 +321,7 @@ type DiscoveryResponse struct {
 
 func (x *DiscoveryResponse) Reset() {
 	*x = DiscoveryResponse{}
-	mi := &file_tatanka_pb_messages_proto_msgTypes[4]
+	mi := &file_messages_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -333,7 +333,7 @@ func (x *DiscoveryResponse) String() string {
 func (*DiscoveryResponse) ProtoMessage() {}
 
 func (x *DiscoveryResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_tatanka_pb_messages_proto_msgTypes[4]
+	mi := &file_messages_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -346,7 +346,7 @@ func (x *DiscoveryResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DiscoveryResponse.ProtoReflect.Descriptor instead.
 func (*DiscoveryResponse) Descriptor() ([]byte, []int) {
-	return file_tatanka_pb_messages_proto_rawDescGZIP(), []int{4}
+	return file_messages_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *DiscoveryResponse) GetResponse() isDiscoveryResponse_Response {
@@ -390,28 +390,33 @@ func (*DiscoveryResponse_Success_) isDiscoveryResponse_Response() {}
 
 func (*DiscoveryResponse_NotFound_) isDiscoveryResponse_Response() {}
 
-type WhitelistRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	PeerIDs       [][]byte               `protobuf:"bytes,1,rep,name=peerIDs,proto3" json:"peerIDs,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+// WhitelistState is used both for the symmetric whitelist handshake between
+// tatanka nodes and for gossipsub whitelist proposal broadcasts.
+type WhitelistState struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	PeerIDs         [][]byte               `protobuf:"bytes,1,rep,name=peerIDs,proto3" json:"peerIDs,omitempty"`
+	ProposedPeerIDs [][]byte               `protobuf:"bytes,2,rep,name=proposed_peerIDs,json=proposedPeerIDs,proto3" json:"proposed_peerIDs,omitempty"` // empty = no proposal
+	Timestamp       int64                  `protobuf:"varint,3,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
+	Ready           bool                   `protobuf:"varint,4,opt,name=ready,proto3" json:"ready,omitempty"` // true = node is ready to switch
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
-func (x *WhitelistRequest) Reset() {
-	*x = WhitelistRequest{}
-	mi := &file_tatanka_pb_messages_proto_msgTypes[5]
+func (x *WhitelistState) Reset() {
+	*x = WhitelistState{}
+	mi := &file_messages_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *WhitelistRequest) String() string {
+func (x *WhitelistState) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*WhitelistRequest) ProtoMessage() {}
+func (*WhitelistState) ProtoMessage() {}
 
-func (x *WhitelistRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_tatanka_pb_messages_proto_msgTypes[5]
+func (x *WhitelistState) ProtoReflect() protoreflect.Message {
+	mi := &file_messages_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -422,99 +427,38 @@ func (x *WhitelistRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use WhitelistRequest.ProtoReflect.Descriptor instead.
-func (*WhitelistRequest) Descriptor() ([]byte, []int) {
-	return file_tatanka_pb_messages_proto_rawDescGZIP(), []int{5}
+// Deprecated: Use WhitelistState.ProtoReflect.Descriptor instead.
+func (*WhitelistState) Descriptor() ([]byte, []int) {
+	return file_messages_proto_rawDescGZIP(), []int{5}
 }
 
-func (x *WhitelistRequest) GetPeerIDs() [][]byte {
+func (x *WhitelistState) GetPeerIDs() [][]byte {
 	if x != nil {
 		return x.PeerIDs
 	}
 	return nil
 }
 
-type WhitelistResponse struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	// Types that are valid to be assigned to Response:
-	//
-	//	*WhitelistResponse_Success_
-	//	*WhitelistResponse_Mismatch_
-	Response      isWhitelistResponse_Response `protobuf_oneof:"response"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *WhitelistResponse) Reset() {
-	*x = WhitelistResponse{}
-	mi := &file_tatanka_pb_messages_proto_msgTypes[6]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *WhitelistResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*WhitelistResponse) ProtoMessage() {}
-
-func (x *WhitelistResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_tatanka_pb_messages_proto_msgTypes[6]
+func (x *WhitelistState) GetProposedPeerIDs() [][]byte {
 	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use WhitelistResponse.ProtoReflect.Descriptor instead.
-func (*WhitelistResponse) Descriptor() ([]byte, []int) {
-	return file_tatanka_pb_messages_proto_rawDescGZIP(), []int{6}
-}
-
-func (x *WhitelistResponse) GetResponse() isWhitelistResponse_Response {
-	if x != nil {
-		return x.Response
+		return x.ProposedPeerIDs
 	}
 	return nil
 }
 
-func (x *WhitelistResponse) GetSuccess() *WhitelistResponse_Success {
+func (x *WhitelistState) GetTimestamp() int64 {
 	if x != nil {
-		if x, ok := x.Response.(*WhitelistResponse_Success_); ok {
-			return x.Success
-		}
+		return x.Timestamp
 	}
-	return nil
+	return 0
 }
 
-func (x *WhitelistResponse) GetMismatch() *WhitelistResponse_Mismatch {
+func (x *WhitelistState) GetReady() bool {
 	if x != nil {
-		if x, ok := x.Response.(*WhitelistResponse_Mismatch_); ok {
-			return x.Mismatch
-		}
+		return x.Ready
 	}
-	return nil
+	return false
 }
-
-type isWhitelistResponse_Response interface {
-	isWhitelistResponse_Response()
-}
-
-type WhitelistResponse_Success_ struct {
-	Success *WhitelistResponse_Success `protobuf:"bytes,1,opt,name=success,proto3,oneof"`
-}
-
-type WhitelistResponse_Mismatch_ struct {
-	Mismatch *WhitelistResponse_Mismatch `protobuf:"bytes,2,opt,name=mismatch,proto3,oneof"`
-}
-
-func (*WhitelistResponse_Success_) isWhitelistResponse_Response() {}
-
-func (*WhitelistResponse_Mismatch_) isWhitelistResponse_Response() {}
 
 // NodeOracleUpdate contains oracle data for sharing between Tatanka mesh nodes.
 type NodeOracleUpdate struct {
@@ -530,7 +474,7 @@ type NodeOracleUpdate struct {
 
 func (x *NodeOracleUpdate) Reset() {
 	*x = NodeOracleUpdate{}
-	mi := &file_tatanka_pb_messages_proto_msgTypes[7]
+	mi := &file_messages_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -542,7 +486,7 @@ func (x *NodeOracleUpdate) String() string {
 func (*NodeOracleUpdate) ProtoMessage() {}
 
 func (x *NodeOracleUpdate) ProtoReflect() protoreflect.Message {
-	mi := &file_tatanka_pb_messages_proto_msgTypes[7]
+	mi := &file_messages_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -555,7 +499,7 @@ func (x *NodeOracleUpdate) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NodeOracleUpdate.ProtoReflect.Descriptor instead.
 func (*NodeOracleUpdate) Descriptor() ([]byte, []int) {
-	return file_tatanka_pb_messages_proto_rawDescGZIP(), []int{7}
+	return file_messages_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *NodeOracleUpdate) GetSource() string {
@@ -605,7 +549,7 @@ type QuotaStatus struct {
 
 func (x *QuotaStatus) Reset() {
 	*x = QuotaStatus{}
-	mi := &file_tatanka_pb_messages_proto_msgTypes[8]
+	mi := &file_messages_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -617,7 +561,7 @@ func (x *QuotaStatus) String() string {
 func (*QuotaStatus) ProtoMessage() {}
 
 func (x *QuotaStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_tatanka_pb_messages_proto_msgTypes[8]
+	mi := &file_messages_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -630,7 +574,7 @@ func (x *QuotaStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use QuotaStatus.ProtoReflect.Descriptor instead.
 func (*QuotaStatus) Descriptor() ([]byte, []int) {
-	return file_tatanka_pb_messages_proto_rawDescGZIP(), []int{8}
+	return file_messages_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *QuotaStatus) GetFetchesRemaining() int64 {
@@ -665,7 +609,7 @@ type QuotaHandshake struct {
 
 func (x *QuotaHandshake) Reset() {
 	*x = QuotaHandshake{}
-	mi := &file_tatanka_pb_messages_proto_msgTypes[9]
+	mi := &file_messages_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -677,7 +621,7 @@ func (x *QuotaHandshake) String() string {
 func (*QuotaHandshake) ProtoMessage() {}
 
 func (x *QuotaHandshake) ProtoReflect() protoreflect.Message {
-	mi := &file_tatanka_pb_messages_proto_msgTypes[9]
+	mi := &file_messages_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -690,7 +634,7 @@ func (x *QuotaHandshake) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use QuotaHandshake.ProtoReflect.Descriptor instead.
 func (*QuotaHandshake) Descriptor() ([]byte, []int) {
-	return file_tatanka_pb_messages_proto_rawDescGZIP(), []int{9}
+	return file_messages_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *QuotaHandshake) GetQuotas() map[string]*QuotaStatus {
@@ -708,7 +652,7 @@ type TatankaForwardRelayResponse_ClientNotFound struct {
 
 func (x *TatankaForwardRelayResponse_ClientNotFound) Reset() {
 	*x = TatankaForwardRelayResponse_ClientNotFound{}
-	mi := &file_tatanka_pb_messages_proto_msgTypes[10]
+	mi := &file_messages_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -720,7 +664,7 @@ func (x *TatankaForwardRelayResponse_ClientNotFound) String() string {
 func (*TatankaForwardRelayResponse_ClientNotFound) ProtoMessage() {}
 
 func (x *TatankaForwardRelayResponse_ClientNotFound) ProtoReflect() protoreflect.Message {
-	mi := &file_tatanka_pb_messages_proto_msgTypes[10]
+	mi := &file_messages_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -733,7 +677,7 @@ func (x *TatankaForwardRelayResponse_ClientNotFound) ProtoReflect() protoreflect
 
 // Deprecated: Use TatankaForwardRelayResponse_ClientNotFound.ProtoReflect.Descriptor instead.
 func (*TatankaForwardRelayResponse_ClientNotFound) Descriptor() ([]byte, []int) {
-	return file_tatanka_pb_messages_proto_rawDescGZIP(), []int{2, 0}
+	return file_messages_proto_rawDescGZIP(), []int{2, 0}
 }
 
 type TatankaForwardRelayResponse_ClientRejected struct {
@@ -744,7 +688,7 @@ type TatankaForwardRelayResponse_ClientRejected struct {
 
 func (x *TatankaForwardRelayResponse_ClientRejected) Reset() {
 	*x = TatankaForwardRelayResponse_ClientRejected{}
-	mi := &file_tatanka_pb_messages_proto_msgTypes[11]
+	mi := &file_messages_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -756,7 +700,7 @@ func (x *TatankaForwardRelayResponse_ClientRejected) String() string {
 func (*TatankaForwardRelayResponse_ClientRejected) ProtoMessage() {}
 
 func (x *TatankaForwardRelayResponse_ClientRejected) ProtoReflect() protoreflect.Message {
-	mi := &file_tatanka_pb_messages_proto_msgTypes[11]
+	mi := &file_messages_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -769,7 +713,7 @@ func (x *TatankaForwardRelayResponse_ClientRejected) ProtoReflect() protoreflect
 
 // Deprecated: Use TatankaForwardRelayResponse_ClientRejected.ProtoReflect.Descriptor instead.
 func (*TatankaForwardRelayResponse_ClientRejected) Descriptor() ([]byte, []int) {
-	return file_tatanka_pb_messages_proto_rawDescGZIP(), []int{2, 1}
+	return file_messages_proto_rawDescGZIP(), []int{2, 1}
 }
 
 type DiscoveryResponse_Success struct {
@@ -781,7 +725,7 @@ type DiscoveryResponse_Success struct {
 
 func (x *DiscoveryResponse_Success) Reset() {
 	*x = DiscoveryResponse_Success{}
-	mi := &file_tatanka_pb_messages_proto_msgTypes[12]
+	mi := &file_messages_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -793,7 +737,7 @@ func (x *DiscoveryResponse_Success) String() string {
 func (*DiscoveryResponse_Success) ProtoMessage() {}
 
 func (x *DiscoveryResponse_Success) ProtoReflect() protoreflect.Message {
-	mi := &file_tatanka_pb_messages_proto_msgTypes[12]
+	mi := &file_messages_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -806,7 +750,7 @@ func (x *DiscoveryResponse_Success) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DiscoveryResponse_Success.ProtoReflect.Descriptor instead.
 func (*DiscoveryResponse_Success) Descriptor() ([]byte, []int) {
-	return file_tatanka_pb_messages_proto_rawDescGZIP(), []int{4, 0}
+	return file_messages_proto_rawDescGZIP(), []int{4, 0}
 }
 
 func (x *DiscoveryResponse_Success) GetAddrs() [][]byte {
@@ -824,7 +768,7 @@ type DiscoveryResponse_NotFound struct {
 
 func (x *DiscoveryResponse_NotFound) Reset() {
 	*x = DiscoveryResponse_NotFound{}
-	mi := &file_tatanka_pb_messages_proto_msgTypes[13]
+	mi := &file_messages_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -836,7 +780,7 @@ func (x *DiscoveryResponse_NotFound) String() string {
 func (*DiscoveryResponse_NotFound) ProtoMessage() {}
 
 func (x *DiscoveryResponse_NotFound) ProtoReflect() protoreflect.Message {
-	mi := &file_tatanka_pb_messages_proto_msgTypes[13]
+	mi := &file_messages_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -849,94 +793,14 @@ func (x *DiscoveryResponse_NotFound) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DiscoveryResponse_NotFound.ProtoReflect.Descriptor instead.
 func (*DiscoveryResponse_NotFound) Descriptor() ([]byte, []int) {
-	return file_tatanka_pb_messages_proto_rawDescGZIP(), []int{4, 1}
+	return file_messages_proto_rawDescGZIP(), []int{4, 1}
 }
 
-type WhitelistResponse_Success struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
+var File_messages_proto protoreflect.FileDescriptor
 
-func (x *WhitelistResponse_Success) Reset() {
-	*x = WhitelistResponse_Success{}
-	mi := &file_tatanka_pb_messages_proto_msgTypes[14]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *WhitelistResponse_Success) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*WhitelistResponse_Success) ProtoMessage() {}
-
-func (x *WhitelistResponse_Success) ProtoReflect() protoreflect.Message {
-	mi := &file_tatanka_pb_messages_proto_msgTypes[14]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use WhitelistResponse_Success.ProtoReflect.Descriptor instead.
-func (*WhitelistResponse_Success) Descriptor() ([]byte, []int) {
-	return file_tatanka_pb_messages_proto_rawDescGZIP(), []int{6, 0}
-}
-
-type WhitelistResponse_Mismatch struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	PeerIDs       [][]byte               `protobuf:"bytes,1,rep,name=peerIDs,proto3" json:"peerIDs,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *WhitelistResponse_Mismatch) Reset() {
-	*x = WhitelistResponse_Mismatch{}
-	mi := &file_tatanka_pb_messages_proto_msgTypes[15]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *WhitelistResponse_Mismatch) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*WhitelistResponse_Mismatch) ProtoMessage() {}
-
-func (x *WhitelistResponse_Mismatch) ProtoReflect() protoreflect.Message {
-	mi := &file_tatanka_pb_messages_proto_msgTypes[15]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use WhitelistResponse_Mismatch.ProtoReflect.Descriptor instead.
-func (*WhitelistResponse_Mismatch) Descriptor() ([]byte, []int) {
-	return file_tatanka_pb_messages_proto_rawDescGZIP(), []int{6, 1}
-}
-
-func (x *WhitelistResponse_Mismatch) GetPeerIDs() [][]byte {
-	if x != nil {
-		return x.PeerIDs
-	}
-	return nil
-}
-
-var File_tatanka_pb_messages_proto protoreflect.FileDescriptor
-
-const file_tatanka_pb_messages_proto_rawDesc = "" +
+const file_messages_proto_rawDesc = "" +
 	"\n" +
-	"\x19tatanka/pb/messages.proto\x12\x02pb\"\x82\x01\n" +
+	"\x0emessages.proto\x12\x02pb\"\x82\x01\n" +
 	"\x13ClientConnectionMsg\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\fR\x02id\x12\x1f\n" +
 	"\vreporter_id\x18\x02 \x01(\fR\n" +
@@ -966,17 +830,12 @@ const file_tatanka_pb_messages_proto_rawDesc = "" +
 	"\n" +
 	"\bNotFoundB\n" +
 	"\n" +
-	"\bresponse\",\n" +
-	"\x10WhitelistRequest\x12\x18\n" +
-	"\apeerIDs\x18\x01 \x03(\fR\apeerIDs\"\xc9\x01\n" +
-	"\x11WhitelistResponse\x129\n" +
-	"\asuccess\x18\x01 \x01(\v2\x1d.pb.WhitelistResponse.SuccessH\x00R\asuccess\x12<\n" +
-	"\bmismatch\x18\x02 \x01(\v2\x1e.pb.WhitelistResponse.MismatchH\x00R\bmismatch\x1a\t\n" +
-	"\aSuccess\x1a$\n" +
-	"\bMismatch\x12\x18\n" +
-	"\apeerIDs\x18\x01 \x03(\fR\apeerIDsB\n" +
-	"\n" +
-	"\bresponse\"\xe2\x02\n" +
+	"\bresponse\"\x89\x01\n" +
+	"\x0eWhitelistState\x12\x18\n" +
+	"\apeerIDs\x18\x01 \x03(\fR\apeerIDs\x12)\n" +
+	"\x10proposed_peerIDs\x18\x02 \x03(\fR\x0fproposedPeerIDs\x12\x1c\n" +
+	"\ttimestamp\x18\x03 \x01(\x03R\ttimestamp\x12\x14\n" +
+	"\x05ready\x18\x04 \x01(\bR\x05ready\"\xe2\x02\n" +
 	"\x10NodeOracleUpdate\x12\x16\n" +
 	"\x06source\x18\x01 \x01(\tR\x06source\x12\x1c\n" +
 	"\ttimestamp\x18\x02 \x01(\x03R\ttimestamp\x128\n" +
@@ -1000,92 +859,83 @@ const file_tatanka_pb_messages_proto_rawDesc = "" +
 	"\x05value\x18\x02 \x01(\v2\x0f.pb.QuotaStatusR\x05value:\x028\x01B'Z%github.com/bisoncraft/mesh/tatanka/pbb\x06proto3"
 
 var (
-	file_tatanka_pb_messages_proto_rawDescOnce sync.Once
-	file_tatanka_pb_messages_proto_rawDescData []byte
+	file_messages_proto_rawDescOnce sync.Once
+	file_messages_proto_rawDescData []byte
 )
 
-func file_tatanka_pb_messages_proto_rawDescGZIP() []byte {
-	file_tatanka_pb_messages_proto_rawDescOnce.Do(func() {
-		file_tatanka_pb_messages_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_tatanka_pb_messages_proto_rawDesc), len(file_tatanka_pb_messages_proto_rawDesc)))
+func file_messages_proto_rawDescGZIP() []byte {
+	file_messages_proto_rawDescOnce.Do(func() {
+		file_messages_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_messages_proto_rawDesc), len(file_messages_proto_rawDesc)))
 	})
-	return file_tatanka_pb_messages_proto_rawDescData
+	return file_messages_proto_rawDescData
 }
 
-var file_tatanka_pb_messages_proto_msgTypes = make([]protoimpl.MessageInfo, 19)
-var file_tatanka_pb_messages_proto_goTypes = []any{
+var file_messages_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
+var file_messages_proto_goTypes = []any{
 	(*ClientConnectionMsg)(nil),                        // 0: pb.ClientConnectionMsg
 	(*TatankaForwardRelayRequest)(nil),                 // 1: pb.TatankaForwardRelayRequest
 	(*TatankaForwardRelayResponse)(nil),                // 2: pb.TatankaForwardRelayResponse
 	(*DiscoveryRequest)(nil),                           // 3: pb.DiscoveryRequest
 	(*DiscoveryResponse)(nil),                          // 4: pb.DiscoveryResponse
-	(*WhitelistRequest)(nil),                           // 5: pb.WhitelistRequest
-	(*WhitelistResponse)(nil),                          // 6: pb.WhitelistResponse
-	(*NodeOracleUpdate)(nil),                           // 7: pb.NodeOracleUpdate
-	(*QuotaStatus)(nil),                                // 8: pb.QuotaStatus
-	(*QuotaHandshake)(nil),                             // 9: pb.QuotaHandshake
-	(*TatankaForwardRelayResponse_ClientNotFound)(nil), // 10: pb.TatankaForwardRelayResponse.ClientNotFound
-	(*TatankaForwardRelayResponse_ClientRejected)(nil), // 11: pb.TatankaForwardRelayResponse.ClientRejected
-	(*DiscoveryResponse_Success)(nil),                  // 12: pb.DiscoveryResponse.Success
-	(*DiscoveryResponse_NotFound)(nil),                 // 13: pb.DiscoveryResponse.NotFound
-	(*WhitelistResponse_Success)(nil),                  // 14: pb.WhitelistResponse.Success
-	(*WhitelistResponse_Mismatch)(nil),                 // 15: pb.WhitelistResponse.Mismatch
-	nil,                                                // 16: pb.NodeOracleUpdate.PricesEntry
-	nil,                                                // 17: pb.NodeOracleUpdate.FeeRatesEntry
-	nil,                                                // 18: pb.QuotaHandshake.QuotasEntry
+	(*WhitelistState)(nil),                             // 5: pb.WhitelistState
+	(*NodeOracleUpdate)(nil),                           // 6: pb.NodeOracleUpdate
+	(*QuotaStatus)(nil),                                // 7: pb.QuotaStatus
+	(*QuotaHandshake)(nil),                             // 8: pb.QuotaHandshake
+	(*TatankaForwardRelayResponse_ClientNotFound)(nil), // 9: pb.TatankaForwardRelayResponse.ClientNotFound
+	(*TatankaForwardRelayResponse_ClientRejected)(nil), // 10: pb.TatankaForwardRelayResponse.ClientRejected
+	(*DiscoveryResponse_Success)(nil),                  // 11: pb.DiscoveryResponse.Success
+	(*DiscoveryResponse_NotFound)(nil),                 // 12: pb.DiscoveryResponse.NotFound
+	nil,                                                // 13: pb.NodeOracleUpdate.PricesEntry
+	nil,                                                // 14: pb.NodeOracleUpdate.FeeRatesEntry
+	nil,                                                // 15: pb.QuotaHandshake.QuotasEntry
 }
-var file_tatanka_pb_messages_proto_depIdxs = []int32{
-	10, // 0: pb.TatankaForwardRelayResponse.client_not_found:type_name -> pb.TatankaForwardRelayResponse.ClientNotFound
-	11, // 1: pb.TatankaForwardRelayResponse.client_rejected:type_name -> pb.TatankaForwardRelayResponse.ClientRejected
-	12, // 2: pb.DiscoveryResponse.success:type_name -> pb.DiscoveryResponse.Success
-	13, // 3: pb.DiscoveryResponse.not_found:type_name -> pb.DiscoveryResponse.NotFound
-	14, // 4: pb.WhitelistResponse.success:type_name -> pb.WhitelistResponse.Success
-	15, // 5: pb.WhitelistResponse.mismatch:type_name -> pb.WhitelistResponse.Mismatch
-	16, // 6: pb.NodeOracleUpdate.prices:type_name -> pb.NodeOracleUpdate.PricesEntry
-	17, // 7: pb.NodeOracleUpdate.fee_rates:type_name -> pb.NodeOracleUpdate.FeeRatesEntry
-	8,  // 8: pb.NodeOracleUpdate.quota:type_name -> pb.QuotaStatus
-	18, // 9: pb.QuotaHandshake.quotas:type_name -> pb.QuotaHandshake.QuotasEntry
-	8,  // 10: pb.QuotaHandshake.QuotasEntry.value:type_name -> pb.QuotaStatus
-	11, // [11:11] is the sub-list for method output_type
-	11, // [11:11] is the sub-list for method input_type
-	11, // [11:11] is the sub-list for extension type_name
-	11, // [11:11] is the sub-list for extension extendee
-	0,  // [0:11] is the sub-list for field type_name
+var file_messages_proto_depIdxs = []int32{
+	9,  // 0: pb.TatankaForwardRelayResponse.client_not_found:type_name -> pb.TatankaForwardRelayResponse.ClientNotFound
+	10, // 1: pb.TatankaForwardRelayResponse.client_rejected:type_name -> pb.TatankaForwardRelayResponse.ClientRejected
+	11, // 2: pb.DiscoveryResponse.success:type_name -> pb.DiscoveryResponse.Success
+	12, // 3: pb.DiscoveryResponse.not_found:type_name -> pb.DiscoveryResponse.NotFound
+	13, // 4: pb.NodeOracleUpdate.prices:type_name -> pb.NodeOracleUpdate.PricesEntry
+	14, // 5: pb.NodeOracleUpdate.fee_rates:type_name -> pb.NodeOracleUpdate.FeeRatesEntry
+	7,  // 6: pb.NodeOracleUpdate.quota:type_name -> pb.QuotaStatus
+	15, // 7: pb.QuotaHandshake.quotas:type_name -> pb.QuotaHandshake.QuotasEntry
+	7,  // 8: pb.QuotaHandshake.QuotasEntry.value:type_name -> pb.QuotaStatus
+	9,  // [9:9] is the sub-list for method output_type
+	9,  // [9:9] is the sub-list for method input_type
+	9,  // [9:9] is the sub-list for extension type_name
+	9,  // [9:9] is the sub-list for extension extendee
+	0,  // [0:9] is the sub-list for field type_name
 }
 
-func init() { file_tatanka_pb_messages_proto_init() }
-func file_tatanka_pb_messages_proto_init() {
-	if File_tatanka_pb_messages_proto != nil {
+func init() { file_messages_proto_init() }
+func file_messages_proto_init() {
+	if File_messages_proto != nil {
 		return
 	}
-	file_tatanka_pb_messages_proto_msgTypes[2].OneofWrappers = []any{
+	file_messages_proto_msgTypes[2].OneofWrappers = []any{
 		(*TatankaForwardRelayResponse_Success)(nil),
 		(*TatankaForwardRelayResponse_ClientNotFound_)(nil),
 		(*TatankaForwardRelayResponse_ClientRejected_)(nil),
 		(*TatankaForwardRelayResponse_Error)(nil),
 	}
-	file_tatanka_pb_messages_proto_msgTypes[4].OneofWrappers = []any{
+	file_messages_proto_msgTypes[4].OneofWrappers = []any{
 		(*DiscoveryResponse_Success_)(nil),
 		(*DiscoveryResponse_NotFound_)(nil),
-	}
-	file_tatanka_pb_messages_proto_msgTypes[6].OneofWrappers = []any{
-		(*WhitelistResponse_Success_)(nil),
-		(*WhitelistResponse_Mismatch_)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
-			RawDescriptor: unsafe.Slice(unsafe.StringData(file_tatanka_pb_messages_proto_rawDesc), len(file_tatanka_pb_messages_proto_rawDesc)),
+			RawDescriptor: unsafe.Slice(unsafe.StringData(file_messages_proto_rawDesc), len(file_messages_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   19,
+			NumMessages:   16,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
-		GoTypes:           file_tatanka_pb_messages_proto_goTypes,
-		DependencyIndexes: file_tatanka_pb_messages_proto_depIdxs,
-		MessageInfos:      file_tatanka_pb_messages_proto_msgTypes,
+		GoTypes:           file_messages_proto_goTypes,
+		DependencyIndexes: file_messages_proto_depIdxs,
+		MessageInfos:      file_messages_proto_msgTypes,
 	}.Build()
-	File_tatanka_pb_messages_proto = out.File
-	file_tatanka_pb_messages_proto_goTypes = nil
-	file_tatanka_pb_messages_proto_depIdxs = nil
+	File_messages_proto = out.File
+	file_messages_proto_goTypes = nil
+	file_messages_proto_depIdxs = nil
 }

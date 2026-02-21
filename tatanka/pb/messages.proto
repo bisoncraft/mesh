@@ -50,23 +50,15 @@ message DiscoveryResponse {
   message NotFound {}
 }
 
-message WhitelistRequest {
+// WhitelistState is used both for the symmetric whitelist handshake between
+// tatanka nodes and for gossipsub whitelist proposal broadcasts.
+message WhitelistState {
   repeated bytes peerIDs = 1;
+  repeated bytes proposed_peerIDs = 2;   // empty = no proposal
+  int64 timestamp = 3;
+  bool ready = 4;                        // true = node is ready to switch
 }
 
-message WhitelistResponse {
-  oneof response {
-    Success success = 1;
-    Mismatch mismatch = 2;
-  }
-
-  message Success {
-  }
-
-  message Mismatch {
-    repeated bytes peerIDs = 1;
-  }
-}
 
 // NodeOracleUpdate contains oracle data for sharing between Tatanka mesh nodes.
 message NodeOracleUpdate {
