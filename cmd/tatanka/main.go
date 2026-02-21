@@ -1,32 +1,38 @@
 package main
 
 import (
+	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 
+	"github.com/bisoncraft/mesh/tatanka"
 	"github.com/decred/slog"
 	"github.com/jessevdk/go-flags"
 	"github.com/jrick/logrotate/rotator"
-	"github.com/bisoncraft/mesh/tatanka"
+	"github.com/libp2p/go-libp2p/core/peer"
 )
 
 var log slog.Logger
 
 // Config defines the configuration options for the Tatanka node.
 type Config struct {
-	AppDataDir    string `short:"A" long:"appdata" description:"Path to application home directory."`
-	ConfigFile    string `short:"C" long:"configfile" description:"Path to configuration file."`
-	DebugLevel    string `short:"d" long:"debuglevel" description:"Logging level {trace, debug, info, warn, error, critical}."`
-	ListenIP      string `long:"listenip" description:"IP address to listen on."`
-	ListenPort    int    `long:"listenport" description:"Port to listen on."`
-	MetricsPort   int    `long:"metricsport" description:"Port to scrape metrics and fetch profiles from."`
-	AdminPort     int    `long:"adminport" description:"Port to expose the admin interface on."`
-	WhitelistPath string `long:"whitelistpath" description:"Path to local whitelist file."`
+	AppDataDir     string   `short:"A" long:"appdata" description:"Path to application home directory."`
+	ConfigFile     string   `short:"C" long:"configfile" description:"Path to configuration file."`
+	DebugLevel     string   `short:"d" long:"debuglevel" description:"Logging level {trace, debug, info, warn, error, critical}."`
+	ListenIP       string   `long:"listenip" description:"IP address to listen on."`
+	ListenPort     int      `long:"listenport" description:"Port to listen on."`
+	MetricsPort    int      `long:"metricsport" description:"Port to scrape metrics and fetch profiles from."`
+	AdminPort      int      `long:"adminport" description:"Port to expose the admin interface on."`
+	Whitelist      string   `long:"whitelist" description:"Path to whitelist file (plain text: one peer ID per line). On first run, installs it into the data directory. On subsequent runs, validates it matches the existing whitelist unless --forcewl is set."`
+	ForceWhitelist bool     `long:"forcewl" description:"Overwrite any existing whitelist in the data directory with the provided --whitelist file."`
+	Bootstrap      []string `long:"bootstrap" description:"Bootstrap peer address in multiaddr format (/ip4/.../tcp/.../p2p/12D3KooW...). Can be specified multiple times."`
 
 	// Oracle Configuration
 	CMCKey           string `long:"cmckey" description:"coinmarketcap API key"`
@@ -49,20 +55,26 @@ func initLogRotator(dir string) (*rotator.Rotator, error) {
 }
 
 func main() {
+	// Handle "init" subcommand before parsing flags.
+	if len(os.Args) > 1 && os.Args[1] == "init" {
+		runInit()
+		return
+	}
+
 	// Default config values
 	cfg := Config{
-		AppDataDir:    defaultAppDataDir(),
-		ConfigFile:    defaultConfigFile(),
-		DebugLevel:    "info",
-		ListenIP:      "0.0.0.0",
-		ListenPort:    12345,
-		MetricsPort:   12355,
-		WhitelistPath: "",
-		CMCKey:        "",
+		AppDataDir:  defaultAppDataDir(),
+		ConfigFile:  defaultConfigFile(),
+		DebugLevel:  "info",
+		ListenIP:    "0.0.0.0",
+		ListenPort:  12345,
+		MetricsPort: 12355,
+		CMCKey:      "",
 	}
 
 	// Parse command-line flags (overrides file values)
 	parser := flags.NewParser(&cfg, flags.Default)
+	parser.Usage = "[OPTIONS]\n\nSubcommands:\n  init\tGenerate (or load) a private key and print the peer ID"
 	if _, err := parser.Parse(); err != nil {
 		if e, ok := err.(*flags.Error); ok && e.Type == flags.ErrHelp {
 			os.Exit(0)
@@ -98,15 +110,49 @@ func main() {
 
 	log.Infof("Using app data directory: %s", cfg.AppDataDir)
 
+	if cfg.ForceWhitelist && cfg.Whitelist == "" {
+		log.Errorf("--forcewl requires --whitelist")
+		os.Exit(1)
+	}
+
+	var whitelistPeers []peer.ID
+	if cfg.Whitelist != "" {
+		var err error
+		whitelistPeers, err = loadWhitelistPeerIDsList(cfg.Whitelist)
+		if err != nil {
+			log.Errorf("Failed to load whitelist: %v", err)
+			os.Exit(1)
+		}
+	}
+
+	if cfg.Whitelist != "" {
+		log.Infof("Loaded %d whitelist peer IDs from %s", len(whitelistPeers), cfg.Whitelist)
+	}
+
+	if cfg.ForceWhitelist {
+		log.Infof("Whitelist force-update enabled")
+	}
+
+	if cfg.Whitelist == "" {
+		log.Infof("No whitelist file provided; will load existing whitelist from data directory")
+	}
+
+	if len(whitelistPeers) == 0 && cfg.Whitelist != "" {
+		log.Errorf("No peer IDs found in whitelist file %s", cfg.Whitelist)
+		os.Exit(1)
+	}
+
 	// Create Tatanka config
 	tatankaCfg := &tatanka.Config{
-		DataDir:       cfg.AppDataDir,
-		Logger:        log,
-		ListenIP:      cfg.ListenIP,
-		ListenPort:    cfg.ListenPort,
-		MetricsPort:   cfg.MetricsPort,
-		WhitelistPath: cfg.WhitelistPath,
-		AdminPort:     cfg.AdminPort,
+		DataDir:          cfg.AppDataDir,
+		Logger:           log,
+		ListenIP:         cfg.ListenIP,
+		ListenPort:       cfg.ListenPort,
+		MetricsPort:      cfg.MetricsPort,
+		AdminPort:        cfg.AdminPort,
+		BootstrapAddrs:   cfg.Bootstrap,
+		WhitelistPeers:   whitelistPeers,
+		ForceWhitelist:   cfg.ForceWhitelist,
 		CMCKey:           cfg.CMCKey,
 		TatumKey:         cfg.TatumKey,
 		BlockcypherToken: cfg.BlockcypherToken,
@@ -138,6 +184,66 @@ func main() {
 		log.Errorf("Tatanka node failed: %v", err)
 		os.Exit(1)
 	}
+}
+
+func loadWhitelistPeerIDsList(path string) ([]peer.ID, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	lineNum := 0
+	ids := make([]peer.ID, 0)
+	seen := make(map[peer.ID]struct{})
+	for scanner.Scan() {
+		lineNum++
+		line := strings.TrimSpace(scanner.Text())
+		if idx := strings.IndexByte(line, '#'); idx >= 0 {
+			line = strings.TrimSpace(line[:idx])
+		}
+		if line == "" {
+			continue
+		}
+		pid, err := peer.Decode(line)
+		if err != nil {
+			return nil, fmt.Errorf("invalid peer ID on line %d: %w", lineNum, err)
+		}
+		if _, ok := seen[pid]; ok {
+			continue
+		}
+		seen[pid] = struct{}{}
+		ids = append(ids, pid)
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	if len(ids) == 0 {
+		return nil, errors.New("no peer IDs found")
+	}
+	return ids, nil
+}
+
+// runInit generates (or loads) a private key and prints the peer ID.
+func runInit() {
+	// Parse a minimal set of flags for init.
+	type initConfig struct {
+		AppDataDir string `short:"A" long:"appdata" description:"Path to application home directory."`
+	}
+	initCfg := &initConfig{
+		AppDataDir: defaultAppDataDir(),
+	}
+	parser := flags.NewParser(initCfg, flags.Default)
+	parser.Parse()
+
+	pid, err := tatanka.InitTatankaNode(initCfg.AppDataDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Init failed: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Println(pid.String())
 }
 
 // defaultAppDataDir returns the default application data directory.

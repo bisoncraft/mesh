@@ -61,7 +61,6 @@ type Config struct {
 	ListenPort     int
 	MetricsPort    int
 	AdminPort      int
-	WhitelistPath  string // Deprecated: use WhitelistPeers.
 	BootstrapAddrs []string
 	WhitelistPeers []peer.ID
 	// ForceWhitelist overwrites any existing whitelist on disk with the provided
