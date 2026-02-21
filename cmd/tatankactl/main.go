@@ -8,6 +8,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/bisoncraft/mesh/oracle"
+	"github.com/bisoncraft/mesh/tatanka/admin"
 )
 
 // rootModel is the top-level bubbletea model that routes between views.
@@ -223,14 +224,33 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, listenForWSUpdates(m.wsCh)
 
 	case whitelistUpdateMsg:
-		if m.connections.state != nil {
+		if m.connections.state != nil && msg.update.WhitelistState != nil && msg.update.WhitelistState.Current != nil {
+			newWl := msg.update.WhitelistState.Current.PeerIDs
+			// Build string set for O(1) lookup.
+			newPeers := make(map[string]struct{}, len(newWl))
+			for pid := range newWl {
+				newPeers[pid.String()] = struct{}{}
+			}
+			// Remove peers no longer in the whitelist.
+			for id := range m.connections.state.Peers {
+				if _, ok := newPeers[id]; !ok {
+					delete(m.connections.state.Peers, id)
+				}
+			}
+			// Add new peers that aren't already tracked.
+			for pid := range newWl {
+				s := pid.String()
+				if s == m.connections.state.OurPeerID {
+					continue
+				}
+				if _, ok := m.connections.state.Peers[s]; !ok {
+					m.connections.state.Peers[s] = admin.PeerInfo{
+						PeerID: s,
+						State:  admin.StateDisconnected,
+					}
+				}
+			}
 			m.connections.state.WhitelistState = msg.update.WhitelistState
-			for _, id := range msg.update.Removed {
-				delete(m.connections.state.Peers, id)
-			}
-			for _, pi := range msg.update.Added {
-				m.connections.state.Peers[pi.PeerID] = pi
-			}
 			m.connections.sortNodes()
 			m.connections.lastUpdate = time.Now()
 			if m.activeView == viewWhitelist {

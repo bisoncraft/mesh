@@ -5,12 +5,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR=~/.tatanka-test
 TATANKA_DIR="$SCRIPT_DIR/../cmd/tatanka"
 TATANKA_BIN=$TATANKA_DIR/tatanka
+TATANKACTL_DIR="$SCRIPT_DIR/../cmd/tatankactl"
+TATANKACTL_BIN=$TATANKACTL_DIR/tatankactl
 TESTCLIENT_DIR="$SCRIPT_DIR/../cmd/testclient"
 TESTCLIENT_BIN=$TESTCLIENT_DIR/testclient
 TESTCLIENT_UI_DIR="$SCRIPT_DIR/client/ui"
-MAKEPRIVKEY_DIR="$SCRIPT_DIR/makeprivkey"
-MAKEPRIVKEY_BIN=$ROOT_DIR/makeprivkey
-WHITELIST_FILE=$ROOT_DIR/whitelist.json
 
 build_tatanka() {
   cd "$TATANKA_DIR"
@@ -18,8 +17,10 @@ build_tatanka() {
   cd - > /dev/null
 }
 
-build_makeprivkey() {
-  go build -o "$MAKEPRIVKEY_BIN" "$MAKEPRIVKEY_DIR/main.go"
+build_tatankactl() {
+  cd "$TATANKACTL_DIR"
+  go build -o tatankactl
+  cd - > /dev/null
 }
 
 build_testclient() {
@@ -37,24 +38,15 @@ build_testclient_ui() {
   cd - > /dev/null
 }
 
-generate_privkey() {
-  local node_dir=$1
-  local privkey_path=$node_dir/p.key
-  local peer_id=$("$MAKEPRIVKEY_BIN" "$privkey_path")
-  echo $peer_id
-}
-
 create_config() {
   local node_dir=$1
-  local whitelist_path=$2
-  local listen_port=$3
-  local metrics_port=$4
-  local admin_port=$5
+  local listen_port=$2
+  local metrics_port=$3
+  local admin_port=$4
   local config_path=$node_dir/tatanka.conf
 
   cat <<EOF > $config_path
 appdata=$node_dir
-whitelistpath=$whitelist_path
 listenport=$listen_port
 metricsport=$metrics_port
 adminport=$admin_port
@@ -88,47 +80,76 @@ start_harness() {
   mkdir -p $ROOT_DIR
 
   build_tatanka
-  build_makeprivkey
+  build_tatankactl
   build_testclient
   build_testclient_ui
 
-  # Store bootstrap peers for the whitelist file
-  whitelist_peers=()
+  # Store peer IDs, listen ports, and admin ports for each node.
   node_peer_ids=()
   node_listen_ports=()
+  node_admin_ports=()
 
-  # Generate private keys and create config files for each node
+  # Initialize nodes and generate private keys using tatanka init.
   for i in $(seq 1 $num_nodes); do
     node_dir=$ROOT_DIR/tatanka-$i
     mkdir -p $node_dir
 
-    peer_id=$(generate_privkey $node_dir)
+    peer_id=$("$TATANKA_BIN" init --appdata "$node_dir")
     node_peer_ids+=("$peer_id")
 
     listen_port=$((12345 + i))
     metrics_port=$((12355 + i))
     admin_port=$((12365 + i))
     node_listen_ports+=("$listen_port")
-    config_path=$(create_config $node_dir $WHITELIST_FILE $listen_port $metrics_port $admin_port)
-
-    addr="/ip4/127.0.0.1/tcp/$listen_port"
-    whitelist_peers+=("{\"id\": \"$peer_id\", \"address\": \"$addr\"}")
+    node_admin_ports+=("$admin_port")
+    config_path=$(create_config $node_dir $listen_port $metrics_port $admin_port)
   done
 
-  # Create whitelist file
+  # Write shared whitelist into each node's data dir.
+  whitelist_peers=()
+  for i in $(seq 0 $((num_nodes - 1))); do
+    whitelist_peers+=("\"${node_peer_ids[$i]}\"")
+  done
   whitelist_json=$(printf ",%s" "${whitelist_peers[@]}")
   whitelist_json="${whitelist_json:1}"  # Remove leading comma
-  whitelist="{\"peers\": [$whitelist_json]}"
-  echo $whitelist > $WHITELIST_FILE
+  whitelist="[$whitelist_json]"
 
-  # Start tmux session and start nodes
+  for i in $(seq 1 $num_nodes); do
+    node_dir=$ROOT_DIR/tatanka-$i
+    echo "$whitelist" > $node_dir/whitelist.json
+  done
+
+  # Start tmux session with interleaved node/ctl windows starting at 0
+  # so that 5 nodes fit in windows 0-9 (node-1=0, ctl-1=1, node-2=2, ...).
   session_name="tatanka-test"
-  tmux new-session -d -s $session_name
+  tmux new-session -d -s $session_name -x 200 -y 50
+  win=0
   for i in $(seq 1 $num_nodes); do
     node_dir=$ROOT_DIR/tatanka-$i
     config_path=$node_dir/tatanka.conf
-    tmux new-window -t $session_name:$i -n node-$i
-    tmux send-keys -t $session_name:$i "$TATANKA_BIN -C $config_path" C-m
+
+    # Build bootstrap flags for all OTHER nodes.
+    bootstrap_flags=""
+    for j in $(seq 0 $((num_nodes - 1))); do
+      if [ $j -ne $((i - 1)) ]; then
+        bootstrap_flags="$bootstrap_flags --bootstrap /ip4/127.0.0.1/tcp/${node_listen_ports[$j]}/p2p/${node_peer_ids[$j]}"
+      fi
+    done
+
+    # Node window
+    if [ $win -eq 0 ]; then
+      tmux rename-window -t $session_name:0 node-$i
+    else
+      tmux new-window -t $session_name:$win -n node-$i
+    fi
+    tmux send-keys -t $session_name:$win "$TATANKA_BIN -C $config_path$bootstrap_flags" C-m
+    win=$((win + 1))
+
+    # Ctl window
+    admin_port=${node_admin_ports[$((i - 1))]}
+    tmux new-window -t $session_name:$win -n ctl-$i
+    tmux send-keys -t $session_name:$win "$TATANKACTL_BIN -a localhost:$admin_port" C-m
+    win=$((win + 1))
   done
 
   sleep 2 # wait for nodes to start before starting clients
