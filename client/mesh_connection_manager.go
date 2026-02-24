@@ -47,6 +47,9 @@ type meshConnectionManager struct {
 
 	primaryConn atomic.Pointer[meshConnHolder]
 
+	connectedOnce sync.Once
+	connectedCh   chan struct{}
+
 	nodesMtx   sync.RWMutex
 	knownNodes []peer.ID
 }
@@ -64,6 +67,7 @@ func newMeshConnectionManager(cfg *meshConnectionManagerConfig) *meshConnectionM
 		host:        cfg.host,
 		log:         cfg.log,
 		connFactory: cfg.connFactory,
+		connectedCh: make(chan struct{}),
 	}
 
 	for _, peer := range cfg.bootstrapPeers {
@@ -89,6 +93,23 @@ func (m *meshConnectionManager) setPrimaryConnection(mc meshConn) {
 		return
 	}
 	m.primaryConn.Store(&meshConnHolder{mc: mc})
+	if m.connectedCh != nil {
+		m.connectedOnce.Do(func() {
+			close(m.connectedCh)
+		})
+	}
+}
+
+func (m *meshConnectionManager) waitForConnection(ctx context.Context) error {
+	if m.connectedCh == nil {
+		return errNoMeshConnection
+	}
+	select {
+	case <-m.connectedCh:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // connectResult holds the result of a connection attempt.

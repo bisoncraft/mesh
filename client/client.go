@@ -6,12 +6,12 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/bisoncraft/mesh/bond"
 	"github.com/decred/slog"
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
-	"github.com/bisoncraft/mesh/bond"
 
 	protocolsPb "github.com/bisoncraft/mesh/protocols/pb"
 	ma "github.com/multiformats/go-multiaddr"
@@ -100,6 +100,14 @@ func (c *Client) primaryMeshConnection() (meshConn, error) {
 		return nil, errNoMeshConnection
 	}
 	return c.connManager.primaryConnection()
+}
+
+// WaitForConnection blocks until a primary mesh connection is established or the context is done.
+func (c *Client) WaitForConnection(ctx context.Context) error {
+	if c.connManager == nil {
+		return errNoMeshConnection
+	}
+	return c.connManager.waitForConnection(ctx)
 }
 
 // Broadcast publishes the provided message bytes on a mesh topic.
