@@ -11,6 +11,11 @@ import (
 	"github.com/bisoncraft/mesh/oracle/sources"
 )
 
+const (
+	errBaseDelay = 10 * time.Second
+	errMaxDelay  = 5 * time.Minute
+)
+
 // diviner wraps a Source and handles periodic fetching and emitting of
 // price and fee rate updates.
 type diviner struct {
@@ -22,6 +27,8 @@ type diviner struct {
 	nextFetchInfo      atomic.Value // networkSchedule
 	errorInfo          atomic.Value // fetchErrorInfo
 	getNetworkSchedule func() networkSchedule
+	errBaseDelay       time.Duration
+	errMaxDelay        time.Duration
 }
 
 type fetchErrorInfo struct {
@@ -43,7 +50,18 @@ func newDiviner(
 		resetTimer:         make(chan struct{}),
 		getNetworkSchedule: getNetworkSchedule,
 		onScheduleChanged:  onScheduleChanged,
+		errBaseDelay:       errBaseDelay,
+		errMaxDelay:        errMaxDelay,
 	}
+}
+
+// calcBackoff computes exponential backoff: min(baseDelay * 2^attempt, maxDelay).
+func (d *diviner) calcBackoff(attempt int) time.Duration {
+	delay := d.errBaseDelay * (1 << uint(attempt))
+	if delay > d.errMaxDelay {
+		return d.errMaxDelay
+	}
+	return delay
 }
 
 // fetchScheduleInfo returns the current fetch schedule info.
@@ -115,6 +133,7 @@ func (d *diviner) reschedule() {
 func (d *diviner) run(ctx context.Context) {
 	timer := time.NewTimer(0)
 	defer timer.Stop()
+	var consecutiveErrors int
 
 	for {
 		select {
@@ -128,19 +147,20 @@ func (d *diviner) run(ctx context.Context) {
 		case <-timer.C:
 			if err := d.fetchUpdates(ctx); err != nil {
 				d.log.Errorf("Failed to fetch divination: %v", err)
-				// Retry after 1 minute on errors.
-				const errPeriod = time.Minute
+				consecutiveErrors++
 				errTime := time.Now()
 				d.errorInfo.Store(fetchErrorInfo{message: err.Error(), stamp: errTime})
 				info := d.fetchScheduleInfo()
 				if info.NextFetchTime.IsZero() {
 					info = d.getNetworkSchedule()
 				}
-				info.NextFetchTime = errTime.Add(errPeriod)
+				backoff := d.calcBackoff(consecutiveErrors - 1)
+				info.NextFetchTime = errTime.Add(backoff)
 				d.nextFetchInfo.Store(info)
 				d.fireScheduleChanged(info)
-				timer.Reset(errPeriod)
+				timer.Reset(backoff)
 			} else {
+				consecutiveErrors = 0
 				d.errorInfo.Store(fetchErrorInfo{message: "", stamp: time.Time{}})
 				info := d.getNetworkSchedule()
 				timer.Reset(time.Until(info.NextFetchTime))
