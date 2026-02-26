@@ -139,7 +139,11 @@ func (m *tMeshConnection) fail(err error) {
 // setTestMeshConnection sets up a mock mesh connection for testing.
 func (c *Client) setTestMeshConnection(mc meshConn) {
 	if c.connManager == nil {
-		c.connManager = &meshConnectionManager{}
+		logBackend := slog.NewBackend(os.Stdout)
+		logger := logBackend.Logger("test")
+		c.connManager = newMeshConnectionManager(&meshConnectionManagerConfig{
+			log: logger,
+		})
 	}
 	c.connManager.setPrimaryConnection(mc)
 }

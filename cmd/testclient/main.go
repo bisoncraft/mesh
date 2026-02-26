@@ -10,12 +10,12 @@ import (
 	"path/filepath"
 	"syscall"
 
+	"github.com/bisoncraft/mesh/bond"
+	"github.com/bisoncraft/mesh/testing/client"
 	"github.com/decred/slog"
 	"github.com/jessevdk/go-flags"
 	"github.com/jrick/logrotate/rotator"
 	"github.com/libp2p/go-libp2p/core/crypto"
-	"github.com/bisoncraft/mesh/bond"
-	"github.com/bisoncraft/mesh/testing/client"
 )
 
 // bondParamsFlag wraps bond.BondParams to implement the flag.Value interface.
@@ -42,13 +42,14 @@ func (p *bondParamsFlag) String() string {
 
 // Config represents the configuration options for the test client.
 type Config struct {
-	AppDataDir string            `short:"A" long:"appdata" description:"Path to application home directory."`
-	ConfigFile string            `short:"C" long:"configfile" description:"Path to configuration file."`
-	LogLevel   string            `short:"l" long:"loglevel" description:"Logging level {trace, debug, info, warn, error, critical}."`
-	NodeAddr   []string          `long:"nodeaddr" description:"The addresses of the mesh nodes to connect to. Can be specified multiple times."`
-	BondParams []*bondParamsFlag `long:"bondparams" description:"The test client bond params."`
-	ClientPort int               `long:"clientport" description:"The port to listen on for client connections"`
-	WebPort    int               `long:"webport" description:"The web interface port."`
+	AppDataDir    string            `short:"A" long:"appdata" description:"Path to application home directory."`
+	ConfigFile    string            `short:"C" long:"configfile" description:"Path to configuration file."`
+	LogLevel      string            `short:"l" long:"loglevel" description:"Logging level {trace, debug, info, warn, error, critical}."`
+	NodeAddr      []string          `long:"nodeaddr" description:"The addresses of the mesh nodes to connect to. Can be specified multiple times."`
+	BondParams    []*bondParamsFlag `long:"bondparams" description:"The test client bond params."`
+	ClientPort    int               `long:"clientport" description:"The port to listen on for client connections"`
+	WebPort       int               `long:"webport" description:"The web interface port."`
+	OracleTickers []string          `long:"oracle" description:"Subscribe to price and fee rate oracle updates for these tickers (e.g., BTC, DCR)."`
 }
 
 // defaultAppDataDir returns the default application data directory.
@@ -199,11 +200,12 @@ func main() {
 	}
 
 	tcCfg := &client.Config{
-		NodeAddr:   cfg.NodeAddr,
-		PrivateKey: priv,
-		ClientPort: cfg.ClientPort,
-		WebPort:    cfg.WebPort,
-		Logger:     log,
+		NodeAddr:      cfg.NodeAddr,
+		PrivateKey:    priv,
+		ClientPort:    cfg.ClientPort,
+		WebPort:       cfg.WebPort,
+		Logger:        log,
+		OracleTickers: cfg.OracleTickers,
 	}
 
 	tc, err := client.NewClient(tcCfg)

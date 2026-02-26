@@ -99,3 +99,226 @@ func TestMeshConnectionManagerFailover(t *testing.T) {
 		t.Fatal("mesh connection manager did not stop")
 	}
 }
+
+func TestWaitForConnection(t *testing.T) {
+	logBackend := slog.NewBackend(os.Stdout)
+	logger := logBackend.Logger("wait-for-connection-test")
+
+	t.Run("already connected returns immediately", func(t *testing.T) {
+		m := newMeshConnectionManager(&meshConnectionManagerConfig{log: logger})
+		conn := newTMeshConnection(randomPeerID(t))
+		m.setPrimaryConnection(conn)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		defer cancel()
+
+		start := time.Now()
+		err := m.waitForConnection(ctx)
+		elapsed := time.Since(start)
+
+		if err != nil {
+			t.Fatalf("expected no error, got %v", err)
+		}
+		if elapsed > 50*time.Millisecond {
+			t.Fatalf("expected immediate return, took %v", elapsed)
+		}
+	})
+
+	t.Run("waits for connection when disconnected", func(t *testing.T) {
+		m := newMeshConnectionManager(&meshConnectionManagerConfig{log: logger})
+
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+
+		// Start waiter in goroutine
+		done := make(chan error, 1)
+		go func() {
+			done <- m.waitForConnection(ctx)
+		}()
+
+		// Wait a bit to ensure goroutine is blocking
+		time.Sleep(100 * time.Millisecond)
+
+		// Connect
+		conn := newTMeshConnection(randomPeerID(t))
+		m.setPrimaryConnection(conn)
+
+		// Waiter should return
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatalf("expected no error, got %v", err)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("waiter did not return after connection")
+		}
+	})
+
+	t.Run("multiple concurrent waiters all wake up", func(t *testing.T) {
+		m := newMeshConnectionManager(&meshConnectionManagerConfig{log: logger})
+
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+
+		// Start multiple waiters
+		numWaiters := 5
+		done := make(chan error, numWaiters)
+		for i := 0; i < numWaiters; i++ {
+			go func() {
+				done <- m.waitForConnection(ctx)
+			}()
+		}
+
+		// Wait a bit to ensure all goroutines are blocking
+		time.Sleep(100 * time.Millisecond)
+
+		// Connect
+		conn := newTMeshConnection(randomPeerID(t))
+		m.setPrimaryConnection(conn)
+
+		// All waiters should return
+		for i := 0; i < numWaiters; i++ {
+			select {
+			case err := <-done:
+				if err != nil {
+					t.Fatalf("waiter %d: expected no error, got %v", i, err)
+				}
+			case <-time.After(time.Second):
+				t.Fatalf("waiter %d did not return", i)
+			}
+		}
+	})
+
+	t.Run("context cancellation returns error", func(t *testing.T) {
+		m := newMeshConnectionManager(&meshConnectionManagerConfig{log: logger})
+
+		ctx, cancel := context.WithCancel(context.Background())
+
+		// Start waiter in goroutine
+		done := make(chan error, 1)
+		go func() {
+			done <- m.waitForConnection(ctx)
+		}()
+
+		// Wait a bit to ensure goroutine is blocking
+		time.Sleep(100 * time.Millisecond)
+
+		// Cancel context
+		cancel()
+
+		// Waiter should return with context error
+		select {
+		case err := <-done:
+			if err != context.Canceled {
+				t.Fatalf("expected context.Canceled, got %v", err)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("waiter did not return after context cancel")
+		}
+	})
+
+	t.Run("handles connect/disconnect cycles", func(t *testing.T) {
+		m := newMeshConnectionManager(&meshConnectionManagerConfig{log: logger})
+
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+
+		nodeID := randomPeerID(t)
+
+		// Cycle 1: wait, then connect
+		done1 := make(chan error, 1)
+		go func() {
+			done1 <- m.waitForConnection(ctx)
+		}()
+		time.Sleep(50 * time.Millisecond)
+		conn1 := newTMeshConnection(nodeID)
+		m.setPrimaryConnection(conn1)
+
+		if err := <-done1; err != nil {
+			t.Fatalf("cycle 1: expected no error, got %v", err)
+		}
+
+		// Cycle 2: disconnect, then wait and connect
+		m.setPrimaryConnection(nil)
+
+		done2 := make(chan error, 1)
+		go func() {
+			done2 <- m.waitForConnection(ctx)
+		}()
+		time.Sleep(50 * time.Millisecond)
+		conn2 := newTMeshConnection(nodeID)
+		m.setPrimaryConnection(conn2)
+
+		if err := <-done2; err != nil {
+			t.Fatalf("cycle 2: expected no error, got %v", err)
+		}
+
+		// Cycle 3: disconnect, then wait and connect
+		m.setPrimaryConnection(nil)
+
+		done3 := make(chan error, 1)
+		go func() {
+			done3 <- m.waitForConnection(ctx)
+		}()
+		time.Sleep(50 * time.Millisecond)
+		conn3 := newTMeshConnection(nodeID)
+		m.setPrimaryConnection(conn3)
+
+		if err := <-done3; err != nil {
+			t.Fatalf("cycle 3: expected no error, got %v", err)
+		}
+	})
+
+	t.Run("new waiter after disconnection waits again", func(t *testing.T) {
+		m := newMeshConnectionManager(&meshConnectionManagerConfig{log: logger})
+
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+
+		// Connect
+		conn1 := newTMeshConnection(randomPeerID(t))
+		m.setPrimaryConnection(conn1)
+
+		// First waiter returns immediately (already connected)
+		done1 := make(chan error, 1)
+		go func() {
+			done1 <- m.waitForConnection(ctx)
+		}()
+
+		if err := <-done1; err != nil {
+			t.Fatalf("first waiter: expected no error, got %v", err)
+		}
+
+		// Disconnect
+		m.setPrimaryConnection(nil)
+
+		// Second waiter should block
+		done2 := make(chan error, 1)
+		go func() {
+			done2 <- m.waitForConnection(ctx)
+		}()
+
+		time.Sleep(100 * time.Millisecond)
+
+		// Should still be blocked
+		select {
+		case <-done2:
+			t.Fatal("waiter returned but should still be waiting")
+		default:
+		}
+
+		// Reconnect
+		conn2 := newTMeshConnection(randomPeerID(t))
+		m.setPrimaryConnection(conn2)
+
+		// Now waiter should return
+		select {
+		case err := <-done2:
+			if err != nil {
+				t.Fatalf("second waiter: expected no error, got %v", err)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("waiter did not return after reconnection")
+		}
+	})
+}

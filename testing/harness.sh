@@ -60,6 +60,7 @@ create_client_config() {
   local node_addr=$2
   local client_port=$3
   local web_port=$4
+  local oracle_tickers=$5
   local config_path=$client_dir/testclient.conf
 
   cat <<EOF > $config_path
@@ -70,12 +71,21 @@ clientport=$client_port
 webport=$web_port
 EOF
 
+  # Add oracle tickers if specified
+  if [ -n "$oracle_tickers" ]; then
+    for ticker in $(echo "$oracle_tickers" | tr ',' ' '); do
+      echo "oracle=$ticker" >> $config_path
+    done
+  fi
+
   echo $config_path
 }
 
 start_harness() {
   local num_nodes=$1
-  local num_clients=$2
+  local num_regular_clients=$2
+  local num_oracle_clients=$3
+  local oracle_tickers=${4:-BTC,DCR}
 
   mkdir -p $ROOT_DIR
 
@@ -155,50 +165,97 @@ start_harness() {
   sleep 2 # wait for nodes to start before starting clients
 
   # Start test clients and evenly distribute them across the nodes.
-  if [ "$num_clients" -gt 0 ]; then
-    for i in $(seq 1 $num_clients); do
-      client_dir=$ROOT_DIR/client-$i
-      mkdir -p $client_dir
+  local client_counter=1
+  local total_clients=$((num_regular_clients + num_oracle_clients))
 
-      node_idx=$(( (i - 1) % num_nodes ))
-      node_peer_id=${node_peer_ids[$node_idx]}
-      node_listen_port=${node_listen_ports[$node_idx]}
-      node_addr="/ip4/127.0.0.1/tcp/$node_listen_port/p2p/$node_peer_id"
+  # Start regular clients
+  if [ $num_regular_clients -gt 0 ]; then
+  for i in $(seq 1 $num_regular_clients); do
+    client_dir=$ROOT_DIR/client-regular-$i
+    mkdir -p $client_dir
 
-      client_port=$((12455 + i))
-      web_port=$((12465 + i))
-      client_cfg=$(create_client_config $client_dir "$node_addr" $client_port $web_port)
+    node_idx=$(( (client_counter - 1) % num_nodes ))
+    node_peer_id=${node_peer_ids[$node_idx]}
+    node_listen_port=${node_listen_ports[$node_idx]}
+    node_addr="/ip4/127.0.0.1/tcp/$node_listen_port/p2p/$node_peer_id"
 
-      tmux new-window -t $session_name -n client-$i
-      tmux send-keys -t $session_name "ROOT_DIR=$ROOT_DIR $TESTCLIENT_BIN -C $client_cfg" C-m
-    done
+    client_port=$((12455 + client_counter))
+    web_port=$((12465 + client_counter))
+    client_cfg=$(create_client_config $client_dir "$node_addr" $client_port $web_port "")
+
+    tmux new-window -t $session_name -n client-regular-$i
+    tmux send-keys -t $session_name "ROOT_DIR=$ROOT_DIR $TESTCLIENT_BIN -C $client_cfg" C-m
+    client_counter=$((client_counter + 1))
+  done
   fi
 
-  echo "Started $num_nodes nodes and $num_clients clients in tmux session '$session_name'"
+  # Start oracle clients
+  if [ $num_oracle_clients -gt 0 ]; then
+  for i in $(seq 1 $num_oracle_clients); do
+    client_dir=$ROOT_DIR/client-oracle-$i
+    mkdir -p $client_dir
+
+    node_idx=$(( (client_counter - 1) % num_nodes ))
+    node_peer_id=${node_peer_ids[$node_idx]}
+    node_listen_port=${node_listen_ports[$node_idx]}
+    node_addr="/ip4/127.0.0.1/tcp/$node_listen_port/p2p/$node_peer_id"
+
+    client_port=$((12455 + client_counter))
+    web_port=$((12465 + client_counter))
+    client_cfg=$(create_client_config $client_dir "$node_addr" $client_port $web_port "$oracle_tickers")
+
+    tmux new-window -t $session_name -n client-oracle-$i
+    tmux send-keys -t $session_name "ROOT_DIR=$ROOT_DIR $TESTCLIENT_BIN -C $client_cfg" C-m
+    client_counter=$((client_counter + 1))
+  done
+  fi
+
+  echo "Started $num_nodes nodes ($num_regular_clients regular + $num_oracle_clients oracle) in tmux session '$session_name'"
 }
 
-# Check if number of nodes and clients are provided
-if [ $# -lt 2 ]; then
-  echo "Usage: $0 <num_nodes> <num_clients>"
-  echo "  num_nodes:   Number of tatanka nodes to start"
-  echo "  num_clients: Number of test clients to start"
+# Check if required arguments are provided
+if [ $# -lt 3 ]; then
+  echo "Usage: $0 <num_nodes> <num_regular_clients> <num_oracle_clients> [oracle_tickers]"
+  echo "  num_nodes:            Number of tatanka nodes to start"
+  echo "  num_regular_clients:  Number of regular test clients (oracle disabled)"
+  echo "  num_oracle_clients:   Number of oracle test clients (oracle enabled)"
+  echo "  oracle_tickers:       Comma-separated oracle tickers (e.g., BTC,DCR,ETH; default: BTC,DCR)"
+  echo ""
+  echo "Examples:"
+  echo "  $0 1 2 0              # Start 1 node with 2 regular clients"
+  echo "  $0 1 0 2              # Start 1 node with 2 oracle clients (BTC,DCR)"
+  echo "  $0 1 2 2              # Start 1 node with 2 regular + 2 oracle clients"
+  echo "  $0 1 0 2 BTC          # Start 1 node with 2 oracle clients (BTC only)"
+  echo "  $0 1 0 2 BTC,ETH      # Start 1 node with 2 oracle clients (BTC,ETH)"
   exit 1
 fi
 
 num_nodes=$1
-num_clients=$2
+num_regular_clients=$2
+num_oracle_clients=$3
+oracle_tickers=${4:-BTC,DCR}
 
-# Validate that the argument is a positive integer
+# Validate arguments are non-negative integers
 if ! [[ "$num_nodes" =~ ^[0-9]+$ ]] || [ "$num_nodes" -eq 0 ]; then
   echo "Error: num_nodes must be a positive integer"
   exit 1
 fi
 
-if ! [[ "$num_clients" =~ ^[0-9]+$ ]] || [ "$num_clients" -lt 0 ]; then
-  echo "Error: num_clients must be a non-negative integer"
+if ! [[ "$num_regular_clients" =~ ^[0-9]+$ ]]; then
+  echo "Error: num_regular_clients must be a non-negative integer"
   exit 1
 fi
 
-start_harness $num_nodes $num_clients
+if ! [[ "$num_oracle_clients" =~ ^[0-9]+$ ]]; then
+  echo "Error: num_oracle_clients must be a non-negative integer"
+  exit 1
+fi
+
+if [ $((num_regular_clients + num_oracle_clients)) -eq 0 ]; then
+  echo "Error: must start at least one client (num_regular_clients + num_oracle_clients > 0)"
+  exit 1
+fi
+
+start_harness $num_nodes $num_regular_clients $num_oracle_clients "$oracle_tickers"
 
 tmux attach-session -t $session_name

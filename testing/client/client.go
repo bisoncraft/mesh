@@ -14,14 +14,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/decred/slog"
-	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/cors"
-	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/bisoncraft/mesh/bond"
 	tmc "github.com/bisoncraft/mesh/client"
 	"github.com/bisoncraft/mesh/protocols"
 	protocolsPb "github.com/bisoncraft/mesh/protocols/pb"
+	"github.com/decred/slog"
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/cors"
+	"github.com/libp2p/go-libp2p/core/crypto"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -37,11 +37,12 @@ var (
 
 // Config represents the test client configuration.
 type Config struct {
-	NodeAddr   []string
-	PrivateKey crypto.PrivKey
-	ClientPort int
-	WebPort    int
-	Logger     slog.Logger
+	NodeAddr      []string
+	PrivateKey    crypto.PrivKey
+	ClientPort    int
+	WebPort       int
+	Logger        slog.Logger
+	OracleTickers []string
 }
 
 // Client represents a tatanka test client.
@@ -425,7 +426,80 @@ func (c *Client) Run(ctx context.Context, bonds []*bond.BondParams) {
 		}
 	}()
 
+	if len(c.cfg.OracleTickers) > 0 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			c.subscribeToOracles(ctx)
+		}()
+	}
+
 	wg.Wait()
+}
+
+func (c *Client) subscribeToOracles(ctx context.Context) {
+	backoff := time.Millisecond * 100
+	maxBackoff := time.Second * 5
+
+	for {
+		if err := c.tatankaClient.WaitForConnection(ctx); err == nil {
+			break
+		}
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(backoff):
+			if backoff < maxBackoff {
+				backoff = time.Duration(float64(backoff) * 1.5)
+				if backoff > maxBackoff {
+					backoff = maxBackoff
+				}
+			}
+			continue
+		}
+	}
+
+	subscribed := make(map[string]bool)
+	attempted := make(map[string]bool)
+	for _, asset := range c.cfg.OracleTickers {
+		if attempted[asset] {
+			continue
+		}
+		attempted[asset] = true
+
+		priceErr := c.tatankaClient.SubscribeToPriceOracle(ctx, asset, func(ticker string) func(float64) {
+			return func(price float64) {
+				c.events.add(Event{
+					Type:    EventTypeData,
+					Topic:   protocols.PriceTopic(ticker),
+					Message: fmt.Sprintf("%s: $%.2f", ticker, price),
+				})
+			}
+		}(asset))
+		if priceErr != nil {
+			c.log.Errorf("Failed to subscribe to %s price oracle: %v", asset, priceErr)
+		}
+
+		feeErr := c.tatankaClient.SubscribeToFeeRateOracle(ctx, asset, func(network string) func(*big.Int) {
+			return func(feeRate *big.Int) {
+				c.events.add(Event{
+					Type:    EventTypeData,
+					Topic:   protocols.FeeRateTopic(network),
+					Message: fmt.Sprintf("%s: %s", network, feeRate.String()),
+				})
+			}
+		}(asset))
+		if feeErr != nil {
+			c.log.Errorf("Failed to subscribe to %s fee rate oracle: %v", asset, feeErr)
+		}
+
+		if priceErr == nil || feeErr == nil {
+			subscribed[asset] = true
+		}
+	}
+
+	c.log.Infof("Subscribed to oracle updates for %d tickers", len(subscribed))
 }
 
 // decodeTopicData decodes topic data to a human-readable string.

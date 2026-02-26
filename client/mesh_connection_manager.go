@@ -49,6 +49,9 @@ type meshConnectionManager struct {
 
 	nodesMtx   sync.RWMutex
 	knownNodes []peer.ID
+
+	connMtx     sync.Mutex
+	connChanged chan struct{}
 }
 
 // meshConnectionManagerConfig holds the configuration for creating a meshConnectionManager.
@@ -64,6 +67,7 @@ func newMeshConnectionManager(cfg *meshConnectionManagerConfig) *meshConnectionM
 		host:        cfg.host,
 		log:         cfg.log,
 		connFactory: cfg.connFactory,
+		connChanged: make(chan struct{}),
 	}
 
 	for _, peer := range cfg.bootstrapPeers {
@@ -84,11 +88,36 @@ func (m *meshConnectionManager) primaryConnection() (meshConn, error) {
 }
 
 func (m *meshConnectionManager) setPrimaryConnection(mc meshConn) {
+	m.connMtx.Lock()
 	if mc == nil {
 		m.primaryConn.Store(nil)
-		return
+	} else {
+		m.primaryConn.Store(&meshConnHolder{mc: mc})
 	}
-	m.primaryConn.Store(&meshConnHolder{mc: mc})
+	oldCh := m.connChanged
+	m.connChanged = make(chan struct{})
+	m.connMtx.Unlock()
+	close(oldCh)
+}
+
+// waitForConnection blocks until the connection manager has an active primary mesh connection
+// or the context is done.
+func (m *meshConnectionManager) waitForConnection(ctx context.Context) error {
+	for {
+		if m.primaryConn.Load() != nil {
+			return nil
+		}
+
+		m.connMtx.Lock()
+		ch := m.connChanged
+		m.connMtx.Unlock()
+
+		select {
+		case <-ch:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 }
 
 // connectResult holds the result of a connection attempt.

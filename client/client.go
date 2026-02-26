@@ -234,6 +234,15 @@ func (c *Client) AddBond(params []*bond.BondParams) {
 	c.bondInfo.AddBonds(params, time.Now())
 }
 
+// WaitForConnection blocks until the client has an active primary mesh connection
+// or the context is done.
+func (c *Client) WaitForConnection(ctx context.Context) error {
+	if c.connManager == nil {
+		return errNoMeshConnection
+	}
+	return c.connManager.waitForConnection(ctx)
+}
+
 // parseBootstrapAddrs parses a list of multiaddr strings into peer.AddrInfo.
 // Multiple addresses for the same peer ID are combined into a single AddrInfo.
 func parseBootstrapAddrs(addrs []string) ([]peer.AddrInfo, error) {
