@@ -12,6 +12,12 @@ import (
 	"github.com/bisoncraft/mesh/oracle/sources/utils"
 )
 
+const (
+	coinmarketcapName              = "coinmarketcap"
+	coinmarketcapMinPeriod         = 60 * time.Second
+	coinmarketcapCreditsPerRequest = 2 // 1 per 200 assets, fetching 400
+)
+
 // NewCoinMarketCapSource creates a CoinMarketCap price source.
 // Free plan gives 10,000 credits per month. The listings endpoint uses 1 credit
 // per call per 200 assets. With 400 assets, we can call ~5,000 times per month,
@@ -36,11 +42,10 @@ func NewCoinMarketCapSource(httpClient utils.HTTPClient, log slog.Logger, apiKey
 		Log:               log,
 	})
 	return utils.NewTrackedSource(utils.TrackedSourceConfig{
-		Name:              "coinmarketcap",
-		MinPeriod:         60 * time.Second,
-		FetchRates:        fetchRates,
-		Tracker:           tracker,
-		CreditsPerRequest: 2, // 1 per 200 assets, fetching 400
+		Name:       coinmarketcapName,
+		MinPeriod:  coinmarketcapMinPeriod,
+		FetchRates: fetchRates,
+		Tracker:    tracker,
 	})
 }
 
@@ -80,8 +85,8 @@ func cmcQuotaFetcher(client utils.HTTPClient, apiKey string) func(ctx context.Co
 		}
 
 		return &sources.QuotaStatus{
-			FetchesRemaining: max(result.Data.Plan.CreditLimitMonthly-result.Data.Usage.CurrentMonth.CreditsUsed, 0),
-			FetchesLimit:     result.Data.Plan.CreditLimitMonthly,
+			FetchesRemaining: max(result.Data.Plan.CreditLimitMonthly-result.Data.Usage.CurrentMonth.CreditsUsed, 0) / coinmarketcapCreditsPerRequest,
+			FetchesLimit: result.Data.Plan.CreditLimitMonthly / coinmarketcapCreditsPerRequest,
 			ResetTime:        resetTime,
 		}, nil
 	}

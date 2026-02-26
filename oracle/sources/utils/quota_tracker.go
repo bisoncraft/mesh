@@ -6,8 +6,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/decred/slog"
 	"github.com/bisoncraft/mesh/oracle/sources"
+	"github.com/decred/slog"
 )
 
 const (
@@ -16,13 +16,13 @@ const (
 )
 
 // QuotaTracker tracks quota for one or more sources that share a single API
-// key/credit pool. It divides the available quota evenly among registered
+// key/fetch pool. It divides the available quota evenly among registered
 // sources. It tracks consumption locally and periodically reconciles with an
 // API endpoint.
 type QuotaTracker struct {
 	mtx              sync.RWMutex
-	creditsRemaining int64
-	creditsLimit     int64
+	fetchesRemaining int64
+	fetchesLimit     int64
 	resetTime        time.Time
 	sourceCount      int
 	initialized      bool
@@ -80,15 +80,15 @@ func NewQuotaTracker(cfg *QuotaTrackerConfig) *QuotaTracker {
 	}
 }
 
-// ConsumeCredits decrements the tracker's credit counter.
-func (p *QuotaTracker) ConsumeCredits(n int64) {
+// ConsumeFetches decrements the tracker's fetch counter.
+func (p *QuotaTracker) ConsumeFetches(n int64) {
 	p.mtx.Lock()
 	defer p.mtx.Unlock()
 
-	if p.creditsRemaining <= n {
-		p.creditsRemaining = 0
+	if p.fetchesRemaining <= n {
+		p.fetchesRemaining = 0
 	} else {
-		p.creditsRemaining -= n
+		p.fetchesRemaining -= n
 	}
 }
 
@@ -130,8 +130,8 @@ func (p *QuotaTracker) QuotaStatus() *sources.QuotaStatus {
 	}
 
 	return &sources.QuotaStatus{
-		FetchesRemaining: p.creditsRemaining / int64(sourceCount),
-		FetchesLimit:     p.creditsLimit / int64(sourceCount),
+		FetchesRemaining: p.fetchesRemaining / int64(sourceCount),
+		FetchesLimit:     p.fetchesLimit / int64(sourceCount),
 		ResetTime:        p.resetTime,
 	}
 }
@@ -170,7 +170,7 @@ func (p *QuotaTracker) reconcile() {
 
 	firstSync := !p.initialized
 
-	p.creditsLimit = serverQuota.FetchesLimit
+	p.fetchesLimit = serverQuota.FetchesLimit
 	p.resetTime = serverQuota.ResetTime
 	p.initialized = true
 
@@ -181,17 +181,17 @@ func (p *QuotaTracker) reconcile() {
 	if firstSync {
 		p.log.Infof("[%s] Quota initial sync: server remaining = %d, limit = %d",
 			p.name, serverQuota.FetchesRemaining, serverQuota.FetchesLimit)
-		p.creditsRemaining = serverQuota.FetchesRemaining
-	} else if serverQuota.FetchesRemaining < p.creditsRemaining {
+		p.fetchesRemaining = serverQuota.FetchesRemaining
+	} else if serverQuota.FetchesRemaining < p.fetchesRemaining {
 		// Server reports more usage than we tracked — another consumer
 		// may be sharing this key.
 		p.log.Warnf("[%s] Quota reconcile: server remaining (%d) < local estimate (%d), syncing down",
-			p.name, serverQuota.FetchesRemaining, p.creditsRemaining)
-		p.creditsRemaining = serverQuota.FetchesRemaining
-	} else if serverQuota.FetchesRemaining > p.creditsRemaining {
+			p.name, serverQuota.FetchesRemaining, p.fetchesRemaining)
+		p.fetchesRemaining = serverQuota.FetchesRemaining
+	} else if serverQuota.FetchesRemaining > p.fetchesRemaining {
 		// Server hasn't caught up with our local consumption yet.
 		p.log.Infof("[%s] Quota reconcile: server remaining (%d) > local estimate (%d), keeping local",
-			p.name, serverQuota.FetchesRemaining, p.creditsRemaining)
+			p.name, serverQuota.FetchesRemaining, p.fetchesRemaining)
 	}
 
 	p.lastReconcile = now
@@ -199,22 +199,20 @@ func (p *QuotaTracker) reconcile() {
 
 // TrackedSourceConfig configures a TrackedSource.
 type TrackedSourceConfig struct {
-	Name              string
-	Weight            float64
-	MinPeriod         time.Duration
-	FetchRates        FetchRatesFunc
-	Tracker           *QuotaTracker
-	CreditsPerRequest int64
+	Name       string
+	Weight     float64
+	MinPeriod  time.Duration
+	FetchRates FetchRatesFunc
+	Tracker    *QuotaTracker
 }
 
 // TrackedSource is a source whose quota is managed by a shared QuotaTracker.
 type TrackedSource struct {
-	name              string
-	weight            float64
-	minPeriod         time.Duration
-	fetchRates        FetchRatesFunc
-	tracker           *QuotaTracker
-	creditsPerRequest int64
+	name       string
+	weight     float64
+	minPeriod  time.Duration
+	fetchRates FetchRatesFunc
+	tracker    *QuotaTracker
 }
 
 // NewTrackedSource creates a new tracked source. It validates config, applies
@@ -239,19 +237,14 @@ func NewTrackedSource(cfg TrackedSourceConfig) *TrackedSource {
 		minPeriod = defaultMinPeriod
 	}
 
-	if cfg.CreditsPerRequest <= 0 {
-		cfg.CreditsPerRequest = 1
-	}
-
 	cfg.Tracker.AddSource()
 
 	return &TrackedSource{
-		name:              cfg.Name,
-		weight:            weight,
-		minPeriod:         minPeriod,
-		fetchRates:        cfg.FetchRates,
-		tracker:           cfg.Tracker,
-		creditsPerRequest: cfg.CreditsPerRequest,
+		name:       cfg.Name,
+		weight:     weight,
+		minPeriod:  minPeriod,
+		fetchRates: cfg.FetchRates,
+		tracker:    cfg.Tracker,
 	}
 }
 
@@ -265,15 +258,10 @@ func (s *TrackedSource) FetchRates(ctx context.Context) (*sources.RateInfo, erro
 		return nil, err
 	}
 
-	s.tracker.ConsumeCredits(s.creditsPerRequest)
+	s.tracker.ConsumeFetches(1)
 	return rates, nil
 }
 
 func (s *TrackedSource) QuotaStatus() *sources.QuotaStatus {
-	status := s.tracker.QuotaStatus()
-	if s.creditsPerRequest > 1 {
-		status.FetchesRemaining /= s.creditsPerRequest
-		status.FetchesLimit /= s.creditsPerRequest
-	}
-	return status
+	return s.tracker.QuotaStatus()
 }

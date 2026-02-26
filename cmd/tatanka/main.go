@@ -43,6 +43,9 @@ type Config struct {
 	// Public Address
 	NATMapping bool   `long:"natmapping" description:"Automatically discover the public IP and map the listen port via UPnP. For nodes behind a consumer router. Mutually exclusive with --publicip."`
 	PublicIP   string `long:"publicip" description:"Public IP address to advertise. For VPS/cloud servers or when port forwarding is configured manually. Mutually exclusive with --natmapping."`
+	CoinGeckoKey         string `long:"coingeckokey" description:"CoinGecko API key (demo or pro)"`
+	CoinGeckoPlan        string `long:"coingeckoplan" description:"CoinGecko plan: 'demo' or 'pro' (required if coingeckokey is set)"`
+	CoinGeckoDemoLimit int64  `long:"coingeckodemocredits" description:"CoinGecko demo tier monthly credit limit" default:"9800"`
 }
 
 // initLogRotator initializes the logging rotater to write logs to logFile and
@@ -178,6 +181,9 @@ func main() {
 		BlockcypherToken: cfg.BlockcypherToken,
 		NATMapping:       cfg.NATMapping,
 		PublicIP:         cfg.PublicIP,
+		CoinGeckoKey:        cfg.CoinGeckoKey,
+		CoinGeckoPlan:       cfg.CoinGeckoPlan,
+		CoinGeckoDemoLimit: cfg.CoinGeckoDemoLimit,
 	}
 
 	// Create Tatanka node

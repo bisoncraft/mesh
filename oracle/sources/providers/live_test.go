@@ -6,6 +6,7 @@ import (
 	"context"
 	"math"
 	"net/http"
+	"os"
 	"testing"
 	"time"
 
@@ -23,6 +24,7 @@ const (
 	coinmarketcapAPIKey = "b2def99762ca4df2b5d557ae6bf1a4a5"
 	tatumAPIKey         = ""
 	blockcypherToken    = "91ded84bd49348688d319245a62388af"
+	coingeckoAPIKey     = "CG-XWbDh1oU4ZahkyjaJotC35mM" // CoinGecko demo tier API key
 )
 
 func liveTestLogger() slog.Logger { return slog.Disabled }
@@ -50,6 +52,30 @@ func TestLiveCoinpaprikaSource(t *testing.T) {
 	testPriceSource(t, src)
 	testMinPeriod(t, src, 60*time.Second)
 	testUnlimitedQuota(t, src)
+}
+
+func TestLiveCoinGeckoSourceDemo(t *testing.T) {
+	if coingeckoAPIKey == "" {
+		t.Skip("coingecko API key not provided")
+	}
+	quotaFile := t.TempDir() + "/quota.json"
+	src, err := providers.NewCoinGeckoSource(httpClient(), liveTestLogger(), coingeckoAPIKey, false, quotaFile, 9800)
+	if err != nil {
+		t.Fatalf("NewCoinGeckoSource failed: %v", err)
+	}
+	testPriceSource(t, src)
+	testMinPeriod(t, src, 30*time.Second)
+
+	// Verify quota tracking with file persistence
+	initialStatus := src.QuotaStatus()
+	if initialStatus.FetchesRemaining >= initialStatus.FetchesLimit {
+		t.Logf("Demo tier quota: %d/%d remaining", initialStatus.FetchesRemaining, initialStatus.FetchesLimit)
+	}
+
+	// Verify quota file was created
+	if _, err := os.Stat(quotaFile); err != nil {
+		t.Fatalf("quota file should exist: %v", err)
+	}
 }
 
 func TestLiveBitcoreBitcoinCashSource(t *testing.T) {
@@ -102,6 +128,23 @@ func TestLiveCoinMarketCapSource(t *testing.T) {
 	src := providers.NewCoinMarketCapSource(httpClient(), liveTestLogger(), coinmarketcapAPIKey)
 	testPriceSource(t, src)
 	testMinPeriod(t, src, 60*time.Second)
+	testPooledQuota(t, src)
+}
+
+func TestLiveCoinGeckoSourcePro(t *testing.T) {
+	if coingeckoAPIKey == "" {
+		t.Skip("coingecko API key not provided")
+	}
+	// Demo tier keys start with "CG-" and don't work with pro-api.coingecko.com
+	if coingeckoAPIKey[:3] == "CG-" {
+		t.Skip("demo tier API key provided (use pro tier key for this test)")
+	}
+	src, err := providers.NewCoinGeckoSource(httpClient(), liveTestLogger(), coingeckoAPIKey, true, "", 0)
+	if err != nil {
+		t.Fatalf("NewCoinGeckoSource failed: %v", err)
+	}
+	testPriceSource(t, src)
+	testMinPeriod(t, src, 30*time.Second)
 	testPooledQuota(t, src)
 }
 

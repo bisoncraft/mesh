@@ -88,31 +88,31 @@ func TestNewQuotaTracker_Defaults(t *testing.T) {
 	}
 }
 
-func TestQuotaTracker_ConsumeCredits(t *testing.T) {
+func TestQuotaTracker_ConsumeFetches(t *testing.T) {
 	p := newTestPoolWithQuota(t, 100, 100)
 	p.AddSource()
 	// Trigger initial reconciliation to seed values.
 	_ = p.QuotaStatus()
 
-	p.ConsumeCredits(30)
+	p.ConsumeFetches(30)
 	status := p.QuotaStatus()
 	if status.FetchesRemaining != 70 {
 		t.Errorf("expected 70 remaining, got %d", status.FetchesRemaining)
 	}
 
-	p.ConsumeCredits(50)
+	p.ConsumeFetches(50)
 	status = p.QuotaStatus()
 	if status.FetchesRemaining != 20 {
 		t.Errorf("expected 20 remaining, got %d", status.FetchesRemaining)
 	}
 }
 
-func TestQuotaTracker_ConsumeCreditsFloorAtZero(t *testing.T) {
+func TestQuotaTracker_ConsumeFetchesFloorAtZero(t *testing.T) {
 	p := newTestPoolWithQuota(t, 10, 100)
 	p.AddSource()
 	_ = p.QuotaStatus()
 
-	p.ConsumeCredits(50) // exceeds remaining
+	p.ConsumeFetches(50) // exceeds remaining
 	status := p.QuotaStatus()
 	if status.FetchesRemaining != 0 {
 		t.Errorf("expected 0 remaining (floor), got %d", status.FetchesRemaining)
@@ -235,7 +235,7 @@ func TestQuotaTracker_ReconcileSyncsToServer(t *testing.T) {
 		// Trigger initial sync.
 		_ = p.QuotaStatus() // call=1, remaining=1000
 
-		p.ConsumeCredits(200) // local: 800
+		p.ConsumeFetches(200) // local: 800
 
 		p.reconcile() // call=2, server=700 < local=800, adopt 700
 
@@ -273,7 +273,7 @@ func TestQuotaTracker_ReconcileSyncsToServer(t *testing.T) {
 
 		_ = p.QuotaStatus() // call=1, remaining=1000
 
-		p.ConsumeCredits(200) // local: 800
+		p.ConsumeFetches(200) // local: 800
 
 		p.reconcile() // call=2, server=900 > local=800, keep local
 
@@ -294,14 +294,18 @@ func TestNewTrackedSource_RegistersWithTracker(t *testing.T) {
 	}
 
 	_ = NewTrackedSource(TrackedSourceConfig{
-		Name: "test1", FetchRates: fetchRates, Tracker: p, CreditsPerRequest: 1,
+		Name:       "source1",
+		FetchRates: fetchRates,
+		Tracker:    p,
 	})
 	if p.sourceCount != 1 {
 		t.Errorf("expected sourceCount 1, got %d", p.sourceCount)
 	}
 
 	_ = NewTrackedSource(TrackedSourceConfig{
-		Name: "test2", FetchRates: fetchRates, Tracker: p, CreditsPerRequest: 1,
+		Name:       "source2",
+		FetchRates: fetchRates,
+		Tracker:    p,
 	})
 	if p.sourceCount != 2 {
 		t.Errorf("expected sourceCount 2, got %d", p.sourceCount)
@@ -353,7 +357,6 @@ func TestTrackedSource_ConsumesCreditsOnFetch(t *testing.T) {
 			return &sources.RateInfo{}, nil
 		},
 		Tracker:           p,
-		CreditsPerRequest: 10,
 	})
 
 	// Trigger initial reconciliation to seed values.
@@ -364,10 +367,10 @@ func TestTrackedSource_ConsumesCreditsOnFetch(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Pool: 100 - 10 = 90 raw credits, divided by creditsPerRequest=10 = 9 fetches.
+	// After 1 fetch: 100 - 1 = 99 fetches remaining.
 	status := pooled.QuotaStatus()
-	if status.FetchesRemaining != 9 {
-		t.Errorf("expected 9 fetches remaining, got %d", status.FetchesRemaining)
+	if status.FetchesRemaining != 99 {
+		t.Errorf("expected 99 fetches remaining, got %d", status.FetchesRemaining)
 	}
 }
 
@@ -380,7 +383,6 @@ func TestTrackedSource_NoConsumeOnError(t *testing.T) {
 			return nil, fmt.Errorf("fetch error")
 		},
 		Tracker:           p,
-		CreditsPerRequest: 10,
 	})
 
 	// Trigger initial reconciliation to seed values.
@@ -391,11 +393,10 @@ func TestTrackedSource_NoConsumeOnError(t *testing.T) {
 		t.Fatal("expected error")
 	}
 
-	// Credits should not have been consumed.
-	// Pool: 100 raw credits, divided by creditsPerRequest=10 = 10 fetches.
+	// Failed fetch doesn't consume a fetch: 100 fetches still remaining.
 	status := pooled.QuotaStatus()
-	if status.FetchesRemaining != 10 {
-		t.Errorf("expected 10 fetches remaining after failed fetch, got %d", status.FetchesRemaining)
+	if status.FetchesRemaining != 100 {
+		t.Errorf("expected 100 fetches remaining after failed fetch, got %d", status.FetchesRemaining)
 	}
 }
 
@@ -410,7 +411,6 @@ func TestTrackedSource_FieldAccessors(t *testing.T) {
 			return &sources.RateInfo{}, nil
 		},
 		Tracker:           p,
-		CreditsPerRequest: 1,
 	})
 	if pooled.Name() != "inner-source" {
 		t.Errorf("expected Name() = inner-source, got %s", pooled.Name())
@@ -431,10 +431,14 @@ func TestTrackedSource_QuotaStatusFromTracker(t *testing.T) {
 	}
 
 	p1 := NewTrackedSource(TrackedSourceConfig{
-		Name: "test1", FetchRates: fetchRates, Tracker: p, CreditsPerRequest: 1,
+		Name:       "p1",
+		FetchRates: fetchRates,
+		Tracker:    p,
 	})
 	p2 := NewTrackedSource(TrackedSourceConfig{
-		Name: "test2", FetchRates: fetchRates, Tracker: p, CreditsPerRequest: 1,
+		Name:       "p2",
+		FetchRates: fetchRates,
+		Tracker:    p,
 	})
 
 	// 2 sources registered, so each gets 600/2=300 remaining, 1200/2=600 limit.
@@ -458,7 +462,6 @@ func TestTrackedSource_ConcurrentFetches(t *testing.T) {
 			return &sources.RateInfo{}, nil
 		},
 		Tracker:           p,
-		CreditsPerRequest: 1,
 	})
 
 	// Trigger initial reconciliation to seed values.
