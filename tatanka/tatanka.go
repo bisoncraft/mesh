@@ -270,6 +270,7 @@ func (t *TatankaNode) initHost() error {
 	t.node, err = libp2p.New(
 		libp2p.Identity(t.privateKey),
 		libp2p.ListenAddrStrings(listenAddrs...),
+		libp2p.NATPortMap(),
 	)
 	return err
 }
