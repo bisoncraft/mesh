@@ -151,99 +151,161 @@ func (c *Client) setTestMeshConnection(mc meshConn) {
 func TestSubscribe(t *testing.T) {
 	ctx := context.Background()
 
-	mc := newTMeshConnection(randomPeerID(t))
+	t.Run("with active connection", func(t *testing.T) {
+		mc := newTMeshConnection(randomPeerID(t))
 
-	c := &Client{
-		cfg:           &Config{},
-		topicRegistry: newTopicRegistry(),
-	}
-	c.setTestMeshConnection(mc)
+		c := &Client{
+			cfg:           &Config{},
+			topicRegistry: newTopicRegistry(),
+		}
+		c.setTestMeshConnection(mc)
 
-	// Subscribe to a topic successfully.
-	err := c.Subscribe(ctx, "topic-1", func(TopicEvent) {})
-	if err != nil {
-		t.Fatalf("expected nil error, got %v", err)
-	}
-	if got := len(mc.subscribeCalls); got != 1 {
-		t.Fatalf("expected 1 subscribe call, got %d", got)
-	}
-	if mc.subscribeCalls[0] != "topic-1" {
-		t.Fatalf("expected topic %q, got %q", "topic-1", mc.subscribeCalls[0])
-	}
+		// Subscribe to a topic successfully.
+		err := c.Subscribe(ctx, "topic-1", func(TopicEvent) {})
+		if err != nil {
+			t.Fatalf("expected nil error, got %v", err)
+		}
+		if got := len(mc.subscribeCalls); got != 1 {
+			t.Fatalf("expected 1 subscribe call, got %d", got)
+		}
+		if mc.subscribeCalls[0] != "topic-1" {
+			t.Fatalf("expected topic %q, got %q", "topic-1", mc.subscribeCalls[0])
+		}
 
-	// Subscribe to the same topic again should return ErrRedundantSubscription and not call mesh conn.
-	err = c.Subscribe(ctx, "topic-1", func(TopicEvent) {})
-	if !errors.Is(err, ErrRedundantSubscription) {
-		t.Fatalf("expected ErrRedundantSubscription, got %v", err)
-	}
-	if got := len(mc.subscribeCalls); got != 1 {
-		t.Fatalf("expected subscribe call count to remain 1, got %d", got)
-	}
+		// Subscribe to the same topic again should return ErrRedundantSubscription and not call mesh conn.
+		err = c.Subscribe(ctx, "topic-1", func(TopicEvent) {})
+		if !errors.Is(err, ErrRedundantSubscription) {
+			t.Fatalf("expected ErrRedundantSubscription, got %v", err)
+		}
+		if got := len(mc.subscribeCalls); got != 1 {
+			t.Fatalf("expected subscribe call count to remain 1, got %d", got)
+		}
 
-	// Subscribe to another topic when meshConn returns an error.
-	wantErr := errors.New("subscribe failed")
-	mc.subscribeErr = wantErr
-	err = c.Subscribe(ctx, "topic-2", func(TopicEvent) {})
-	if err == nil {
-		t.Fatalf("expected error, got nil")
-	}
-	if !errors.Is(err, wantErr) {
-		t.Fatalf("expected error %v, got %v", wantErr, err)
-	}
-	if got := len(mc.subscribeCalls); got != 2 {
-		t.Fatalf("expected 2 subscribe calls, got %d", got)
-	}
-	if mc.subscribeCalls[1] != "topic-2" {
-		t.Fatalf("expected topic %q, got %q", "topic-2", mc.subscribeCalls[1])
-	}
-	if _, err := c.topicRegistry.fetchHandler("topic-2"); err == nil {
-		t.Fatalf("topic-2 should not be registered when subscribe returns an error")
-	}
+		// Subscribe to another topic when meshConn returns an error.
+		wantErr := errors.New("subscribe failed")
+		mc.subscribeErr = wantErr
+		err = c.Subscribe(ctx, "topic-2", func(TopicEvent) {})
+		if err == nil {
+			t.Fatalf("expected error, got nil")
+		}
+		if !errors.Is(err, wantErr) {
+			t.Fatalf("expected error %v, got %v", wantErr, err)
+		}
+		if got := len(mc.subscribeCalls); got != 2 {
+			t.Fatalf("expected 2 subscribe calls, got %d", got)
+		}
+		if mc.subscribeCalls[1] != "topic-2" {
+			t.Fatalf("expected topic %q, got %q", "topic-2", mc.subscribeCalls[1])
+		}
+		if _, err := c.topicRegistry.fetchHandler("topic-2"); err == nil {
+			t.Fatalf("topic-2 should not be registered when subscribe returns an error")
+		}
 
-	// Unsubscribe from topic-1 with an error from meshConn.
-	wantUnsubErr := errors.New("unsubscribe failed")
-	mc.unsubscribeErr = wantUnsubErr
-	err = c.Unsubscribe(ctx, "topic-1")
-	if err == nil {
-		t.Fatalf("expected error, got nil")
-	}
-	if !errors.Is(err, wantUnsubErr) {
-		t.Fatalf("expected error %v, got %v", wantUnsubErr, err)
-	}
-	if got := len(mc.unsubscribeCalls); got != 1 {
-		t.Fatalf("expected 1 unsubscribe call, got %d", got)
-	}
-	if mc.unsubscribeCalls[0] != "topic-1" {
-		t.Fatalf("expected topic %q, got %q", "topic-1", mc.unsubscribeCalls[0])
-	}
-	if _, err := c.topicRegistry.fetchHandler("topic-1"); err != nil {
-		t.Fatalf("topic-1 should remain registered when unsubscribe returns an error")
-	}
+		// Unsubscribe from topic-1 with an error from meshConn.
+		wantUnsubErr := errors.New("unsubscribe failed")
+		mc.unsubscribeErr = wantUnsubErr
+		err = c.Unsubscribe(ctx, "topic-1")
+		if err == nil {
+			t.Fatalf("expected error, got nil")
+		}
+		if !errors.Is(err, wantUnsubErr) {
+			t.Fatalf("expected error %v, got %v", wantUnsubErr, err)
+		}
+		if got := len(mc.unsubscribeCalls); got != 1 {
+			t.Fatalf("expected 1 unsubscribe call, got %d", got)
+		}
+		if mc.unsubscribeCalls[0] != "topic-1" {
+			t.Fatalf("expected topic %q, got %q", "topic-1", mc.unsubscribeCalls[0])
+		}
+		if _, err := c.topicRegistry.fetchHandler("topic-1"); err != nil {
+			t.Fatalf("topic-1 should remain registered when unsubscribe returns an error")
+		}
 
-	// Unsubscribe without error.
-	mc.unsubscribeErr = nil
-	err = c.Unsubscribe(ctx, "topic-1")
-	if err != nil {
-		t.Fatalf("expected nil error, got %v", err)
-	}
-	if got := len(mc.unsubscribeCalls); got != 2 {
-		t.Fatalf("expected 2 unsubscribe calls, got %d", got)
-	}
-	if mc.unsubscribeCalls[1] != "topic-1" {
-		t.Fatalf("expected topic %q, got %q", "topic-1", mc.unsubscribeCalls[1])
-	}
-	if _, err := c.topicRegistry.fetchHandler("topic-1"); err == nil {
-		t.Fatalf("topic-1 should be unregistered after successful unsubscribe")
-	}
+		// Unsubscribe without error.
+		mc.unsubscribeErr = nil
+		err = c.Unsubscribe(ctx, "topic-1")
+		if err != nil {
+			t.Fatalf("expected nil error, got %v", err)
+		}
+		if got := len(mc.unsubscribeCalls); got != 2 {
+			t.Fatalf("expected 2 unsubscribe calls, got %d", got)
+		}
+		if mc.unsubscribeCalls[1] != "topic-1" {
+			t.Fatalf("expected topic %q, got %q", "topic-1", mc.unsubscribeCalls[1])
+		}
+		if _, err := c.topicRegistry.fetchHandler("topic-1"); err == nil {
+			t.Fatalf("topic-1 should be unregistered after successful unsubscribe")
+		}
 
-	// Unsubscribe again should return ErrRedundantUnsubscription and not call mesh connection.
-	err = c.Unsubscribe(ctx, "topic-1")
-	if !errors.Is(err, ErrRedundantUnsubscription) {
-		t.Fatalf("expected ErrRedundantUnsubscription, got %v", err)
-	}
-	if got := len(mc.unsubscribeCalls); got != 2 {
-		t.Fatalf("expected unsubscribe call count to remain 2, got %d", got)
-	}
+		// Unsubscribe again should return ErrRedundantUnsubscription and not call mesh connection.
+		err = c.Unsubscribe(ctx, "topic-1")
+		if !errors.Is(err, ErrRedundantUnsubscription) {
+			t.Fatalf("expected ErrRedundantUnsubscription, got %v", err)
+		}
+		if got := len(mc.unsubscribeCalls); got != 2 {
+			t.Fatalf("expected unsubscribe call count to remain 2, got %d", got)
+		}
+	})
+
+	t.Run("without active connection succeeds and registers topic", func(t *testing.T) {
+		logBackend := slog.NewBackend(os.Stdout)
+		logger := logBackend.Logger("test")
+
+		c := &Client{
+			cfg:           &Config{Logger: logger},
+			topicRegistry: newTopicRegistry(),
+			log:           logger,
+		}
+		// No connection manager set, so primaryMeshConnection() will fail
+
+		err := c.Subscribe(ctx, "topic/a", func(TopicEvent) {})
+		if err != nil {
+			t.Fatalf("expected nil error, got %v", err)
+		}
+
+		// Verify the topic is registered
+		topics := c.Topics()
+		if len(topics) != 1 {
+			t.Fatalf("expected 1 topic, got %d", len(topics))
+		}
+		if topics[0] != "topic/a" {
+			t.Fatalf("expected topic %q, got %q", "topic/a", topics[0])
+		}
+	})
+
+	t.Run("without connection unsubscribe succeeds and removes topic", func(t *testing.T) {
+		logBackend := slog.NewBackend(os.Stdout)
+		logger := logBackend.Logger("test")
+
+		c := &Client{
+			cfg:           &Config{Logger: logger},
+			topicRegistry: newTopicRegistry(),
+			log:           logger,
+		}
+
+		// Subscribe first
+		err := c.Subscribe(ctx, "topic/a", func(TopicEvent) {})
+		if err != nil {
+			t.Fatalf("subscribe failed: %v", err)
+		}
+
+		// Verify topic is registered
+		if len(c.Topics()) != 1 {
+			t.Fatalf("expected 1 topic, got %d", len(c.Topics()))
+		}
+
+		// Unsubscribe without a connection
+		err = c.Unsubscribe(ctx, "topic/a")
+		if err != nil {
+			t.Fatalf("expected nil error, got %v", err)
+		}
+
+		// Verify the topic is unregistered
+		topics := c.Topics()
+		if len(topics) != 0 {
+			t.Fatalf("expected 0 topics, got %d", len(topics))
+		}
+	})
 }
 
 func TestPushMessage(t *testing.T) {

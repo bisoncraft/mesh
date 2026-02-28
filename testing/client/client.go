@@ -438,31 +438,8 @@ func (c *Client) Run(ctx context.Context, bonds []*bond.BondParams) {
 }
 
 func (c *Client) subscribeToOracles(ctx context.Context) {
-	// Wait for connection using the connection state feed
-	feed := c.tatankaClient.ConnectionStateFeed(ctx)
-	connected := false
-	for !connected {
-		select {
-		case <-ctx.Done():
-			return
-		case state, ok := <-feed:
-			if !ok {
-				// Feed closed
-				return
-			}
-			connected = state
-		}
-	}
-
-	subscribed := make(map[string]bool)
-	attempted := make(map[string]bool)
 	for _, asset := range c.cfg.OracleTickers {
-		if attempted[asset] {
-			continue
-		}
-		attempted[asset] = true
-
-		priceErr := c.tatankaClient.SubscribeToPriceOracle(ctx, asset, func(ticker string) func(float64) {
+		if err := c.tatankaClient.SubscribeToPriceOracle(ctx, asset, func(ticker string) func(float64) {
 			return func(price float64) {
 				c.events.add(Event{
 					Type:    EventTypeData,
@@ -470,12 +447,11 @@ func (c *Client) subscribeToOracles(ctx context.Context) {
 					Message: fmt.Sprintf("%s: $%.2f", ticker, price),
 				})
 			}
-		}(asset))
-		if priceErr != nil {
-			c.log.Errorf("Failed to subscribe to %s price oracle: %v", asset, priceErr)
+		}(asset)); err != nil {
+			c.log.Errorf("Failed to subscribe to %s price oracle: %v", asset, err)
 		}
 
-		feeErr := c.tatankaClient.SubscribeToFeeRateOracle(ctx, asset, func(network string) func(*big.Int) {
+		if err := c.tatankaClient.SubscribeToFeeRateOracle(ctx, asset, func(network string) func(*big.Int) {
 			return func(feeRate *big.Int) {
 				c.events.add(Event{
 					Type:    EventTypeData,
@@ -483,17 +459,10 @@ func (c *Client) subscribeToOracles(ctx context.Context) {
 					Message: fmt.Sprintf("%s: %s", network, feeRate.String()),
 				})
 			}
-		}(asset))
-		if feeErr != nil {
-			c.log.Errorf("Failed to subscribe to %s fee rate oracle: %v", asset, feeErr)
-		}
-
-		if priceErr == nil || feeErr == nil {
-			subscribed[asset] = true
+		}(asset)); err != nil {
+			c.log.Errorf("Failed to subscribe to %s fee rate oracle: %v", asset, err)
 		}
 	}
-
-	c.log.Infof("Subscribed to oracle updates for %d tickers", len(subscribed))
 }
 
 // decodeTopicData decodes topic data to a human-readable string.

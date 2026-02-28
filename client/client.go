@@ -135,13 +135,14 @@ func (c *Client) Subscribe(ctx context.Context, topic string, handlerFunc TopicH
 		return errors.New("handler function cannot be nil")
 	}
 
-	mc, err := c.primaryMeshConnection()
-	if err != nil {
-		return err
-	}
-
 	if !c.topicRegistry.register(topic, handlerFunc) {
 		return ErrRedundantSubscription
+	}
+
+	mc, err := c.primaryMeshConnection()
+	if err != nil {
+		// No active connection; registration is stored and will be synced on reconnect.
+		return nil
 	}
 
 	err = mc.subscribe(ctx, topic)
@@ -163,11 +164,6 @@ func (c *Client) Unsubscribe(ctx context.Context, topic string) error {
 		return errEmptyTopic
 	}
 
-	mc, err := c.primaryMeshConnection()
-	if err != nil {
-		return err
-	}
-
 	// Fetch the handler for the topic before unregistering.
 	topicHandler, err := c.topicRegistry.fetchHandler(topic)
 	if err != nil {
@@ -176,6 +172,12 @@ func (c *Client) Unsubscribe(ctx context.Context, topic string) error {
 
 	if !c.topicRegistry.unregister(topic) {
 		return ErrRedundantUnsubscription
+	}
+
+	mc, err := c.primaryMeshConnection()
+	if err != nil {
+		// No active connection; topic is already removed from registry.
+		return nil
 	}
 
 	err = mc.unsubscribe(ctx, topic)
