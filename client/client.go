@@ -6,12 +6,12 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/bisoncraft/mesh/bond"
 	"github.com/decred/slog"
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
-	"github.com/bisoncraft/mesh/bond"
 
 	protocolsPb "github.com/bisoncraft/mesh/protocols/pb"
 	ma "github.com/multiformats/go-multiaddr"
@@ -234,13 +234,22 @@ func (c *Client) AddBond(params []*bond.BondParams) {
 	c.bondInfo.AddBonds(params, time.Now())
 }
 
-// WaitForConnection blocks until the client has an active primary mesh connection
-// or the context is done.
-func (c *Client) WaitForConnection(ctx context.Context) error {
+// ConnectionStateFeed returns a channel that delivers connection state changes.
+// The channel is closed when ctx is cancelled. Multiple callers can subscribe independently.
+func (c *Client) ConnectionStateFeed(ctx context.Context) <-chan bool {
 	if c.connManager == nil {
-		return errNoMeshConnection
+		ch := make(chan bool)
+		close(ch)
+		return ch
 	}
-	return c.connManager.waitForConnection(ctx)
+
+	ch, id := c.connManager.subscribe()
+	go func() {
+		<-ctx.Done()
+		c.connManager.unsubscribe(id)
+	}()
+
+	return ch
 }
 
 // parseBootstrapAddrs parses a list of multiaddr strings into peer.AddrInfo.

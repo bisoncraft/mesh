@@ -438,25 +438,19 @@ func (c *Client) Run(ctx context.Context, bonds []*bond.BondParams) {
 }
 
 func (c *Client) subscribeToOracles(ctx context.Context) {
-	backoff := time.Millisecond * 100
-	maxBackoff := time.Second * 5
-
-	for {
-		if err := c.tatankaClient.WaitForConnection(ctx); err == nil {
-			break
-		}
-
+	// Wait for connection using the connection state feed
+	feed := c.tatankaClient.ConnectionStateFeed(ctx)
+	connected := false
+	for !connected {
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(backoff):
-			if backoff < maxBackoff {
-				backoff = time.Duration(float64(backoff) * 1.5)
-				if backoff > maxBackoff {
-					backoff = maxBackoff
-				}
+		case state, ok := <-feed:
+			if !ok {
+				// Feed closed
+				return
 			}
-			continue
+			connected = state
 		}
 	}
 

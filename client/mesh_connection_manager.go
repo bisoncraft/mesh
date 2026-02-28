@@ -52,6 +52,10 @@ type meshConnectionManager struct {
 
 	connMtx     sync.Mutex
 	connChanged chan struct{}
+
+	subsMtx   sync.Mutex
+	subs      map[int64]chan bool
+	nextSubID int64
 }
 
 // meshConnectionManagerConfig holds the configuration for creating a meshConnectionManager.
@@ -68,6 +72,7 @@ func newMeshConnectionManager(cfg *meshConnectionManagerConfig) *meshConnectionM
 		log:         cfg.log,
 		connFactory: cfg.connFactory,
 		connChanged: make(chan struct{}),
+		subs:        make(map[int64]chan bool),
 	}
 
 	for _, peer := range cfg.bootstrapPeers {
@@ -98,26 +103,44 @@ func (m *meshConnectionManager) setPrimaryConnection(mc meshConn) {
 	m.connChanged = make(chan struct{})
 	m.connMtx.Unlock()
 	close(oldCh)
-}
 
-// waitForConnection blocks until the connection manager has an active primary mesh connection
-// or the context is done.
-func (m *meshConnectionManager) waitForConnection(ctx context.Context) error {
-	for {
-		if m.primaryConn.Load() != nil {
-			return nil
-		}
-
-		m.connMtx.Lock()
-		ch := m.connChanged
-		m.connMtx.Unlock()
-
+	// Broadcast state change to all subscribers
+	connected := mc != nil
+	m.subsMtx.Lock()
+	for _, ch := range m.subs {
 		select {
-		case <-ch:
-		case <-ctx.Done():
-			return ctx.Err()
+		case ch <- connected:
+		default:
+			// subscriber not draining; drop — latest state will arrive next change
 		}
 	}
+	m.subsMtx.Unlock()
+}
+
+// subscribe registers a new subscriber and returns a channel for state updates
+// along with a subscription ID. The initial state is immediately sent on the channel.
+func (m *meshConnectionManager) subscribe() (chan bool, int64) {
+	ch := make(chan bool, 1)
+
+	m.subsMtx.Lock()
+	id := m.nextSubID
+	m.nextSubID++
+	m.subs[id] = ch
+	ch <- m.primaryConn.Load() != nil // send initial state while holding lock
+	m.subsMtx.Unlock()
+
+	return ch, id
+}
+
+// unsubscribe removes a subscriber from the registry and closes its channel.
+func (m *meshConnectionManager) unsubscribe(id int64) {
+	m.subsMtx.Lock()
+	ch, ok := m.subs[id]
+	if ok {
+		delete(m.subs, id)
+		close(ch)
+	}
+	m.subsMtx.Unlock()
 }
 
 // connectResult holds the result of a connection attempt.

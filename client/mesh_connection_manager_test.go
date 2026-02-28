@@ -100,225 +100,124 @@ func TestMeshConnectionManagerFailover(t *testing.T) {
 	}
 }
 
-func TestWaitForConnection(t *testing.T) {
+func TestConnectionStateFeed(t *testing.T) {
 	logBackend := slog.NewBackend(os.Stdout)
-	logger := logBackend.Logger("wait-for-connection-test")
+	logger := logBackend.Logger("connection-state-feed-test")
 
-	t.Run("already connected returns immediately", func(t *testing.T) {
+	t.Run("initial state connected", func(t *testing.T) {
 		m := newMeshConnectionManager(&meshConnectionManagerConfig{log: logger})
 		conn := newTMeshConnection(randomPeerID(t))
 		m.setPrimaryConnection(conn)
 
-		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-		defer cancel()
-
-		start := time.Now()
-		err := m.waitForConnection(ctx)
-		elapsed := time.Since(start)
-
-		if err != nil {
-			t.Fatalf("expected no error, got %v", err)
-		}
-		if elapsed > 50*time.Millisecond {
-			t.Fatalf("expected immediate return, took %v", elapsed)
+		ch, _ := m.subscribe()
+		state := <-ch
+		if state != true {
+			t.Fatalf("expected initial state true, got %v", state)
 		}
 	})
 
-	t.Run("waits for connection when disconnected", func(t *testing.T) {
+	t.Run("initial state disconnected", func(t *testing.T) {
 		m := newMeshConnectionManager(&meshConnectionManagerConfig{log: logger})
 
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
+		ch, _ := m.subscribe()
+		state := <-ch
+		if state != false {
+			t.Fatalf("expected initial state false, got %v", state)
+		}
+	})
 
-		// Start waiter in goroutine
-		done := make(chan error, 1)
-		go func() {
-			done <- m.waitForConnection(ctx)
-		}()
+	t.Run("state change to connected", func(t *testing.T) {
+		m := newMeshConnectionManager(&meshConnectionManagerConfig{log: logger})
 
-		// Wait a bit to ensure goroutine is blocking
-		time.Sleep(100 * time.Millisecond)
+		ch, _ := m.subscribe()
+		// Discard initial state
+		<-ch
 
-		// Connect
 		conn := newTMeshConnection(randomPeerID(t))
 		m.setPrimaryConnection(conn)
 
-		// Waiter should return
-		select {
-		case err := <-done:
-			if err != nil {
-				t.Fatalf("expected no error, got %v", err)
-			}
-		case <-time.After(time.Second):
-			t.Fatal("waiter did not return after connection")
+		state := <-ch
+		if state != true {
+			t.Fatalf("expected state true after connect, got %v", state)
 		}
 	})
 
-	t.Run("multiple concurrent waiters all wake up", func(t *testing.T) {
+	t.Run("state change to disconnected", func(t *testing.T) {
 		m := newMeshConnectionManager(&meshConnectionManagerConfig{log: logger})
-
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-
-		// Start multiple waiters
-		numWaiters := 5
-		done := make(chan error, numWaiters)
-		for i := 0; i < numWaiters; i++ {
-			go func() {
-				done <- m.waitForConnection(ctx)
-			}()
-		}
-
-		// Wait a bit to ensure all goroutines are blocking
-		time.Sleep(100 * time.Millisecond)
-
-		// Connect
 		conn := newTMeshConnection(randomPeerID(t))
 		m.setPrimaryConnection(conn)
 
-		// All waiters should return
-		for i := 0; i < numWaiters; i++ {
-			select {
-			case err := <-done:
-				if err != nil {
-					t.Fatalf("waiter %d: expected no error, got %v", i, err)
-				}
-			case <-time.After(time.Second):
-				t.Fatalf("waiter %d did not return", i)
-			}
+		ch, _ := m.subscribe()
+		// Discard initial state
+		<-ch
+
+		m.setPrimaryConnection(nil)
+
+		state := <-ch
+		if state != false {
+			t.Fatalf("expected state false after disconnect, got %v", state)
 		}
 	})
 
-	t.Run("context cancellation returns error", func(t *testing.T) {
+	t.Run("multiple subscribers all notified", func(t *testing.T) {
 		m := newMeshConnectionManager(&meshConnectionManagerConfig{log: logger})
 
-		ctx, cancel := context.WithCancel(context.Background())
+		ch1, _ := m.subscribe()
+		ch2, _ := m.subscribe()
 
-		// Start waiter in goroutine
-		done := make(chan error, 1)
-		go func() {
-			done <- m.waitForConnection(ctx)
-		}()
+		// Discard initial states
+		<-ch1
+		<-ch2
 
-		// Wait a bit to ensure goroutine is blocking
-		time.Sleep(100 * time.Millisecond)
+		conn := newTMeshConnection(randomPeerID(t))
+		m.setPrimaryConnection(conn)
 
-		// Cancel context
-		cancel()
+		state1 := <-ch1
+		state2 := <-ch2
 
-		// Waiter should return with context error
-		select {
-		case err := <-done:
-			if err != context.Canceled {
-				t.Fatalf("expected context.Canceled, got %v", err)
-			}
-		case <-time.After(time.Second):
-			t.Fatal("waiter did not return after context cancel")
+		if state1 != true || state2 != true {
+			t.Fatalf("expected both subscribers to receive true, got %v and %v", state1, state2)
 		}
 	})
 
-	t.Run("handles connect/disconnect cycles", func(t *testing.T) {
+	t.Run("manual unsubscribe removes subscriber", func(t *testing.T) {
 		m := newMeshConnectionManager(&meshConnectionManagerConfig{log: logger})
 
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		defer cancel()
+		ch, id := m.subscribe()
+		// Discard initial state
+		<-ch
 
-		nodeID := randomPeerID(t)
+		// Unsubscribe
+		m.unsubscribe(id)
+		time.Sleep(10 * time.Millisecond)
 
-		// Cycle 1: wait, then connect
-		done1 := make(chan error, 1)
-		go func() {
-			done1 <- m.waitForConnection(ctx)
-		}()
-		time.Sleep(50 * time.Millisecond)
-		conn1 := newTMeshConnection(nodeID)
-		m.setPrimaryConnection(conn1)
-
-		if err := <-done1; err != nil {
-			t.Fatalf("cycle 1: expected no error, got %v", err)
+		// Try to read from channel; should be closed
+		_, ok := <-ch
+		if ok {
+			t.Fatal("expected channel to be closed after unsubscribe")
 		}
 
-		// Cycle 2: disconnect, then wait and connect
-		m.setPrimaryConnection(nil)
-
-		done2 := make(chan error, 1)
-		go func() {
-			done2 <- m.waitForConnection(ctx)
-		}()
-		time.Sleep(50 * time.Millisecond)
-		conn2 := newTMeshConnection(nodeID)
-		m.setPrimaryConnection(conn2)
-
-		if err := <-done2; err != nil {
-			t.Fatalf("cycle 2: expected no error, got %v", err)
-		}
-
-		// Cycle 3: disconnect, then wait and connect
-		m.setPrimaryConnection(nil)
-
-		done3 := make(chan error, 1)
-		go func() {
-			done3 <- m.waitForConnection(ctx)
-		}()
-		time.Sleep(50 * time.Millisecond)
-		conn3 := newTMeshConnection(nodeID)
-		m.setPrimaryConnection(conn3)
-
-		if err := <-done3; err != nil {
-			t.Fatalf("cycle 3: expected no error, got %v", err)
+		// Verify subscriber was removed
+		m.subsMtx.Lock()
+		_, exists := m.subs[id]
+		m.subsMtx.Unlock()
+		if exists {
+			t.Fatal("subscriber should be removed")
 		}
 	})
 
-	t.Run("new waiter after disconnection waits again", func(t *testing.T) {
+	t.Run("subscriber removed does not cause panic on state change", func(t *testing.T) {
 		m := newMeshConnectionManager(&meshConnectionManagerConfig{log: logger})
 
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
+		ch, id := m.subscribe()
+		// Discard initial state
+		<-ch
 
-		// Connect
-		conn1 := newTMeshConnection(randomPeerID(t))
-		m.setPrimaryConnection(conn1)
+		// Unsubscribe
+		m.unsubscribe(id)
 
-		// First waiter returns immediately (already connected)
-		done1 := make(chan error, 1)
-		go func() {
-			done1 <- m.waitForConnection(ctx)
-		}()
-
-		if err := <-done1; err != nil {
-			t.Fatalf("first waiter: expected no error, got %v", err)
-		}
-
-		// Disconnect
-		m.setPrimaryConnection(nil)
-
-		// Second waiter should block
-		done2 := make(chan error, 1)
-		go func() {
-			done2 <- m.waitForConnection(ctx)
-		}()
-
-		time.Sleep(100 * time.Millisecond)
-
-		// Should still be blocked
-		select {
-		case <-done2:
-			t.Fatal("waiter returned but should still be waiting")
-		default:
-		}
-
-		// Reconnect
-		conn2 := newTMeshConnection(randomPeerID(t))
-		m.setPrimaryConnection(conn2)
-
-		// Now waiter should return
-		select {
-		case err := <-done2:
-			if err != nil {
-				t.Fatalf("second waiter: expected no error, got %v", err)
-			}
-		case <-time.After(time.Second):
-			t.Fatal("waiter did not return after reconnection")
-		}
+		// This should not panic even though subscriber is removed
+		conn := newTMeshConnection(randomPeerID(t))
+		m.setPrimaryConnection(conn) // Should succeed without panic
 	})
 }
