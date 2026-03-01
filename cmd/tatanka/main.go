@@ -41,10 +41,10 @@ type Config struct {
 	BlockcypherToken string `long:"blockcyphertoken" description:"blockcypher API token"`
 
 	// Public Address
-	NATMapping bool   `long:"natmapping" description:"Automatically discover the public IP and map the listen port via UPnP. For nodes behind a consumer router. Mutually exclusive with --publicip."`
-	PublicIP   string `long:"publicip" description:"Public IP address to advertise. For VPS/cloud servers or when port forwarding is configured manually. Mutually exclusive with --natmapping."`
-	CoinGeckoKey         string `long:"coingeckokey" description:"CoinGecko API key (demo or pro)"`
-	CoinGeckoPlan        string `long:"coingeckoplan" description:"CoinGecko plan: 'demo' or 'pro' (required if coingeckokey is set)"`
+	NATMapping         bool   `long:"natmapping" description:"Automatically discover the public IP and map the listen port via UPnP. For nodes behind a consumer router. Mutually exclusive with --publicip."`
+	PublicIP           string `long:"publicip" description:"Public IP address to advertise. For VPS/cloud servers or when port forwarding is configured manually. Mutually exclusive with --natmapping."`
+	CoinGeckoKey       string `long:"coingeckokey" description:"CoinGecko API key (demo or pro)"`
+	CoinGeckoPlan      string `long:"coingeckoplan" description:"CoinGecko plan: 'demo' or 'pro' (required if coingeckokey is set)"`
 	CoinGeckoDemoLimit int64  `long:"coingeckodemocredits" description:"CoinGecko demo tier monthly credit limit" default:"9800"`
 }
 
@@ -168,21 +168,21 @@ func main() {
 
 	// Create Tatanka config
 	tatankaCfg := &tatanka.Config{
-		DataDir:          cfg.AppDataDir,
-		Logger:           log,
-		ListenPort:       cfg.ListenPort,
-		MetricsPort:      cfg.MetricsPort,
-		AdminPort:        cfg.AdminPort,
-		BootstrapAddrs:   cfg.Bootstrap,
-		WhitelistPeers:   whitelistPeers,
-		ForceWhitelist:   cfg.ForceWhitelist,
-		CMCKey:           cfg.CMCKey,
-		TatumKey:         cfg.TatumKey,
-		BlockcypherToken: cfg.BlockcypherToken,
-		NATMapping:       cfg.NATMapping,
-		PublicIP:         cfg.PublicIP,
-		CoinGeckoKey:        cfg.CoinGeckoKey,
-		CoinGeckoPlan:       cfg.CoinGeckoPlan,
+		DataDir:            cfg.AppDataDir,
+		Logger:             log,
+		ListenPort:         cfg.ListenPort,
+		MetricsPort:        cfg.MetricsPort,
+		AdminPort:          cfg.AdminPort,
+		BootstrapAddrs:     cfg.Bootstrap,
+		WhitelistPeers:     whitelistPeers,
+		ForceWhitelist:     cfg.ForceWhitelist,
+		CMCKey:             cfg.CMCKey,
+		TatumKey:           cfg.TatumKey,
+		BlockcypherToken:   cfg.BlockcypherToken,
+		NATMapping:         cfg.NATMapping,
+		PublicIP:           cfg.PublicIP,
+		CoinGeckoKey:       cfg.CoinGeckoKey,
+		CoinGeckoPlan:      cfg.CoinGeckoPlan,
 		CoinGeckoDemoLimit: cfg.CoinGeckoDemoLimit,
 	}
 

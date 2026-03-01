@@ -11,8 +11,8 @@ import (
 
 // SubscribeToPriceOracle subscribes to live price updates for ticker (e.g. "BTC").
 // handler is called with the USD price as a float64 for each update received.
-func (c *Client) SubscribeToPriceOracle(ctx context.Context, ticker string, handler func(float64)) error {
-	return c.Subscribe(ctx, protocols.PriceTopic(ticker), func(event TopicEvent) {
+func (c *Client) SubscribeToPriceOracle(ctx context.Context, ticker string, handler func(ticker string, price float64)) error {
+	return c.Subscribe(ctx, []string{protocols.PriceTopic(ticker)}, func(topic string, event TopicEvent) {
 		if event.Type != TopicEventData {
 			return
 		}
@@ -21,14 +21,14 @@ func (c *Client) SubscribeToPriceOracle(ctx context.Context, ticker string, hand
 			c.log.Errorf("Failed to unmarshal price update for %s: %v", ticker, err)
 			return
 		}
-		handler(priceUpdate.Price)
+		handler(ticker, priceUpdate.Price)
 	})
 }
 
 // SubscribeToFeeRateOracle subscribes to live fee rate updates for network (e.g. "BTC").
 // handler is called with the fee rate as a *big.Int for each update received.
 func (c *Client) SubscribeToFeeRateOracle(ctx context.Context, network string, handler func(*big.Int)) error {
-	return c.Subscribe(ctx, protocols.FeeRateTopic(network), func(event TopicEvent) {
+	return c.Subscribe(ctx, []string{protocols.FeeRateTopic(network)}, func(topic string, event TopicEvent) {
 		if event.Type != TopicEventData {
 			return
 		}
@@ -40,4 +40,3 @@ func (c *Client) SubscribeToFeeRateOracle(ctx context.Context, network string, h
 		handler(new(big.Int).SetBytes(feeRateUpdate.FeeRate))
 	})
 }
-

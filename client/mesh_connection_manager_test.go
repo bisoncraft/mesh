@@ -10,8 +10,22 @@ import (
 	"github.com/decred/slog"
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/libp2p/go-libp2p/core/peerstore"
 	ma "github.com/multiformats/go-multiaddr"
 )
+
+func tNewMeshConnectionManager() (*meshConnectionManager, func()) {
+	h, _ := libp2p.New()
+	logBackend := slog.NewBackend(os.Stdout)
+	logger := logBackend.Logger("T")
+	m := newMeshConnectionManager(&meshConnectionManagerConfig{
+		host: h,
+		log:  logger,
+	})
+	return m, func() {
+		_ = h.Close()
+	}
+}
 
 func TestMeshConnectionManagerFailover(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -55,11 +69,11 @@ func TestMeshConnectionManagerFailover(t *testing.T) {
 		}
 	}
 
+	h.Peerstore().AddAddrs(node1ID, node1Info.Addrs, peerstore.PermanentAddrTTL)
 	m := newMeshConnectionManager(&meshConnectionManagerConfig{
-		host:           h,
-		log:            logger,
-		connFactory:    connFactory,
-		bootstrapPeers: []peer.AddrInfo{node1Info},
+		host:        h,
+		log:         logger,
+		connFactory: connFactory,
 	})
 
 	done := make(chan struct{})
@@ -101,11 +115,10 @@ func TestMeshConnectionManagerFailover(t *testing.T) {
 }
 
 func TestConnectionStateFeed(t *testing.T) {
-	logBackend := slog.NewBackend(os.Stdout)
-	logger := logBackend.Logger("connection-state-feed-test")
 
 	t.Run("initial state connected", func(t *testing.T) {
-		m := newMeshConnectionManager(&meshConnectionManagerConfig{log: logger})
+		m, cancel := tNewMeshConnectionManager()
+		defer cancel()
 		conn := newTMeshConnection(randomPeerID(t))
 		m.setPrimaryConnection(conn)
 
@@ -117,7 +130,8 @@ func TestConnectionStateFeed(t *testing.T) {
 	})
 
 	t.Run("initial state disconnected", func(t *testing.T) {
-		m := newMeshConnectionManager(&meshConnectionManagerConfig{log: logger})
+		m, cancel := tNewMeshConnectionManager()
+		defer cancel()
 
 		ch, _ := m.subscribeToConnectionState()
 		state := <-ch
@@ -127,7 +141,8 @@ func TestConnectionStateFeed(t *testing.T) {
 	})
 
 	t.Run("state change to connected", func(t *testing.T) {
-		m := newMeshConnectionManager(&meshConnectionManagerConfig{log: logger})
+		m, cancel := tNewMeshConnectionManager()
+		defer cancel()
 
 		ch, _ := m.subscribeToConnectionState()
 		// Discard initial state
@@ -143,7 +158,8 @@ func TestConnectionStateFeed(t *testing.T) {
 	})
 
 	t.Run("state change to disconnected", func(t *testing.T) {
-		m := newMeshConnectionManager(&meshConnectionManagerConfig{log: logger})
+		m, cancel := tNewMeshConnectionManager()
+		defer cancel()
 		conn := newTMeshConnection(randomPeerID(t))
 		m.setPrimaryConnection(conn)
 
@@ -160,7 +176,8 @@ func TestConnectionStateFeed(t *testing.T) {
 	})
 
 	t.Run("multiple subscribers all notified", func(t *testing.T) {
-		m := newMeshConnectionManager(&meshConnectionManagerConfig{log: logger})
+		m, cancel := tNewMeshConnectionManager()
+		defer cancel()
 
 		ch1, _ := m.subscribeToConnectionState()
 		ch2, _ := m.subscribeToConnectionState()
@@ -181,7 +198,8 @@ func TestConnectionStateFeed(t *testing.T) {
 	})
 
 	t.Run("manual unsubscribe removes subscriber", func(t *testing.T) {
-		m := newMeshConnectionManager(&meshConnectionManagerConfig{log: logger})
+		m, cancel := tNewMeshConnectionManager()
+		defer cancel()
 
 		ch, id := m.subscribeToConnectionState()
 		// Discard initial state
@@ -207,7 +225,8 @@ func TestConnectionStateFeed(t *testing.T) {
 	})
 
 	t.Run("subscriber removed does not cause panic on state change", func(t *testing.T) {
-		m := newMeshConnectionManager(&meshConnectionManagerConfig{log: logger})
+		m, cancel := tNewMeshConnectionManager()
+		defer cancel()
 
 		ch, id := m.subscribeToConnectionState()
 		// Discard initial state
