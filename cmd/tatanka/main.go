@@ -12,6 +12,8 @@ import (
 	"strings"
 	"syscall"
 
+	"net"
+
 	"github.com/bisoncraft/mesh/tatanka"
 	"github.com/decred/slog"
 	"github.com/jessevdk/go-flags"
@@ -26,7 +28,6 @@ type Config struct {
 	AppDataDir     string   `short:"A" long:"appdata" description:"Path to application home directory."`
 	ConfigFile     string   `short:"C" long:"configfile" description:"Path to configuration file."`
 	DebugLevel     string   `short:"d" long:"debuglevel" description:"Logging level {trace, debug, info, warn, error, critical}."`
-	ListenIP       string   `long:"listenip" description:"IP address to listen on."`
 	ListenPort     int      `long:"listenport" description:"Port to listen on."`
 	MetricsPort    int      `long:"metricsport" description:"Port to scrape metrics and fetch profiles from."`
 	AdminPort      int      `long:"adminport" description:"Port to expose the admin interface on."`
@@ -38,6 +39,10 @@ type Config struct {
 	CMCKey           string `long:"cmckey" description:"coinmarketcap API key"`
 	TatumKey         string `long:"tatumkey" description:"tatum API key"`
 	BlockcypherToken string `long:"blockcyphertoken" description:"blockcypher API token"`
+
+	// Public Address
+	NATMapping bool   `long:"natmapping" description:"Automatically discover the public IP and map the listen port via UPnP. For nodes behind a consumer router. Mutually exclusive with --publicip."`
+	PublicIP   string `long:"publicip" description:"Public IP address to advertise. For VPS/cloud servers or when port forwarding is configured manually. Mutually exclusive with --natmapping."`
 }
 
 // initLogRotator initializes the logging rotater to write logs to logFile and
@@ -66,7 +71,6 @@ func main() {
 		AppDataDir:  defaultAppDataDir(),
 		ConfigFile:  defaultConfigFile(),
 		DebugLevel:  "info",
-		ListenIP:    "0.0.0.0",
 		ListenPort:  12345,
 		MetricsPort: 12355,
 		CMCKey:      "",
@@ -115,6 +119,23 @@ func main() {
 		os.Exit(1)
 	}
 
+	if cfg.NATMapping && cfg.PublicIP != "" {
+		log.Errorf("--natmapping and --publicip are mutually exclusive")
+		os.Exit(1)
+	}
+	if cfg.NATMapping && cfg.ListenPort == 0 {
+		log.Errorf("--natmapping requires --listenport")
+		os.Exit(1)
+	}
+	if cfg.PublicIP != "" && cfg.ListenPort == 0 {
+		log.Errorf("--publicip requires --listenport")
+		os.Exit(1)
+	}
+	if cfg.PublicIP != "" && net.ParseIP(cfg.PublicIP) == nil {
+		log.Errorf("--publicip %q is not a valid IP address", cfg.PublicIP)
+		os.Exit(1)
+	}
+
 	var whitelistPeers []peer.ID
 	if cfg.Whitelist != "" {
 		var err error
@@ -146,7 +167,6 @@ func main() {
 	tatankaCfg := &tatanka.Config{
 		DataDir:          cfg.AppDataDir,
 		Logger:           log,
-		ListenIP:         cfg.ListenIP,
 		ListenPort:       cfg.ListenPort,
 		MetricsPort:      cfg.MetricsPort,
 		AdminPort:        cfg.AdminPort,
@@ -156,6 +176,8 @@ func main() {
 		CMCKey:           cfg.CMCKey,
 		TatumKey:         cfg.TatumKey,
 		BlockcypherToken: cfg.BlockcypherToken,
+		NATMapping:       cfg.NATMapping,
+		PublicIP:         cfg.PublicIP,
 	}
 
 	// Create Tatanka node

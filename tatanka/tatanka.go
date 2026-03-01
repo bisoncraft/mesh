@@ -21,12 +21,14 @@ import (
 	"github.com/bisoncraft/mesh/tatanka/admin"
 	pb "github.com/bisoncraft/mesh/tatanka/pb"
 	"github.com/bisoncraft/mesh/tatanka/types"
+
 	"github.com/decred/slog"
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
+	ma "github.com/multiformats/go-multiaddr"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
@@ -57,7 +59,6 @@ const (
 type Config struct {
 	DataDir        string
 	Logger         slog.Logger
-	ListenIP       string
 	ListenPort     int
 	MetricsPort    int
 	AdminPort      int
@@ -71,6 +72,13 @@ type Config struct {
 	CMCKey           string
 	TatumKey         string
 	BlockcypherToken string
+
+	// NATMapping uses UPnP to discover the public IP and map the listen port
+	// automatically. For nodes behind a consumer router.
+	NATMapping bool
+	// PublicIP is the public IP address to advertise when port forwarding is
+	// configured manually.
+	PublicIP string
 }
 
 // Option is a functional option for configuring TatankaNode.
@@ -118,6 +126,7 @@ type TatankaNode struct {
 	adminNotify             adminNotifier
 	metricsServer           *http.Server
 	oracle                  oracleService
+	natMapper               *natMapper
 }
 
 func initTatankaNode(dataDir string) (crypto.PrivKey, error) {
@@ -262,15 +271,64 @@ func (t *TatankaNode) initHost() error {
 		return nil
 	}
 
-	listenAddrs := []string{
-		fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", t.config.ListenPort),
-		fmt.Sprintf("/ip6/::/tcp/%d", t.config.ListenPort),
+	var listenIP string
+	if t.config.NATMapping || t.config.PublicIP != "" {
+		listenIP = "0.0.0.0"
+	} else {
+		listenIP = "127.0.0.1"
+		t.log.Infof("No NAT mapping or public IP configured; running in local dev mode")
 	}
-	var err error
-	t.node, err = libp2p.New(
+	listenAddr := fmt.Sprintf("/ip4/%s/tcp/%d", listenIP, t.config.ListenPort)
+
+	opts := []libp2p.Option{
 		libp2p.Identity(t.privateKey),
-		libp2p.ListenAddrStrings(listenAddrs...),
-	)
+		libp2p.ListenAddrStrings(listenAddr),
+		libp2p.EnableRelay(),
+	}
+
+	if t.config.NATMapping {
+		nm, err := newNATMapper(t.log, t.config.ListenPort)
+		if err != nil {
+			return fmt.Errorf("failed to create NAT mapper: %w", err)
+		}
+		t.natMapper = nm
+
+		opts = append(opts, libp2p.AddrsFactory(func(addrs []ma.Multiaddr) []ma.Multiaddr {
+			pubAddr := t.natMapper.publicAddr()
+			if pubAddr == nil {
+				return addrs
+			}
+			out := []ma.Multiaddr{pubAddr}
+			for _, a := range addrs {
+				if a.String() != pubAddr.String() {
+					out = append(out, a)
+				}
+			}
+			return out
+		}))
+
+		opts = append(opts, libp2p.EnableRelayService())
+	} else if t.config.PublicIP != "" {
+		pubAddr, err := ma.NewMultiaddr(fmt.Sprintf("/ip4/%s/tcp/%d", t.config.PublicIP, t.config.ListenPort))
+		if err != nil {
+			return fmt.Errorf("invalid public address: %w", err)
+		}
+
+		opts = append(opts, libp2p.AddrsFactory(func(addrs []ma.Multiaddr) []ma.Multiaddr {
+			out := []ma.Multiaddr{pubAddr}
+			for _, a := range addrs {
+				if a.String() != pubAddr.String() {
+					out = append(out, a)
+				}
+			}
+			return out
+		}))
+
+		opts = append(opts, libp2p.EnableRelayService())
+	}
+
+	var err error
+	t.node, err = libp2p.New(opts...)
 	return err
 }
 
@@ -522,6 +580,14 @@ func (t *TatankaNode) serve(ctx context.Context) error {
 		t.peerstoreCache.run(ctx)
 	}()
 
+	if t.natMapper != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			t.natMapper.run(ctx)
+		}()
+	}
+
 	wg.Wait()
 
 	return t.shutdown()
@@ -534,6 +600,10 @@ func (t *TatankaNode) shutdown() error {
 	defer shutdownCancel()
 	if err := t.metricsServer.Shutdown(shutdownCtx); err != nil {
 		return err
+	}
+
+	if t.natMapper != nil {
+		t.natMapper.close(5 * time.Second)
 	}
 
 	if err := t.node.Close(); err != nil {
