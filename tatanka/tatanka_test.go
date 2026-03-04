@@ -31,7 +31,6 @@ import (
 )
 
 var (
-	errRelayRejected = errors.New("relay rejected")
 	errRelayNotFound = errors.New("relay counterparty not found")
 	errRelayOther    = errors.New("relay error")
 
@@ -460,8 +459,6 @@ func (tc *testClient) relayMessage(ctx context.Context, counterparty peer.ID, me
 		switch {
 		case errObj.GetCpNotFoundError() != nil:
 			return nil, errRelayNotFound
-		case errObj.GetCpRejectedError() != nil:
-			return nil, errRelayRejected
 		default:
 			return nil, fmt.Errorf("%w: %v", errRelayOther, errObj)
 		}
@@ -498,8 +495,8 @@ func (tc *testClient) rejectRelay(ctx context.Context) error {
 		resp := &protocolsPb.TatankaRelayMessageResponse{
 			Response: &protocolsPb.TatankaRelayMessageResponse_Error{
 				Error: &protocolsPb.Error{
-					Error: &protocolsPb.Error_CpRejectedError{
-						CpRejectedError: &protocolsPb.CounterpartyRejectedError{},
+					Error: &protocolsPb.Error_Message{
+						Message: "counterparty rejected message",
 					},
 				},
 			},
@@ -944,7 +941,7 @@ func TestClientRelay(t *testing.T) {
 			_ = counterparty.rejectRelay(ctx)
 		}()
 
-		if _, err := initiator.relayMessage(ctx, counterparty.host.ID(), []byte("hi")); !errors.Is(err, errRelayRejected) {
+		if _, err := initiator.relayMessage(ctx, counterparty.host.ID(), []byte("hi")); !errors.Is(err, errRelayOther) {
 			t.Fatalf("expected rejection error, got %v", err)
 		}
 	})
@@ -963,7 +960,7 @@ func TestClientRelay(t *testing.T) {
 			_ = counterparty.rejectRelay(ctx)
 		}()
 
-		if _, err := initiator.relayMessage(ctx, counterparty.host.ID(), []byte("hi")); !errors.Is(err, errRelayRejected) {
+		if _, err := initiator.relayMessage(ctx, counterparty.host.ID(), []byte("hi")); !errors.Is(err, errRelayOther) {
 			t.Fatalf("expected rejection error, got %v", err)
 		}
 	})

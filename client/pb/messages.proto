@@ -1,0 +1,55 @@
+syntax = "proto3";
+
+package clientpb;
+
+option go_package = "github.com/bisoncraft/mesh/client/pb;clientpb";
+
+message Error {
+    oneof error {
+        string message = 1;
+        NoEncryptionKeyError no_encryption_key_error = 2;
+    }
+}
+
+message NoEncryptionKeyError {
+}
+
+message HandshakeRequest {
+    bytes public_key = 1;
+    bytes nonce = 2;
+    bytes signature = 3;
+}
+
+message HandshakeResponse {
+    oneof result {
+        bytes public_key = 1;
+        Error error = 2;
+    };
+    bytes signature = 3;
+    bytes nonce = 4;
+}
+
+message MessageRequest {
+    bytes message = 1;
+}
+
+message MessageResponse {
+    oneof response {
+        bytes message = 1;
+        Error error = 2;
+    }
+}
+
+message ClientRequest {
+    oneof request {
+        HandshakeRequest handshake_request = 1;
+        MessageRequest message_request = 2;
+    }
+}
+
+message ClientResponse {
+    oneof response {
+        HandshakeResponse handshake_response = 1;
+        MessageResponse message_response = 2;
+    }
+}

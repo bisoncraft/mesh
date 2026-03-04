@@ -1,18 +1,30 @@
 package client
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/decred/slog"
+	"github.com/libp2p/go-libp2p"
+	"github.com/libp2p/go-libp2p/core/crypto"
+	"github.com/libp2p/go-libp2p/core/host"
+	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
+	clientpb "github.com/bisoncraft/mesh/client/pb"
+	"github.com/bisoncraft/mesh/codec"
+	"github.com/bisoncraft/mesh/protocols"
 	protocolsPb "github.com/bisoncraft/mesh/protocols/pb"
+	"google.golang.org/protobuf/proto"
 )
 
 type relayMessageParams struct {
@@ -34,6 +46,10 @@ type tMeshConnection struct {
 	mu sync.Mutex
 
 	remotePeer peer.ID
+
+	relayMessageCalls   []relayMessageParams
+	relayMessageReturns []relayMessageReturnValue
+	relayMessageIdx     int
 
 	broadcastCalls []broadcastParams
 	broadcastErr   error
@@ -68,6 +84,28 @@ func (m *tMeshConnection) remotePeerID() peer.ID {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.remotePeer
+}
+
+func (m *tMeshConnection) relayMessage(ctx context.Context, peerID peer.ID, message []byte) ([]byte, error) {
+	m.mu.Lock()
+	call := relayMessageParams{
+		PeerID:  peerID,
+		Message: append([]byte(nil), message...),
+	}
+	m.relayMessageCalls = append(m.relayMessageCalls, call)
+	idx := m.relayMessageIdx
+	m.relayMessageIdx++
+	rets := m.relayMessageReturns
+	m.mu.Unlock()
+
+	if idx >= len(rets) {
+		return nil, errors.New("unexpected relayMessage call")
+	}
+
+	if rets[idx].err != nil {
+		return nil, rets[idx].err
+	}
+	return rets[idx].resp, nil
 }
 
 func (m *tMeshConnection) broadcast(ctx context.Context, topic string, data []byte) error {
@@ -135,6 +173,104 @@ func (m *tMeshConnection) waitReady(ctx context.Context) {
 func (m *tMeshConnection) fail(err error) {
 	m.runErrCh <- err
 }
+
+type encryptPeerMessageParams struct {
+	PeerID  peer.ID
+	Message []byte
+	Nonce   keyID
+}
+
+type decryptPeerMessageParams struct {
+	PeerID  peer.ID
+	Message []byte
+}
+
+type clearEncryptionKeyParams struct {
+	PeerID peer.ID
+	ID     keyID
+}
+
+type handleHandshakeRequestParams struct {
+	PeerID peer.ID
+	Nonce  []byte
+	PubKey []byte
+}
+
+type tEncryptionManager struct {
+	mu sync.Mutex
+
+	encryptPeerMessageCalls []encryptPeerMessageParams
+	encryptPeerMessageResp  []byte
+	encryptPeerMessageID    keyID
+	encryptPeerMessageErr   error
+
+	decryptPeerMessageCalls []decryptPeerMessageParams
+	decryptPeerMessageResp  []byte
+	decryptPeerMessageID    keyID
+	decryptPeerMessageErr   error
+
+	clearEncryptionKeyCalls []clearEncryptionKeyParams
+
+	handleHandshakeRequestCalls []handleHandshakeRequestParams
+	handleHandshakeRequestResp  []byte
+	handleHandshakeRequestErr   error
+}
+
+var _ encryptionManager = (*tEncryptionManager)(nil)
+
+func (em *tEncryptionManager) encryptPeerMessage(ctx context.Context, peerID peer.ID, msg []byte, nonce keyID) ([]byte, keyID, error) {
+	em.mu.Lock()
+	em.encryptPeerMessageCalls = append(em.encryptPeerMessageCalls, encryptPeerMessageParams{
+		PeerID:  peerID,
+		Message: append([]byte(nil), msg...),
+		Nonce:   nonce,
+	})
+	respB := append([]byte(nil), em.encryptPeerMessageResp...)
+	retID := em.encryptPeerMessageID
+	err := em.encryptPeerMessageErr
+	em.mu.Unlock()
+
+	return respB, retID, err
+}
+
+func (em *tEncryptionManager) decryptPeerMessage(peerID peer.ID, msg []byte) ([]byte, keyID, error) {
+	em.mu.Lock()
+	em.decryptPeerMessageCalls = append(em.decryptPeerMessageCalls, decryptPeerMessageParams{
+		PeerID:  peerID,
+		Message: append([]byte(nil), msg...),
+	})
+	respB := append([]byte(nil), em.decryptPeerMessageResp...)
+	retID := em.decryptPeerMessageID
+	err := em.decryptPeerMessageErr
+	em.mu.Unlock()
+
+	return respB, retID, err
+}
+
+func (em *tEncryptionManager) clearEncryptionKey(peerID peer.ID, id keyID) {
+	em.mu.Lock()
+	em.clearEncryptionKeyCalls = append(em.clearEncryptionKeyCalls, clearEncryptionKeyParams{
+		PeerID: peerID,
+		ID:     id,
+	})
+	em.mu.Unlock()
+}
+
+func (em *tEncryptionManager) handleHandshakeRequest(peerID peer.ID, nonceB, pubKeyB []byte) ([]byte, error) {
+	em.mu.Lock()
+	em.handleHandshakeRequestCalls = append(em.handleHandshakeRequestCalls, handleHandshakeRequestParams{
+		PeerID: peerID,
+		Nonce:  append([]byte(nil), nonceB...),
+		PubKey: append([]byte(nil), pubKeyB...),
+	})
+	respB := append([]byte(nil), em.handleHandshakeRequestResp...)
+	err := em.handleHandshakeRequestErr
+	em.mu.Unlock()
+
+	return respB, err
+}
+
+func (em *tEncryptionManager) run(ctx context.Context) {}
 
 // setTestMeshConnection sets up a mock mesh connection for testing.
 func (c *Client) setTestMeshConnection(mc meshConn) {
@@ -700,6 +836,646 @@ func TestMalformedInput(t *testing.T) {
 
 		if broadcastCallCount != 0 {
 			t.Fatalf("Expected 0 broadcast calls, got %d", broadcastCallCount)
+		}
+	})
+}
+
+func TestSendHandshakeRequest(t *testing.T) {
+	ctx := context.Background()
+
+	ourPriv, _, err := crypto.GenerateEd25519Key(rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateEd25519Key: %v", err)
+	}
+	ourPub := ourPriv.GetPublic()
+
+	peerPriv, _, err := crypto.GenerateEd25519Key(rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateEd25519Key (peer): %v", err)
+	}
+	peerID, err := peer.IDFromPrivateKey(peerPriv)
+	if err != nil {
+		t.Fatalf("peer.IDFromPrivateKey: %v", err)
+	}
+
+	var nonce keyID
+	copy(nonce[:], []byte("0123456789abcdef"))
+
+	reqEncPubKey := bytes.Repeat([]byte{0x01}, 32)
+	respEncPubKey := bytes.Repeat([]byte{0x02}, 32)
+
+	makeClient := func(mc *tMeshConnection) *Client {
+		c := &Client{
+			cfg:           &Config{PrivateKey: ourPriv},
+			topicRegistry: newTopicRegistry(),
+		}
+		c.setTestMeshConnection(mc)
+		return c
+	}
+
+	t.Run("success", func(t *testing.T) {
+		mc := &tMeshConnection{remotePeer: peerID}
+
+		// Craft a valid, signed handshake response from the peer.
+		hsResp := pbHandshakeResponseSuccess(respEncPubKey, nonce[:])
+		unsignedResp := proto.Clone(hsResp).(*clientpb.HandshakeResponse)
+		unsignedResp.Signature = nil
+		unsignedRespPayload, err := proto.Marshal(unsignedResp)
+		if err != nil {
+			t.Fatalf("marshal unsigned handshake response: %v", err)
+		}
+		sig, err := peerPriv.Sign(unsignedRespPayload)
+		if err != nil {
+			t.Fatalf("sign handshake response: %v", err)
+		}
+		hsResp.Signature = sig
+		respBytes, err := proto.Marshal(pbClientResponseHandshake(hsResp))
+		if err != nil {
+			t.Fatalf("marshal client response: %v", err)
+		}
+		mc.relayMessageReturns = []relayMessageReturnValue{{resp: respBytes}}
+
+		c := makeClient(mc)
+		gotPub, err := c.sendHandshakeRequest(ctx, peerID, nonce, reqEncPubKey)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !bytes.Equal(gotPub, respEncPubKey) {
+			t.Fatalf("expected public key %x, got %x", respEncPubKey, gotPub)
+		}
+
+		// Validate the outbound request sent via relayMessage.
+		if got := len(mc.relayMessageCalls); got != 1 {
+			t.Fatalf("expected 1 relayMessage call, got %d", got)
+		}
+		if mc.relayMessageCalls[0].PeerID != peerID {
+			t.Fatalf("expected relay peerID %q, got %q", peerID, mc.relayMessageCalls[0].PeerID)
+		}
+
+		reqEnv := &clientpb.ClientRequest{}
+		if err := proto.Unmarshal(mc.relayMessageCalls[0].Message, reqEnv); err != nil {
+			t.Fatalf("unmarshal client request: %v", err)
+		}
+		hsReq := reqEnv.GetHandshakeRequest()
+		if hsReq == nil {
+			t.Fatalf("expected handshake request")
+		}
+		if !bytes.Equal(hsReq.GetNonce(), nonce[:]) {
+			t.Fatalf("expected nonce %x, got %x", nonce[:], hsReq.GetNonce())
+		}
+		if !bytes.Equal(hsReq.GetPublicKey(), reqEncPubKey) {
+			t.Fatalf("expected public key %x, got %x", reqEncPubKey, hsReq.GetPublicKey())
+		}
+
+		// Verify the client's signature on the request.
+		unsignedReq := proto.Clone(hsReq).(*clientpb.HandshakeRequest)
+		unsignedReq.Signature = nil
+		unsignedReqPayload, err := proto.Marshal(unsignedReq)
+		if err != nil {
+			t.Fatalf("marshal unsigned handshake request: %v", err)
+		}
+		ok, err := ourPub.Verify(unsignedReqPayload, hsReq.GetSignature())
+		if err != nil {
+			t.Fatalf("verify signature: %v", err)
+		}
+		if !ok {
+			t.Fatalf("expected handshake request signature to be valid")
+		}
+	})
+
+	t.Run("peer error response", func(t *testing.T) {
+		mc := &tMeshConnection{remotePeer: peerID}
+
+		hsResp := pbHandshakeResponseError("boom", nonce[:])
+		respBytes, err := proto.Marshal(pbClientResponseHandshake(hsResp))
+		if err != nil {
+			t.Fatalf("marshal client response: %v", err)
+		}
+		mc.relayMessageReturns = []relayMessageReturnValue{{resp: respBytes}}
+
+		c := makeClient(mc)
+		_, err = c.sendHandshakeRequest(ctx, peerID, nonce, reqEncPubKey)
+		if err == nil {
+			t.Fatalf("expected error, got nil")
+		}
+		if !strings.Contains(err.Error(), "handshake response error") || !strings.Contains(err.Error(), "boom") {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("invalid peer signature", func(t *testing.T) {
+		mc := &tMeshConnection{remotePeer: peerID}
+
+		hsResp := pbHandshakeResponseSuccess(respEncPubKey, nonce[:])
+		hsResp.Signature = []byte("definitely-not-a-valid-signature")
+		respBytes, err := proto.Marshal(pbClientResponseHandshake(hsResp))
+		if err != nil {
+			t.Fatalf("marshal client response: %v", err)
+		}
+		mc.relayMessageReturns = []relayMessageReturnValue{{resp: respBytes}}
+
+		c := makeClient(mc)
+		_, err = c.sendHandshakeRequest(ctx, peerID, nonce, reqEncPubKey)
+		if err == nil {
+			t.Fatalf("expected error, got nil")
+		}
+		if !strings.Contains(err.Error(), "invalid handshake response signature") {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+}
+
+func TestMessagePeer(t *testing.T) {
+	ctx := context.Background()
+
+	peerID := peer.ID("peer")
+	msg := []byte("hello")
+
+	makeClient := func(mc *tMeshConnection, em *tEncryptionManager) *Client {
+		c := &Client{
+			cfg:               &Config{},
+			topicRegistry:     newTopicRegistry(),
+			encryptionManager: em,
+		}
+		c.setTestMeshConnection(mc)
+		return c
+	}
+
+	t.Run("success", func(t *testing.T) {
+		mc := &tMeshConnection{remotePeer: peerID}
+		em := &tEncryptionManager{}
+
+		encryptedReq := []byte("enc-req")
+		encryptedResp := []byte("enc-resp")
+		plaintextResp := []byte("plain-resp")
+
+		var encID keyID
+		copy(encID[:], []byte("enc-id-000000000"))
+
+		em.encryptPeerMessageResp = encryptedReq
+		em.encryptPeerMessageID = encID
+		em.decryptPeerMessageResp = plaintextResp
+
+		respBytes, err := proto.Marshal(pbClientResponseMessage(pbMessageResponseSuccess(encryptedResp)))
+		if err != nil {
+			t.Fatalf("marshal response: %v", err)
+		}
+		mc.relayMessageReturns = []relayMessageReturnValue{{resp: respBytes}}
+
+		c := makeClient(mc, em)
+		got, err := c.MessagePeer(ctx, peerID, msg)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !bytes.Equal(got, plaintextResp) {
+			t.Fatalf("expected %q, got %q", string(plaintextResp), string(got))
+		}
+
+		if gotN := len(em.decryptPeerMessageCalls); gotN != 1 {
+			t.Fatalf("expected 1 decrypt call, got %d", gotN)
+		}
+		if em.decryptPeerMessageCalls[0].PeerID != peerID {
+			t.Fatalf("expected decrypt peer %q, got %q", peerID, em.decryptPeerMessageCalls[0].PeerID)
+		}
+		if !bytes.Equal(em.decryptPeerMessageCalls[0].Message, encryptedResp) {
+			t.Fatalf("expected decrypt message %x, got %x", encryptedResp, em.decryptPeerMessageCalls[0].Message)
+		}
+	})
+
+	t.Run("peer reports no encryption key -> clear and retry", func(t *testing.T) {
+		mc := &tMeshConnection{remotePeer: peerID}
+		em := &tEncryptionManager{}
+
+		encryptedReq := []byte("enc-req")
+		encryptedResp := []byte("enc-resp")
+		plaintextResp := []byte("plain-resp")
+
+		var encID keyID
+		copy(encID[:], []byte("enc-id-000000000"))
+
+		em.encryptPeerMessageResp = encryptedReq
+		em.encryptPeerMessageID = encID
+		em.decryptPeerMessageResp = plaintextResp
+
+		noKeyRespBytes, err := proto.Marshal(pbClientResponseMessage(pbMessageResponseNoEncryptionKey()))
+		if err != nil {
+			t.Fatalf("marshal no-key response: %v", err)
+		}
+		successRespBytes, err := proto.Marshal(pbClientResponseMessage(pbMessageResponseSuccess(encryptedResp)))
+		if err != nil {
+			t.Fatalf("marshal success response: %v", err)
+		}
+		mc.relayMessageReturns = []relayMessageReturnValue{
+			{resp: noKeyRespBytes},
+			{resp: successRespBytes},
+		}
+
+		c := makeClient(mc, em)
+		got, err := c.MessagePeer(ctx, peerID, msg)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !bytes.Equal(got, plaintextResp) {
+			t.Fatalf("expected %q, got %q", string(plaintextResp), string(got))
+		}
+
+		if gotN := len(mc.relayMessageCalls); gotN != 2 {
+			t.Fatalf("expected 2 relay calls, got %d", gotN)
+		}
+		if gotN := len(em.clearEncryptionKeyCalls); gotN != 1 {
+			t.Fatalf("expected 1 clearEncryptionKey call, got %d", gotN)
+		}
+		if em.clearEncryptionKeyCalls[0].PeerID != peerID {
+			t.Fatalf("expected clear peer %q, got %q", peerID, em.clearEncryptionKeyCalls[0].PeerID)
+		}
+		if em.clearEncryptionKeyCalls[0].ID != encID {
+			t.Fatalf("expected clear keyID %x, got %x", encID, em.clearEncryptionKeyCalls[0].ID)
+		}
+	})
+
+	t.Run("peer returns other error -> no retry", func(t *testing.T) {
+		mc := &tMeshConnection{remotePeer: peerID}
+		em := &tEncryptionManager{}
+
+		encryptedReq := []byte("enc-req")
+		em.encryptPeerMessageResp = encryptedReq
+
+		errRespBytes, err := proto.Marshal(pbClientResponseMessage(pbMessageResponseError("nope")))
+		if err != nil {
+			t.Fatalf("marshal error response: %v", err)
+		}
+		mc.relayMessageReturns = []relayMessageReturnValue{{resp: errRespBytes}}
+
+		c := makeClient(mc, em)
+		_, err = c.MessagePeer(ctx, peerID, msg)
+		if err == nil {
+			t.Fatalf("expected error, got nil")
+		}
+		if !strings.Contains(err.Error(), "peer error: nope") {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if gotN := len(mc.relayMessageCalls); gotN != 1 {
+			t.Fatalf("expected 1 relay call, got %d", gotN)
+		}
+		if gotN := len(em.clearEncryptionKeyCalls); gotN != 0 {
+			t.Fatalf("expected 0 clearEncryptionKey calls, got %d", gotN)
+		}
+	})
+}
+
+func TestHandlePeerMessage(t *testing.T) {
+	newHost := func(t *testing.T) (host.Host, crypto.PrivKey) {
+		t.Helper()
+		priv, _, err := crypto.GenerateEd25519Key(rand.Reader)
+		if err != nil {
+			t.Fatalf("GenerateEd25519Key: %v", err)
+		}
+		h, err := libp2p.New(
+			libp2p.Identity(priv),
+			libp2p.ListenAddrStrings("/ip4/127.0.0.1/tcp/0"),
+		)
+		if err != nil {
+			t.Fatalf("libp2p.New: %v", err)
+		}
+		return h, priv
+	}
+
+	connect := func(t *testing.T, ctx context.Context, a, b host.Host) {
+		t.Helper()
+		a.Peerstore().AddAddrs(b.ID(), b.Addrs(), time.Minute)
+		if err := a.Connect(ctx, peer.AddrInfo{ID: b.ID(), Addrs: b.Addrs()}); err != nil {
+			t.Fatalf("connect: %v", err)
+		}
+	}
+
+	readClientResponse := func(t *testing.T, s network.Stream) *clientpb.ClientResponse {
+		t.Helper()
+		resp := &protocolsPb.TatankaRelayMessageResponse{}
+		if err := codec.ReadLengthPrefixedMessage(s, resp); err != nil {
+			t.Fatalf("read relay response: %v", err)
+		}
+		msg := resp.GetMessage()
+		if len(msg) == 0 {
+			t.Fatalf("expected relay response message payload")
+		}
+		env := &clientpb.ClientResponse{}
+		if err := proto.Unmarshal(msg, env); err != nil {
+			t.Fatalf("unmarshal client response: %v", err)
+		}
+		return env
+	}
+
+	logger := slog.NewBackend(io.Discard).Logger("client_test")
+
+	t.Run("handshake request -> handleHandshakeRequest called, response sent", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		srvHost, srvPriv := newHost(t)
+		defer func() { _ = srvHost.Close() }()
+
+		peerHost, peerPriv := newHost(t)
+		defer func() { _ = peerHost.Close() }()
+
+		connect(t, ctx, peerHost, srvHost)
+
+		em := &tEncryptionManager{}
+		ourEncPub := bytes.Repeat([]byte{0xAA}, 32)
+		em.handleHandshakeRequestResp = ourEncPub
+
+		c := &Client{
+			cfg:               &Config{PrivateKey: srvPriv, Logger: logger},
+			host:              srvHost,
+			log:               logger,
+			topicRegistry:     newTopicRegistry(),
+			encryptionManager: em,
+		}
+
+		if err := c.HandlePeerMessage(func([]byte) ([]byte, error) { return nil, nil }); err != nil {
+			t.Fatalf("HandlePeerMessage: %v", err)
+		}
+
+		// Build a properly signed handshake request from the peer.
+		var nonce keyID
+		copy(nonce[:], []byte("0123456789abcdef"))
+		peerEncPub := bytes.Repeat([]byte{0xBB}, 32)
+		hsReq := &clientpb.HandshakeRequest{
+			Nonce:     nonce[:],
+			PublicKey: peerEncPub,
+		}
+		unsigned := proto.Clone(hsReq).(*clientpb.HandshakeRequest)
+		unsigned.Signature = nil
+		unsignedPayload, err := proto.Marshal(unsigned)
+		if err != nil {
+			t.Fatalf("marshal unsigned hs req: %v", err)
+		}
+		sig, err := peerPriv.Sign(unsignedPayload)
+		if err != nil {
+			t.Fatalf("sign hs req: %v", err)
+		}
+		hsReq.Signature = sig
+
+		reqPayload, err := proto.Marshal(pbClientRequestHandshake(hsReq))
+		if err != nil {
+			t.Fatalf("marshal client request: %v", err)
+		}
+
+		s, err := peerHost.NewStream(ctx, srvHost.ID(), protocols.TatankaRelayMessageProtocol)
+		if err != nil {
+			t.Fatalf("NewStream: %v", err)
+		}
+		defer func() { _ = s.Close() }()
+
+		if err := codec.WriteLengthPrefixedMessage(s, &protocolsPb.TatankaRelayMessageRequest{
+			PeerID:  []byte(peerHost.ID()),
+			Message: reqPayload,
+		}); err != nil {
+			t.Fatalf("write relay request: %v", err)
+		}
+
+		env := readClientResponse(t, s)
+		hsResp := env.GetHandshakeResponse()
+		if hsResp == nil {
+			t.Fatalf("expected handshake response")
+		}
+		if hsResp.GetError() != nil {
+			t.Fatalf("unexpected handshake error: %v", hsResp.GetError().GetMessage())
+		}
+		if !bytes.Equal(hsResp.GetNonce(), nonce[:]) {
+			t.Fatalf("expected nonce %x, got %x", nonce[:], hsResp.GetNonce())
+		}
+		if !bytes.Equal(hsResp.GetPublicKey(), ourEncPub) {
+			t.Fatalf("expected public key %x, got %x", ourEncPub, hsResp.GetPublicKey())
+		}
+		if len(hsResp.GetSignature()) == 0 {
+			t.Fatalf("expected handshake response signature")
+		}
+
+		// Ensure handleHandshakeRequest was called with correct args.
+		if got := len(em.handleHandshakeRequestCalls); got != 1 {
+			t.Fatalf("expected 1 handleHandshakeRequest call, got %d", got)
+		}
+		call := em.handleHandshakeRequestCalls[0]
+		if call.PeerID != peerHost.ID() {
+			t.Fatalf("expected peerID %q, got %q", peerHost.ID(), call.PeerID)
+		}
+		if !bytes.Equal(call.Nonce, nonce[:]) {
+			t.Fatalf("expected nonce %x, got %x", nonce[:], call.Nonce)
+		}
+		if !bytes.Equal(call.PubKey, peerEncPub) {
+			t.Fatalf("expected pubkey %x, got %x", peerEncPub, call.PubKey)
+		}
+	})
+
+	t.Run("message request -> decrypt ok, handler called, encrypt called", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		srvHost, srvPriv := newHost(t)
+		defer func() { _ = srvHost.Close() }()
+
+		peerHost, _ := newHost(t)
+		defer func() { _ = peerHost.Close() }()
+
+		connect(t, ctx, peerHost, srvHost)
+
+		em := &tEncryptionManager{}
+		encryptedReq := []byte("encrypted-req")
+		plaintextReq := []byte("plaintext-req")
+		plaintextResp := []byte("plaintext-resp")
+		encryptedResp := []byte("encrypted-resp")
+
+		var nonce keyID
+		copy(nonce[:], []byte("0123456789abcdef"))
+		em.decryptPeerMessageResp = plaintextReq
+		em.decryptPeerMessageID = nonce
+		em.encryptPeerMessageResp = encryptedResp
+
+		handlerCalls := 0
+		handler := func(b []byte) ([]byte, error) {
+			handlerCalls++
+			if !bytes.Equal(b, plaintextReq) {
+				t.Fatalf("expected handler input %q, got %q", string(plaintextReq), string(b))
+			}
+			return plaintextResp, nil
+		}
+
+		c := &Client{
+			cfg:               &Config{PrivateKey: srvPriv, Logger: logger},
+			host:              srvHost,
+			log:               logger,
+			topicRegistry:     newTopicRegistry(),
+			encryptionManager: em,
+		}
+		if err := c.HandlePeerMessage(handler); err != nil {
+			t.Fatalf("HandlePeerMessage: %v", err)
+		}
+
+		reqPayload, err := proto.Marshal(pbClientRequestMessage(encryptedReq))
+		if err != nil {
+			t.Fatalf("marshal client request: %v", err)
+		}
+
+		s, err := peerHost.NewStream(ctx, srvHost.ID(), protocols.TatankaRelayMessageProtocol)
+		if err != nil {
+			t.Fatalf("NewStream: %v", err)
+		}
+		defer func() { _ = s.Close() }()
+
+		if err := codec.WriteLengthPrefixedMessage(s, &protocolsPb.TatankaRelayMessageRequest{
+			PeerID:  []byte(peerHost.ID()),
+			Message: reqPayload,
+		}); err != nil {
+			t.Fatalf("write relay request: %v", err)
+		}
+
+		env := readClientResponse(t, s)
+		msgResp := env.GetMessageResponse()
+		if msgResp == nil {
+			t.Fatalf("expected message response")
+		}
+		if msgResp.GetError() != nil {
+			t.Fatalf("unexpected message error: %v", msgResp.GetError().GetMessage())
+		}
+		if !bytes.Equal(msgResp.GetMessage(), encryptedResp) {
+			t.Fatalf("expected encrypted resp %q, got %q", string(encryptedResp), string(msgResp.GetMessage()))
+		}
+		if handlerCalls != 1 {
+			t.Fatalf("expected handlerCalls=1, got %d", handlerCalls)
+		}
+		if got := len(em.decryptPeerMessageCalls); got != 1 {
+			t.Fatalf("expected 1 decrypt call, got %d", got)
+		}
+		if got := len(em.encryptPeerMessageCalls); got != 1 {
+			t.Fatalf("expected 1 encrypt call, got %d", got)
+		}
+		if !bytes.Equal(em.encryptPeerMessageCalls[0].Message, plaintextResp) {
+			t.Fatalf("expected encrypt input %q, got %q", string(plaintextResp), string(em.encryptPeerMessageCalls[0].Message))
+		}
+		if em.encryptPeerMessageCalls[0].Nonce != nonce {
+			t.Fatalf("expected encrypt nonce %x, got %x", nonce, em.encryptPeerMessageCalls[0].Nonce)
+		}
+	})
+
+	t.Run("message request -> unknown key id -> no encryption key error response", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		srvHost, srvPriv := newHost(t)
+		defer func() { _ = srvHost.Close() }()
+
+		peerHost, _ := newHost(t)
+		defer func() { _ = peerHost.Close() }()
+
+		connect(t, ctx, peerHost, srvHost)
+
+		em := &tEncryptionManager{}
+		em.decryptPeerMessageErr = ErrUnknownKeyID
+
+		handlerCalls := 0
+		handler := func(b []byte) ([]byte, error) {
+			handlerCalls++
+			return nil, nil
+		}
+
+		c := &Client{
+			cfg:               &Config{PrivateKey: srvPriv, Logger: logger},
+			host:              srvHost,
+			log:               logger,
+			topicRegistry:     newTopicRegistry(),
+			encryptionManager: em,
+		}
+		if err := c.HandlePeerMessage(handler); err != nil {
+			t.Fatalf("HandlePeerMessage: %v", err)
+		}
+
+		reqPayload, err := proto.Marshal(pbClientRequestMessage([]byte("encrypted-req")))
+		if err != nil {
+			t.Fatalf("marshal client request: %v", err)
+		}
+
+		s, err := peerHost.NewStream(ctx, srvHost.ID(), protocols.TatankaRelayMessageProtocol)
+		if err != nil {
+			t.Fatalf("NewStream: %v", err)
+		}
+		defer func() { _ = s.Close() }()
+
+		if err := codec.WriteLengthPrefixedMessage(s, &protocolsPb.TatankaRelayMessageRequest{
+			PeerID:  []byte(peerHost.ID()),
+			Message: reqPayload,
+		}); err != nil {
+			t.Fatalf("write relay request: %v", err)
+		}
+
+		env := readClientResponse(t, s)
+		msgResp := env.GetMessageResponse()
+		if msgResp == nil {
+			t.Fatalf("expected message response")
+		}
+		if msgResp.GetError() == nil || msgResp.GetError().GetNoEncryptionKeyError() == nil {
+			t.Fatalf("expected no-encryption-key error response")
+		}
+		if handlerCalls != 0 {
+			t.Fatalf("expected handler not to be called, got %d", handlerCalls)
+		}
+		if got := len(em.encryptPeerMessageCalls); got != 0 {
+			t.Fatalf("expected encrypt not to be called, got %d", got)
+		}
+	})
+
+	t.Run("invalid message type -> error response", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		srvHost, srvPriv := newHost(t)
+		defer func() { _ = srvHost.Close() }()
+
+		peerHost, _ := newHost(t)
+		defer func() { _ = peerHost.Close() }()
+
+		connect(t, ctx, peerHost, srvHost)
+
+		em := &tEncryptionManager{}
+		c := &Client{
+			cfg:               &Config{PrivateKey: srvPriv, Logger: logger},
+			host:              srvHost,
+			log:               logger,
+			topicRegistry:     newTopicRegistry(),
+			encryptionManager: em,
+		}
+		if err := c.HandlePeerMessage(func([]byte) ([]byte, error) { return nil, nil }); err != nil {
+			t.Fatalf("HandlePeerMessage: %v", err)
+		}
+
+		// ClientRequest with no oneof set triggers the default case.
+		reqPayload, err := proto.Marshal(&clientpb.ClientRequest{})
+		if err != nil {
+			t.Fatalf("marshal client request: %v", err)
+		}
+
+		s, err := peerHost.NewStream(ctx, srvHost.ID(), protocols.TatankaRelayMessageProtocol)
+		if err != nil {
+			t.Fatalf("NewStream: %v", err)
+		}
+		defer func() { _ = s.Close() }()
+
+		if err := codec.WriteLengthPrefixedMessage(s, &protocolsPb.TatankaRelayMessageRequest{
+			PeerID:  []byte(peerHost.ID()),
+			Message: reqPayload,
+		}); err != nil {
+			t.Fatalf("write relay request: %v", err)
+		}
+
+		env := readClientResponse(t, s)
+		msgResp := env.GetMessageResponse()
+		if msgResp == nil {
+			t.Fatalf("expected message response")
+		}
+		if msgResp.GetError() == nil || msgResp.GetError().GetMessage() == "" {
+			t.Fatalf("expected error message")
+		}
+		if !strings.Contains(msgResp.GetError().GetMessage(), "unknown client request type") {
+			t.Fatalf("unexpected error message: %q", msgResp.GetError().GetMessage())
 		}
 	})
 }

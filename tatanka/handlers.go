@@ -290,8 +290,6 @@ func (t *TatankaNode) handleClientRelayMessage(s network.Stream) {
 		}
 		if protoErr != nil {
 			switch {
-			case protoErr.GetCpRejectedError() != nil:
-				writeResponse(pbClientRelayMessageCounterpartyRejected())
 			case protoErr.GetCpNotFoundError() != nil:
 				writeResponse(pbClientRelayMessageCounterpartyNotFound())
 			case protoErr.GetMessage() != "":
@@ -352,10 +350,6 @@ func (t *TatankaNode) handleClientRelayMessage(s network.Stream) {
 		writeResponse(pbClientRelayMessageCounterpartyNotFound())
 		return
 	}
-	if forwardResp.GetClientRejected() != nil {
-		writeResponse(pbClientRelayMessageCounterpartyRejected())
-		return
-	}
 
 	writeResponse(pbClientRelayMessageSuccess(forwardResp.GetSuccess()))
 }
@@ -399,8 +393,6 @@ func (t *TatankaNode) handleForwardRelay(s network.Stream) {
 	}
 	if protoErr != nil {
 		switch {
-		case protoErr.GetCpRejectedError() != nil:
-			writeResponse(pbTatankaForwardRelayClientRejected())
 		case protoErr.GetCpNotFoundError() != nil:
 			writeResponse(pbTatankaForwardRelayClientNotFound())
 		case protoErr.GetMessage() != "":
