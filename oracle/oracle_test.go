@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/decred/slog"
 	"github.com/bisoncraft/mesh/oracle/sources"
+	"github.com/decred/slog"
 )
 
 // makePriceBuckets converts a test-friendly format to the Oracle's bucket format.
@@ -1067,53 +1067,58 @@ func TestAgedWeightBoundaries(t *testing.T) {
 		}
 	})
 
-	t.Run("decay progression is linear", func(t *testing.T) {
-		// Test that decay is linear through the decay period
-		quarterDecay := time.Now().Add(-fullValidityPeriod - decayPeriod/4)
-		halfDecay := time.Now().Add(-fullValidityPeriod - decayPeriod/2)
-		threeQuarterDecay := time.Now().Add(-fullValidityPeriod - 3*decayPeriod/4)
+	t.Run("decay progression is exponential", func(t *testing.T) {
+		// Test that decay is exponential with 1-minute halflives
+		oneHalflife := time.Now().Add(-fullValidityPeriod - exponentialDecayHalfLife)
+		twoHalflives := time.Now().Add(-fullValidityPeriod - 2*exponentialDecayHalfLife)
+		threeHalflives := time.Now().Add(-fullValidityPeriod - 3*exponentialDecayHalfLife)
 
-		weightQuarter := agedWeight(defaultWeight, quarterDecay)
-		weightHalf := agedWeight(defaultWeight, halfDecay)
-		weightThreeQuarter := agedWeight(defaultWeight, threeQuarterDecay)
+		weight1 := agedWeight(defaultWeight, oneHalflife)
+		weight2 := agedWeight(defaultWeight, twoHalflives)
+		weight3 := agedWeight(defaultWeight, threeHalflives)
 
-		// Should be approximately: 0.75, 0.5, 0.25
-		if weightQuarter < 0.70 || weightQuarter > 0.80 {
-			t.Errorf("Expected weight ~0.75 at quarter decay, got %.4f", weightQuarter)
+		// Exponential decay: 0.5, 0.25, 0.125
+		if weight1 < 0.45 || weight1 > 0.55 {
+			t.Errorf("Expected weight ~0.5 at 1 halflife, got %.4f", weight1)
 		}
-		if weightHalf < 0.45 || weightHalf > 0.55 {
-			t.Errorf("Expected weight ~0.5 at half decay, got %.4f", weightHalf)
+		if weight2 < 0.20 || weight2 > 0.30 {
+			t.Errorf("Expected weight ~0.25 at 2 halflives, got %.4f", weight2)
 		}
-		if weightThreeQuarter < 0.20 || weightThreeQuarter > 0.30 {
-			t.Errorf("Expected weight ~0.25 at three-quarter decay, got %.4f", weightThreeQuarter)
+		if weight3 < 0.10 || weight3 > 0.15 {
+			t.Errorf("Expected weight ~0.125 at 3 halflives, got %.4f", weight3)
 		}
 
-		// Verify progression is decreasing
-		if weightQuarter <= weightHalf || weightHalf <= weightThreeQuarter {
-			t.Errorf("Weight should decrease linearly: %.4f > %.4f > %.4f",
-				weightQuarter, weightHalf, weightThreeQuarter)
+		// Verify progression is decreasing exponentially
+		if weight1 <= weight2 || weight2 <= weight3 {
+			t.Errorf("Weight should decrease exponentially: %.4f > %.4f > %.4f",
+				weight1, weight2, weight3)
 		}
 	})
 
 	t.Run("within full validity period", func(t *testing.T) {
-		// Test various points within full validity period
+		// Test various points within full validity period (0-1 minute)
 		fresh := time.Now()
-		oneMinute := time.Now().Add(-time.Minute)
-		twoMinutes := time.Now().Add(-2 * time.Minute)
-		fourMinutes := time.Now().Add(-4 * time.Minute)
+		halfMinute := time.Now().Add(-30 * time.Second)
+		almostFull := time.Now().Add(-900 * time.Millisecond)
 
 		weights := []float64{
 			agedWeight(defaultWeight, fresh),
-			agedWeight(defaultWeight, oneMinute),
-			agedWeight(defaultWeight, twoMinutes),
-			agedWeight(defaultWeight, fourMinutes),
+			agedWeight(defaultWeight, halfMinute),
+			agedWeight(defaultWeight, almostFull),
 		}
 
-		// All should be full weight since fullValidityPeriod is 5 minutes
+		// All should be full weight since fullValidityPeriod is 1 minute
 		for i, w := range weights {
 			if w != defaultWeight {
-				t.Errorf("Expected full weight at %d minutes old, got %.4f", i, w)
+				t.Errorf("Expected full weight at point %d, got %.4f", i, w)
 			}
+		}
+
+		// Test that weight starts decaying after fullValidityPeriod
+		oneMinuteTen := time.Now().Add(-(time.Minute + 10*time.Second))
+		weightAfter := agedWeight(defaultWeight, oneMinuteTen)
+		if weightAfter >= defaultWeight {
+			t.Errorf("Expected weight to decay after fullValidityPeriod, got %.4f", weightAfter)
 		}
 	})
 }

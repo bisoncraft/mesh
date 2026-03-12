@@ -9,12 +9,14 @@ import (
 )
 
 const (
-	fullValidityPeriod = time.Minute * 5
-	validityExpiration = time.Minute * 30
-	decayPeriod        = validityExpiration - fullValidityPeriod
+	exponentialDecayHalfLife = time.Minute // 1 minute halflife
+	fullValidityPeriod       = exponentialDecayHalfLife
+	validityExpiration       = fullValidityPeriod + (time.Minute * 25) // 25 minutes of decay after full validity
 )
 
-// agedWeight returns a weight based on the age of an update.
+// agedWeight returns a weight based on the age of an update using exponential decay.
+// The weight stays at full strength for fullValidityPeriod, then decays exponentially
+// with a half-life of exponentialDecayHalfLife until validityExpiration.
 func agedWeight(weight float64, stamp time.Time) float64 {
 	age := time.Since(stamp)
 	if age < 0 {
@@ -24,11 +26,13 @@ func agedWeight(weight float64, stamp time.Time) float64 {
 	switch {
 	case age < fullValidityPeriod:
 		return weight
-	case age > validityExpiration:
+	case age >= validityExpiration:
 		return 0
 	default:
-		remainingValidity := validityExpiration - age
-		return weight * (float64(remainingValidity) / float64(decayPeriod))
+		elapsedInDecay := age - fullValidityPeriod
+		// Use half-life formula: weight * 0.5^(elapsedInDecay / halfLife)
+		exponent := float64(elapsedInDecay) / float64(exponentialDecayHalfLife)
+		return weight * math.Pow(0.5, exponent)
 	}
 }
 
