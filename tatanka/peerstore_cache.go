@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/bisoncraft/mesh/oracle/sources/utils"
 	"github.com/decred/slog"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -99,7 +100,7 @@ func (c *peerstoreCache) save() {
 		return
 	}
 
-	if err := atomicWriteFile(c.path, data); err != nil {
+	if err := utils.AtomicWriteFile(c.path, data); err != nil {
 		c.log.Errorf("Failed to write peerstore cache: %v", err)
 		return
 	}

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/bisoncraft/mesh/oracle/sources/utils"
 	"github.com/bisoncraft/mesh/tatanka/types"
 	"github.com/libp2p/go-libp2p/core/peer"
 )
@@ -17,7 +18,7 @@ func saveWhitelist(path string, wl *types.Whitelist) error {
 	if err != nil {
 		return err
 	}
-	return atomicWriteFile(path, data)
+	return utils.AtomicWriteFile(path, data)
 }
 
 // loadWhitelist loads a whitelist from disk.

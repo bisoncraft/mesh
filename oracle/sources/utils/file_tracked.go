@@ -154,7 +154,7 @@ func (s *FileTrackedSource) saveQuotaToFile(fetches int64, resetTime time.Time) 
 		return fmt.Errorf("[%s] failed to marshal quota: %w", s.name, err)
 	}
 
-	if err := os.WriteFile(s.quotaFile, data, 0600); err != nil {
+	if err := AtomicWriteFile(s.quotaFile, data); err != nil {
 		return fmt.Errorf("[%s] failed to save quota: %w", s.name, err)
 	}
 	return nil

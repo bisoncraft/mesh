@@ -401,6 +401,8 @@ func (t *TatankaNode) initOracle() error {
 		PublishQuotaHeartbeat: t.gossipSub.publishQuotaHeartbeat,
 		CoinGeckoKey:          t.config.CoinGeckoKey,
 		CoinGeckoPlan:         t.config.CoinGeckoPlan,
+		CoinGeckoDemoLimit:    t.config.CoinGeckoDemoLimit,
+		DataDir:               t.config.DataDir,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create oracle: %v", err)
