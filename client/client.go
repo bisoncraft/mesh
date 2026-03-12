@@ -147,11 +147,7 @@ func (c *Client) Subscribe(ctx context.Context, topic string, handlerFunc TopicH
 
 	err = mc.subscribe(ctx, topic)
 	if err != nil {
-		// Unregister the topic if subscription fails.
-		if !c.topicRegistry.unregister(topic) {
-			c.log.Warnf("Failed to unregister topic %s", topic)
-		}
-
+		// Subscribe errors do not unregister the topic, will be retried on reconnect.
 		return err
 	}
 
@@ -165,29 +161,28 @@ func (c *Client) Unsubscribe(ctx context.Context, topic string) error {
 	}
 
 	// Fetch the handler for the topic before unregistering.
-	topicHandler, err := c.topicRegistry.fetchHandler(topic)
+	_, err := c.topicRegistry.fetchHandler(topic)
 	if err != nil {
-		return ErrRedundantUnsubscription
-	}
-
-	if !c.topicRegistry.unregister(topic) {
 		return ErrRedundantUnsubscription
 	}
 
 	mc, err := c.primaryMeshConnection()
 	if err != nil {
-		// No active connection; topic is already removed from registry.
+		// No active connection; remove from registry.
+		if !c.topicRegistry.unregister(topic) {
+			return ErrRedundantUnsubscription
+		}
+
 		return nil
 	}
 
 	err = mc.unsubscribe(ctx, topic)
 	if err != nil {
-		// Re-register the topic if unsubscription fails.
-		if !c.topicRegistry.register(topic, topicHandler) {
-			c.log.Warnf("Failed to re-register topic %s", topic)
-		}
+		return fmt.Errorf("failed to unsubscribe %s: %w", topic, err)
+	}
 
-		return err
+	if !c.topicRegistry.unregister(topic) {
+		return ErrRedundantUnsubscription
 	}
 
 	return nil
@@ -238,20 +233,18 @@ func (c *Client) AddBond(params []*bond.BondParams) {
 
 // ConnectionStateFeed returns a channel that delivers connection state changes.
 // The channel is closed when ctx is cancelled. Multiple callers can subscribe independently.
-func (c *Client) ConnectionStateFeed(ctx context.Context) <-chan bool {
+func (c *Client) ConnectionStateFeed(ctx context.Context) (<-chan bool, error) {
 	if c.connManager == nil {
-		ch := make(chan bool)
-		close(ch)
-		return ch
+		return nil, errNoMeshConnection
 	}
 
-	ch, id := c.connManager.subscribe()
+	ch, id := c.connManager.subscribeToConnectionState()
 	go func() {
 		<-ctx.Done()
-		c.connManager.unsubscribe(id)
+		c.connManager.unsubscribeFromConnectionState(id)
 	}()
 
-	return ch
+	return ch, nil
 }
 
 // parseBootstrapAddrs parses a list of multiaddr strings into peer.AddrInfo.

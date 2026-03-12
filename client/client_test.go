@@ -197,8 +197,9 @@ func TestSubscribe(t *testing.T) {
 		if mc.subscribeCalls[1] != "topic-2" {
 			t.Fatalf("expected topic %q, got %q", "topic-2", mc.subscribeCalls[1])
 		}
-		if _, err := c.topicRegistry.fetchHandler("topic-2"); err == nil {
-			t.Fatalf("topic-2 should not be registered when subscribe returns an error")
+		// Topic remains registered even after wire error, for retry on reconnect.
+		if _, err := c.topicRegistry.fetchHandler("topic-2"); err != nil {
+			t.Fatalf("topic-2 should remain registered after subscribe error for reconnect retry: %v", err)
 		}
 
 		// Unsubscribe from topic-1 with an error from meshConn.

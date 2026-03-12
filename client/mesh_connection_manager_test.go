@@ -109,7 +109,7 @@ func TestConnectionStateFeed(t *testing.T) {
 		conn := newTMeshConnection(randomPeerID(t))
 		m.setPrimaryConnection(conn)
 
-		ch, _ := m.subscribe()
+		ch, _ := m.subscribeToConnectionState()
 		state := <-ch
 		if state != true {
 			t.Fatalf("expected initial state true, got %v", state)
@@ -119,7 +119,7 @@ func TestConnectionStateFeed(t *testing.T) {
 	t.Run("initial state disconnected", func(t *testing.T) {
 		m := newMeshConnectionManager(&meshConnectionManagerConfig{log: logger})
 
-		ch, _ := m.subscribe()
+		ch, _ := m.subscribeToConnectionState()
 		state := <-ch
 		if state != false {
 			t.Fatalf("expected initial state false, got %v", state)
@@ -129,7 +129,7 @@ func TestConnectionStateFeed(t *testing.T) {
 	t.Run("state change to connected", func(t *testing.T) {
 		m := newMeshConnectionManager(&meshConnectionManagerConfig{log: logger})
 
-		ch, _ := m.subscribe()
+		ch, _ := m.subscribeToConnectionState()
 		// Discard initial state
 		<-ch
 
@@ -147,7 +147,7 @@ func TestConnectionStateFeed(t *testing.T) {
 		conn := newTMeshConnection(randomPeerID(t))
 		m.setPrimaryConnection(conn)
 
-		ch, _ := m.subscribe()
+		ch, _ := m.subscribeToConnectionState()
 		// Discard initial state
 		<-ch
 
@@ -162,8 +162,8 @@ func TestConnectionStateFeed(t *testing.T) {
 	t.Run("multiple subscribers all notified", func(t *testing.T) {
 		m := newMeshConnectionManager(&meshConnectionManagerConfig{log: logger})
 
-		ch1, _ := m.subscribe()
-		ch2, _ := m.subscribe()
+		ch1, _ := m.subscribeToConnectionState()
+		ch2, _ := m.subscribeToConnectionState()
 
 		// Discard initial states
 		<-ch1
@@ -183,12 +183,12 @@ func TestConnectionStateFeed(t *testing.T) {
 	t.Run("manual unsubscribe removes subscriber", func(t *testing.T) {
 		m := newMeshConnectionManager(&meshConnectionManagerConfig{log: logger})
 
-		ch, id := m.subscribe()
+		ch, id := m.subscribeToConnectionState()
 		// Discard initial state
 		<-ch
 
 		// Unsubscribe
-		m.unsubscribe(id)
+		m.unsubscribeFromConnectionState(id)
 		time.Sleep(10 * time.Millisecond)
 
 		// Try to read from channel; should be closed
@@ -209,12 +209,12 @@ func TestConnectionStateFeed(t *testing.T) {
 	t.Run("subscriber removed does not cause panic on state change", func(t *testing.T) {
 		m := newMeshConnectionManager(&meshConnectionManagerConfig{log: logger})
 
-		ch, id := m.subscribe()
+		ch, id := m.subscribeToConnectionState()
 		// Discard initial state
 		<-ch
 
 		// Unsubscribe
-		m.unsubscribe(id)
+		m.unsubscribeFromConnectionState(id)
 
 		// This should not panic even though subscriber is removed
 		conn := newTMeshConnection(randomPeerID(t))

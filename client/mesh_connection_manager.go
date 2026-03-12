@@ -50,9 +50,6 @@ type meshConnectionManager struct {
 	nodesMtx   sync.RWMutex
 	knownNodes []peer.ID
 
-	connMtx     sync.Mutex
-	connChanged chan struct{}
-
 	subsMtx   sync.Mutex
 	subs      map[int64]chan bool
 	nextSubID int64
@@ -71,7 +68,6 @@ func newMeshConnectionManager(cfg *meshConnectionManagerConfig) *meshConnectionM
 		host:        cfg.host,
 		log:         cfg.log,
 		connFactory: cfg.connFactory,
-		connChanged: make(chan struct{}),
 		subs:        make(map[int64]chan bool),
 	}
 
@@ -93,16 +89,11 @@ func (m *meshConnectionManager) primaryConnection() (meshConn, error) {
 }
 
 func (m *meshConnectionManager) setPrimaryConnection(mc meshConn) {
-	m.connMtx.Lock()
 	if mc == nil {
 		m.primaryConn.Store(nil)
 	} else {
 		m.primaryConn.Store(&meshConnHolder{mc: mc})
 	}
-	oldCh := m.connChanged
-	m.connChanged = make(chan struct{})
-	m.connMtx.Unlock()
-	close(oldCh)
 
 	// Broadcast state change to all subscribers
 	connected := mc != nil
@@ -111,15 +102,18 @@ func (m *meshConnectionManager) setPrimaryConnection(mc meshConn) {
 		select {
 		case ch <- connected:
 		default:
-			// subscriber not draining; drop — latest state will arrive next change
+			// Channel buffer is full with a stale value. Drain it and send the latest
+			// state, ensuring the newest value is always available in the buffer.
+			<-ch
+			ch <- connected
 		}
 	}
 	m.subsMtx.Unlock()
 }
 
-// subscribe registers a new subscriber and returns a channel for state updates
+// subscribeToConnectionState registers a new subscriber and returns a channel for state updates
 // along with a subscription ID. The initial state is immediately sent on the channel.
-func (m *meshConnectionManager) subscribe() (chan bool, int64) {
+func (m *meshConnectionManager) subscribeToConnectionState() (chan bool, int64) {
 	ch := make(chan bool, 1)
 
 	m.subsMtx.Lock()
@@ -132,8 +126,8 @@ func (m *meshConnectionManager) subscribe() (chan bool, int64) {
 	return ch, id
 }
 
-// unsubscribe removes a subscriber from the registry and closes its channel.
-func (m *meshConnectionManager) unsubscribe(id int64) {
+// unsubscribeFromConnectionState removes a subscriber from the registry and closes its channel.
+func (m *meshConnectionManager) unsubscribeFromConnectionState(id int64) {
 	m.subsMtx.Lock()
 	ch, ok := m.subs[id]
 	if ok {
@@ -266,10 +260,9 @@ func (m *meshConnectionManager) run(ctx context.Context) {
 	backoff := baseReconnectDelay
 
 	attemptConnect := func() {
-		conn, errCh, ok := m.connectToAvailableNode(ctx)
+		_, errCh, ok := m.connectToAvailableNode(ctx)
 		if ok {
 			backoff = baseReconnectDelay
-			m.setPrimaryConnection(conn)
 			runErrCh = errCh
 		} else {
 			reconnectTimer.Reset(backoff)

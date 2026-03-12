@@ -79,9 +79,9 @@ func TestSubscribeToPriceOracle(t *testing.T) {
 		t.Fatalf("expected error %v, got %v", wantErr, err)
 	}
 
-	// Verify handler was not registered when subscribe failed.
-	if _, err := c.topicRegistry.fetchHandler("price.ETH"); err == nil {
-		t.Fatalf("price.ETH should not be registered when subscribe returns an error")
+	// Topic remains registered even after wire error, for retry on reconnect.
+	if _, err := c.topicRegistry.fetchHandler("price.ETH"); err != nil {
+		t.Fatalf("price.ETH should remain registered after subscribe error for reconnect retry: %v", err)
 	}
 }
 
@@ -153,79 +153,9 @@ func TestSubscribeToFeeRateOracle(t *testing.T) {
 		t.Fatalf("expected error %v, got %v", wantErr, err)
 	}
 
-	// Verify handler was not registered when subscribe failed.
-	if _, err := c.topicRegistry.fetchHandler("fee_rate.ETH"); err == nil {
-		t.Fatalf("fee_rate.ETH should not be registered when subscribe returns an error")
+	// Topic remains registered even after wire error, for retry on reconnect.
+	if _, err := c.topicRegistry.fetchHandler("fee_rate.ETH"); err != nil {
+		t.Fatalf("fee_rate.ETH should remain registered after subscribe error for reconnect retry: %v", err)
 	}
 }
 
-func TestUnmarshalOracleData(t *testing.T) {
-	tests := []struct {
-		name    string
-		data    []byte
-		wantErr bool
-		test    func(t *testing.T, data []byte)
-	}{
-		{
-			name: "valid price update",
-			data: func() []byte {
-				priceUpdate := &protocolsPb.ClientPriceUpdate{
-					Price: 100.5,
-				}
-				data, _ := proto.Marshal(priceUpdate)
-				return data
-			}(),
-			wantErr: false,
-			test: func(t *testing.T, data []byte) {
-				var priceUpdate protocolsPb.ClientPriceUpdate
-				err := unmarshalOracleData(data, &priceUpdate)
-				if err != nil {
-					t.Fatalf("expected nil error, got %v", err)
-				}
-				if priceUpdate.Price != 100.5 {
-					t.Fatalf("expected price 100.5, got %v", priceUpdate.Price)
-				}
-			},
-		},
-		{
-			name: "valid fee rate update",
-			data: func() []byte {
-				feeRateUpdate := &protocolsPb.ClientFeeRateUpdate{
-					FeeRate: big.NewInt(999).Bytes(),
-				}
-				data, _ := proto.Marshal(feeRateUpdate)
-				return data
-			}(),
-			wantErr: false,
-			test: func(t *testing.T, data []byte) {
-				var feeRateUpdate protocolsPb.ClientFeeRateUpdate
-				err := unmarshalOracleData(data, &feeRateUpdate)
-				if err != nil {
-					t.Fatalf("expected nil error, got %v", err)
-				}
-				if len(feeRateUpdate.FeeRate) == 0 {
-					t.Fatalf("expected non-empty fee rate bytes")
-				}
-			},
-		},
-		{
-			name:    "invalid data",
-			data:    []byte{0xFF, 0xFE, 0xFD},
-			wantErr: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if tt.wantErr {
-				var priceUpdate protocolsPb.ClientPriceUpdate
-				err := unmarshalOracleData(tt.data, &priceUpdate)
-				if err == nil {
-					t.Fatalf("expected error, got nil")
-				}
-			} else if tt.test != nil {
-				tt.test(t, tt.data)
-			}
-		})
-	}
-}

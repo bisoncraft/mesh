@@ -37,12 +37,11 @@ var (
 
 // Config represents the test client configuration.
 type Config struct {
-	NodeAddr      []string
-	PrivateKey    crypto.PrivKey
-	ClientPort    int
-	WebPort       int
-	Logger        slog.Logger
-	OracleTickers []string
+	NodeAddr   []string
+	PrivateKey crypto.PrivKey
+	ClientPort int
+	WebPort    int
+	Logger     slog.Logger
 }
 
 // Client represents a tatanka test client.
@@ -426,43 +425,7 @@ func (c *Client) Run(ctx context.Context, bonds []*bond.BondParams) {
 		}
 	}()
 
-	if len(c.cfg.OracleTickers) > 0 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			c.subscribeToOracles(ctx)
-		}()
-	}
-
 	wg.Wait()
-}
-
-func (c *Client) subscribeToOracles(ctx context.Context) {
-	for _, asset := range c.cfg.OracleTickers {
-		if err := c.tatankaClient.SubscribeToPriceOracle(ctx, asset, func(ticker string) func(float64) {
-			return func(price float64) {
-				c.events.add(Event{
-					Type:    EventTypeData,
-					Topic:   protocols.PriceTopic(ticker),
-					Message: fmt.Sprintf("%s: $%.2f", ticker, price),
-				})
-			}
-		}(asset)); err != nil {
-			c.log.Errorf("Failed to subscribe to %s price oracle: %v", asset, err)
-		}
-
-		if err := c.tatankaClient.SubscribeToFeeRateOracle(ctx, asset, func(network string) func(*big.Int) {
-			return func(feeRate *big.Int) {
-				c.events.add(Event{
-					Type:    EventTypeData,
-					Topic:   protocols.FeeRateTopic(network),
-					Message: fmt.Sprintf("%s: %s", network, feeRate.String()),
-				})
-			}
-		}(asset)); err != nil {
-			c.log.Errorf("Failed to subscribe to %s fee rate oracle: %v", asset, err)
-		}
-	}
 }
 
 // decodeTopicData decodes topic data to a human-readable string.

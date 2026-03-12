@@ -2,7 +2,6 @@ package client
 
 import (
 	"context"
-	"fmt"
 	"math/big"
 
 	"github.com/bisoncraft/mesh/protocols"
@@ -18,7 +17,7 @@ func (c *Client) SubscribeToPriceOracle(ctx context.Context, ticker string, hand
 			return
 		}
 		var priceUpdate protocolsPb.ClientPriceUpdate
-		if err := unmarshalOracleData(event.Data, &priceUpdate); err != nil {
+		if err := proto.Unmarshal(event.Data, &priceUpdate); err != nil {
 			c.log.Errorf("Failed to unmarshal price update for %s: %v", ticker, err)
 			return
 		}
@@ -34,7 +33,7 @@ func (c *Client) SubscribeToFeeRateOracle(ctx context.Context, network string, h
 			return
 		}
 		var feeRateUpdate protocolsPb.ClientFeeRateUpdate
-		if err := unmarshalOracleData(event.Data, &feeRateUpdate); err != nil {
+		if err := proto.Unmarshal(event.Data, &feeRateUpdate); err != nil {
 			c.log.Errorf("Failed to unmarshal fee rate update for %s: %v", network, err)
 			return
 		}
@@ -42,9 +41,3 @@ func (c *Client) SubscribeToFeeRateOracle(ctx context.Context, network string, h
 	})
 }
 
-func unmarshalOracleData(data []byte, msg proto.Message) error {
-	if err := proto.Unmarshal(data, msg); err != nil {
-		return fmt.Errorf("failed to unmarshal oracle data: %w", err)
-	}
-	return nil
-}
