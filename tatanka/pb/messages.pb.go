@@ -156,7 +156,6 @@ type TatankaForwardRelayResponse struct {
 	//
 	//	*TatankaForwardRelayResponse_Success
 	//	*TatankaForwardRelayResponse_ClientNotFound_
-	//	*TatankaForwardRelayResponse_ClientRejected_
 	//	*TatankaForwardRelayResponse_Error
 	Response      isTatankaForwardRelayResponse_Response `protobuf_oneof:"response"`
 	unknownFields protoimpl.UnknownFields
@@ -218,15 +217,6 @@ func (x *TatankaForwardRelayResponse) GetClientNotFound() *TatankaForwardRelayRe
 	return nil
 }
 
-func (x *TatankaForwardRelayResponse) GetClientRejected() *TatankaForwardRelayResponse_ClientRejected {
-	if x != nil {
-		if x, ok := x.Response.(*TatankaForwardRelayResponse_ClientRejected_); ok {
-			return x.ClientRejected
-		}
-	}
-	return nil
-}
-
 func (x *TatankaForwardRelayResponse) GetError() string {
 	if x != nil {
 		if x, ok := x.Response.(*TatankaForwardRelayResponse_Error); ok {
@@ -248,10 +238,6 @@ type TatankaForwardRelayResponse_ClientNotFound_ struct {
 	ClientNotFound *TatankaForwardRelayResponse_ClientNotFound `protobuf:"bytes,2,opt,name=client_not_found,json=clientNotFound,proto3,oneof"`
 }
 
-type TatankaForwardRelayResponse_ClientRejected_ struct {
-	ClientRejected *TatankaForwardRelayResponse_ClientRejected `protobuf:"bytes,3,opt,name=client_rejected,json=clientRejected,proto3,oneof"`
-}
-
 type TatankaForwardRelayResponse_Error struct {
 	Error string `protobuf:"bytes,4,opt,name=error,proto3,oneof"`
 }
@@ -259,8 +245,6 @@ type TatankaForwardRelayResponse_Error struct {
 func (*TatankaForwardRelayResponse_Success) isTatankaForwardRelayResponse_Response() {}
 
 func (*TatankaForwardRelayResponse_ClientNotFound_) isTatankaForwardRelayResponse_Response() {}
-
-func (*TatankaForwardRelayResponse_ClientRejected_) isTatankaForwardRelayResponse_Response() {}
 
 func (*TatankaForwardRelayResponse_Error) isTatankaForwardRelayResponse_Response() {}
 
@@ -680,42 +664,6 @@ func (*TatankaForwardRelayResponse_ClientNotFound) Descriptor() ([]byte, []int) 
 	return file_messages_proto_rawDescGZIP(), []int{2, 0}
 }
 
-type TatankaForwardRelayResponse_ClientRejected struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *TatankaForwardRelayResponse_ClientRejected) Reset() {
-	*x = TatankaForwardRelayResponse_ClientRejected{}
-	mi := &file_messages_proto_msgTypes[10]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *TatankaForwardRelayResponse_ClientRejected) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*TatankaForwardRelayResponse_ClientRejected) ProtoMessage() {}
-
-func (x *TatankaForwardRelayResponse_ClientRejected) ProtoReflect() protoreflect.Message {
-	mi := &file_messages_proto_msgTypes[10]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use TatankaForwardRelayResponse_ClientRejected.ProtoReflect.Descriptor instead.
-func (*TatankaForwardRelayResponse_ClientRejected) Descriptor() ([]byte, []int) {
-	return file_messages_proto_rawDescGZIP(), []int{2, 1}
-}
-
 type DiscoveryResponse_Success struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Addrs         [][]byte               `protobuf:"bytes,1,rep,name=addrs,proto3" json:"addrs,omitempty"`
@@ -725,7 +673,7 @@ type DiscoveryResponse_Success struct {
 
 func (x *DiscoveryResponse_Success) Reset() {
 	*x = DiscoveryResponse_Success{}
-	mi := &file_messages_proto_msgTypes[11]
+	mi := &file_messages_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -737,7 +685,7 @@ func (x *DiscoveryResponse_Success) String() string {
 func (*DiscoveryResponse_Success) ProtoMessage() {}
 
 func (x *DiscoveryResponse_Success) ProtoReflect() protoreflect.Message {
-	mi := &file_messages_proto_msgTypes[11]
+	mi := &file_messages_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -768,7 +716,7 @@ type DiscoveryResponse_NotFound struct {
 
 func (x *DiscoveryResponse_NotFound) Reset() {
 	*x = DiscoveryResponse_NotFound{}
-	mi := &file_messages_proto_msgTypes[12]
+	mi := &file_messages_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -780,7 +728,7 @@ func (x *DiscoveryResponse_NotFound) String() string {
 func (*DiscoveryResponse_NotFound) ProtoMessage() {}
 
 func (x *DiscoveryResponse_NotFound) ProtoReflect() protoreflect.Message {
-	mi := &file_messages_proto_msgTypes[12]
+	mi := &file_messages_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -810,14 +758,12 @@ const file_messages_proto_rawDesc = "" +
 	"\x1aTatankaForwardRelayRequest\x12!\n" +
 	"\finitiator_id\x18\x01 \x01(\fR\vinitiatorId\x12'\n" +
 	"\x0fcounterparty_id\x18\x02 \x01(\fR\x0ecounterpartyId\x12\x18\n" +
-	"\amessage\x18\x03 \x01(\fR\amessage\"\xb8\x02\n" +
+	"\amessage\x18\x03 \x01(\fR\amessage\"\xcb\x01\n" +
 	"\x1bTatankaForwardRelayResponse\x12\x1a\n" +
 	"\asuccess\x18\x01 \x01(\fH\x00R\asuccess\x12Z\n" +
-	"\x10client_not_found\x18\x02 \x01(\v2..pb.TatankaForwardRelayResponse.ClientNotFoundH\x00R\x0eclientNotFound\x12Y\n" +
-	"\x0fclient_rejected\x18\x03 \x01(\v2..pb.TatankaForwardRelayResponse.ClientRejectedH\x00R\x0eclientRejected\x12\x16\n" +
+	"\x10client_not_found\x18\x02 \x01(\v2..pb.TatankaForwardRelayResponse.ClientNotFoundH\x00R\x0eclientNotFound\x12\x16\n" +
 	"\x05error\x18\x04 \x01(\tH\x00R\x05error\x1a\x10\n" +
-	"\x0eClientNotFound\x1a\x10\n" +
-	"\x0eClientRejectedB\n" +
+	"\x0eClientNotFoundB\n" +
 	"\n" +
 	"\bresponse\"\"\n" +
 	"\x10DiscoveryRequest\x12\x0e\n" +
@@ -870,7 +816,7 @@ func file_messages_proto_rawDescGZIP() []byte {
 	return file_messages_proto_rawDescData
 }
 
-var file_messages_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
+var file_messages_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
 var file_messages_proto_goTypes = []any{
 	(*ClientConnectionMsg)(nil),                        // 0: pb.ClientConnectionMsg
 	(*TatankaForwardRelayRequest)(nil),                 // 1: pb.TatankaForwardRelayRequest
@@ -882,28 +828,26 @@ var file_messages_proto_goTypes = []any{
 	(*QuotaStatus)(nil),                                // 7: pb.QuotaStatus
 	(*QuotaHandshake)(nil),                             // 8: pb.QuotaHandshake
 	(*TatankaForwardRelayResponse_ClientNotFound)(nil), // 9: pb.TatankaForwardRelayResponse.ClientNotFound
-	(*TatankaForwardRelayResponse_ClientRejected)(nil), // 10: pb.TatankaForwardRelayResponse.ClientRejected
-	(*DiscoveryResponse_Success)(nil),                  // 11: pb.DiscoveryResponse.Success
-	(*DiscoveryResponse_NotFound)(nil),                 // 12: pb.DiscoveryResponse.NotFound
-	nil,                                                // 13: pb.NodeOracleUpdate.PricesEntry
-	nil,                                                // 14: pb.NodeOracleUpdate.FeeRatesEntry
-	nil,                                                // 15: pb.QuotaHandshake.QuotasEntry
+	(*DiscoveryResponse_Success)(nil),                  // 10: pb.DiscoveryResponse.Success
+	(*DiscoveryResponse_NotFound)(nil),                 // 11: pb.DiscoveryResponse.NotFound
+	nil,                                                // 12: pb.NodeOracleUpdate.PricesEntry
+	nil,                                                // 13: pb.NodeOracleUpdate.FeeRatesEntry
+	nil,                                                // 14: pb.QuotaHandshake.QuotasEntry
 }
 var file_messages_proto_depIdxs = []int32{
 	9,  // 0: pb.TatankaForwardRelayResponse.client_not_found:type_name -> pb.TatankaForwardRelayResponse.ClientNotFound
-	10, // 1: pb.TatankaForwardRelayResponse.client_rejected:type_name -> pb.TatankaForwardRelayResponse.ClientRejected
-	11, // 2: pb.DiscoveryResponse.success:type_name -> pb.DiscoveryResponse.Success
-	12, // 3: pb.DiscoveryResponse.not_found:type_name -> pb.DiscoveryResponse.NotFound
-	13, // 4: pb.NodeOracleUpdate.prices:type_name -> pb.NodeOracleUpdate.PricesEntry
-	14, // 5: pb.NodeOracleUpdate.fee_rates:type_name -> pb.NodeOracleUpdate.FeeRatesEntry
-	7,  // 6: pb.NodeOracleUpdate.quota:type_name -> pb.QuotaStatus
-	15, // 7: pb.QuotaHandshake.quotas:type_name -> pb.QuotaHandshake.QuotasEntry
-	7,  // 8: pb.QuotaHandshake.QuotasEntry.value:type_name -> pb.QuotaStatus
-	9,  // [9:9] is the sub-list for method output_type
-	9,  // [9:9] is the sub-list for method input_type
-	9,  // [9:9] is the sub-list for extension type_name
-	9,  // [9:9] is the sub-list for extension extendee
-	0,  // [0:9] is the sub-list for field type_name
+	10, // 1: pb.DiscoveryResponse.success:type_name -> pb.DiscoveryResponse.Success
+	11, // 2: pb.DiscoveryResponse.not_found:type_name -> pb.DiscoveryResponse.NotFound
+	12, // 3: pb.NodeOracleUpdate.prices:type_name -> pb.NodeOracleUpdate.PricesEntry
+	13, // 4: pb.NodeOracleUpdate.fee_rates:type_name -> pb.NodeOracleUpdate.FeeRatesEntry
+	7,  // 5: pb.NodeOracleUpdate.quota:type_name -> pb.QuotaStatus
+	14, // 6: pb.QuotaHandshake.quotas:type_name -> pb.QuotaHandshake.QuotasEntry
+	7,  // 7: pb.QuotaHandshake.QuotasEntry.value:type_name -> pb.QuotaStatus
+	8,  // [8:8] is the sub-list for method output_type
+	8,  // [8:8] is the sub-list for method input_type
+	8,  // [8:8] is the sub-list for extension type_name
+	8,  // [8:8] is the sub-list for extension extendee
+	0,  // [0:8] is the sub-list for field type_name
 }
 
 func init() { file_messages_proto_init() }
@@ -914,7 +858,6 @@ func file_messages_proto_init() {
 	file_messages_proto_msgTypes[2].OneofWrappers = []any{
 		(*TatankaForwardRelayResponse_Success)(nil),
 		(*TatankaForwardRelayResponse_ClientNotFound_)(nil),
-		(*TatankaForwardRelayResponse_ClientRejected_)(nil),
 		(*TatankaForwardRelayResponse_Error)(nil),
 	}
 	file_messages_proto_msgTypes[4].OneofWrappers = []any{
@@ -927,7 +870,7 @@ func file_messages_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_messages_proto_rawDesc), len(file_messages_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   16,
+			NumMessages:   15,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

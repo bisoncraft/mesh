@@ -25,13 +25,11 @@ func TestMain(m *testing.M) {
 	m.Run()
 }
 
-// fetchNodeAddressAtIndex fetches the the address of the test harness node running at the provided index.
-// The node address details are fetched from the saved test harness whitelist. This should be called after
-// running the tatanka test harness.
-func fetchNodeAddressAtIndex(index int) (string, error) {
+// fetchNodeAddresses returns all node addresses from the test harness whitelist.
+func fetchNodeAddresses() ([]string, error) {
 	curUser, err := user.Current()
 	if err != nil {
-		return "", fmt.Errorf("failed to resolve current user: %w", err)
+		return nil, fmt.Errorf("failed to resolve current user: %w", err)
 	}
 
 	whitelistPath := fmt.Sprintf("%s/%s", curUser.HomeDir, ".tatanka-test/whitelist.json")
@@ -44,28 +42,21 @@ func fetchNodeAddressAtIndex(index int) (string, error) {
 
 	data, err := os.ReadFile(whitelistPath)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	if err := json.Unmarshal(data, &whitelist); err != nil {
-		return "", err
+		return nil, err
 	}
 
-	if index < 0 || index >= len(whitelist.Peers) {
-		return "", fmt.Errorf("no node found at provided index: %d", index)
+	addrs := make([]string, 0, len(whitelist.Peers))
+	for _, node := range whitelist.Peers {
+		if node.Address == "" || node.ID == "" {
+			continue
+		}
+		addrs = append(addrs, fmt.Sprintf("%s/p2p/%s", node.Address, node.ID))
 	}
-
-	node := whitelist.Peers[index]
-	if node.Address == "" {
-		return "", fmt.Errorf("peer at index %d missing address", index)
-	}
-	if node.ID == "" {
-		return "", fmt.Errorf("peer at index %d missing peer ID", index)
-	}
-
-	addr := fmt.Sprintf("%s/p2p/%s", node.Address, node.ID)
-
-	return addr, nil
+	return addrs, nil
 }
 
 // cd tatanka-mesh
@@ -83,11 +74,16 @@ func TestClientIntegration(t *testing.T) {
 	c1Port := 12366
 	c2Port := 12367
 
-	nodeAddr, err := fetchNodeAddressAtIndex(0)
+	nodeAddrs, err := fetchNodeAddresses()
 	if err != nil {
 		t.Fatal(err)
 	}
 
+	if len(nodeAddrs) == 0 {
+		t.Fatal("no node addresses found in manifest")
+	}
+
+	nodeAddr := nodeAddrs[0]
 	t.Logf("node address is: %s", nodeAddr)
 
 	c1Priv, _, err := crypto.GenerateEd25519Key(rand.Reader)
@@ -277,6 +273,147 @@ func TestClientIntegration(t *testing.T) {
 	}
 
 	// TODO: add relay test between c1 and c2.
+
+	cancel()
+	wg.Wait()
+}
+
+func TestPeerMessaging(t *testing.T) {
+	nodeAddrs, err := fetchNodeAddresses()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(nodeAddrs) == 0 {
+		t.Fatal("no node addresses found in whitelist")
+	}
+
+	logBackend := slog.NewBackend(os.Stdout)
+	loggerC1 := logBackend.Logger("c1")
+	loggerC1.SetLevel(slog.LevelDebug)
+	loggerC2 := logBackend.Logger("c2")
+	loggerC2.SetLevel(slog.LevelDebug)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	c1Priv, _, err := crypto.GenerateEd25519Key(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	c2Priv, _, err := crypto.GenerateEd25519Key(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Both clients can connect to the same tatanka node. If multiple
+	// nodes are available, use different ones for each client.
+	c2Addr := nodeAddrs[0]
+	if len(nodeAddrs) > 1 {
+		c2Addr = nodeAddrs[1]
+	}
+
+	c1Cfg := Config{
+		RemotePeerAddrs: []string{nodeAddrs[0]},
+		Port:            12376,
+		PrivateKey:      c1Priv,
+		Logger:          loggerC1,
+	}
+
+	c2Cfg := Config{
+		RemotePeerAddrs: []string{c2Addr},
+		Port:            12377,
+		PrivateKey:      c2Priv,
+		Logger:          loggerC2,
+	}
+
+	c1, err := NewClient(&c1Cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	c2, err := NewClient(&c2Cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	bonds := []*bond.BondParams{}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	go func() {
+		defer wg.Done()
+		if err := c1.Run(ctx, bonds); err != nil {
+			c1.cfg.Logger.Errorf("unexpected error running c1: %v", err)
+		}
+	}()
+
+	go func() {
+		defer wg.Done()
+		if err := c2.Run(ctx, bonds); err != nil {
+			c2.cfg.Logger.Errorf("unexpected error running c2: %v", err)
+		}
+	}()
+
+	// Wait briefly for initialization.
+	time.Sleep(time.Second)
+
+	c1MsgCh := make(chan []byte, 1)
+	c2MsgCh := make(chan []byte, 1)
+
+	if err := c1.HandlePeerMessage(func(msg []byte) ([]byte, error) {
+		c1MsgCh <- msg
+		return []byte("ack from c1"), nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := c2.HandlePeerMessage(func(msg []byte) ([]byte, error) {
+		c2MsgCh <- msg
+		return []byte("ack from c2"), nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	recvWithTimeout := func(ch <-chan []byte) []byte {
+		select {
+		case v := <-ch:
+			return v
+		case <-time.After(3 * time.Second):
+			t.Fatal("timed out waiting for peer message")
+			return nil
+		}
+	}
+
+	// c1 -> c2
+	msgToC2 := []byte("hello from c1")
+	resp, err := c1.MessagePeer(ctx, c2.host.ID(), msgToC2)
+	if err != nil {
+		t.Fatalf("c1 -> c2 message failed: %v", err)
+	}
+	receivedByC2 := recvWithTimeout(c2MsgCh)
+	if !bytes.Equal(receivedByC2, msgToC2) {
+		t.Fatalf("c2 received wrong message: got %s, want %s", string(receivedByC2), string(msgToC2))
+	}
+	if string(resp) != "ack from c2" {
+		t.Fatalf("c1 expected ack from c2, got %s", string(resp))
+	}
+
+	// c2 -> c1
+	msgToC1 := []byte("hello from c2")
+	resp, err = c2.MessagePeer(ctx, c1.host.ID(), msgToC1)
+	if err != nil {
+		t.Fatalf("c2 -> c1 message failed: %v", err)
+	}
+	receivedByC1 := recvWithTimeout(c1MsgCh)
+	if !bytes.Equal(receivedByC1, msgToC1) {
+		t.Fatalf("c1 received wrong message: got %s, want %s", string(receivedByC1), string(msgToC1))
+	}
+	if string(resp) != "ack from c1" {
+		t.Fatalf("c2 expected ack from c1, got %s", string(resp))
+	}
 
 	cancel()
 	wg.Wait()

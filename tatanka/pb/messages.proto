@@ -22,14 +22,10 @@ message TatankaForwardRelayResponse {
   oneof response {
     bytes success = 1;
     ClientNotFound client_not_found = 2;
-    ClientRejected client_rejected = 3;
     string error = 4;
   }
 
   message ClientNotFound {
-  }
-
-  message ClientRejected {
   }
 }
 

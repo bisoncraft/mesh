@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"time"
 
 	"github.com/decred/slog"
 	"github.com/libp2p/go-libp2p/core/host"
@@ -21,6 +22,7 @@ import (
 
 const (
 	maxPostBondRetries = 3
+	writeTimeout       = 5 * time.Second
 )
 
 var (
@@ -234,6 +236,41 @@ func (m *meshConnection) postBond(ctx context.Context) error {
 	}
 
 	return fmt.Errorf("%s: maximum retry attempts for posting bond reached", hostID)
+}
+
+// relayMessage sends a ClientRelayMessageRequest through this mesh connection and returns the response payload.
+func (m *meshConnection) relayMessage(ctx context.Context, peerID peer.ID, message []byte) ([]byte, error) {
+	s, err := m.host.NewStream(ctx, m.peerID, protocols.ClientRelayMessageProtocol)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create relay message stream: %w", err)
+	}
+	defer func() { _ = s.Close() }()
+
+	req := &protocolsPb.ClientRelayMessageRequest{
+		PeerID:  []byte(peerID),
+		Message: message,
+	}
+	if err := codec.WriteLengthPrefixedMessage(s, req, writeTimeout); err != nil {
+		return nil, fmt.Errorf("failed to send relay message request: %w", err)
+	}
+
+	resp := &protocolsPb.ClientRelayMessageResponse{}
+	if err := codec.ReadLengthPrefixedMessage(s, resp); err != nil {
+		return nil, fmt.Errorf("failed to read relay message response: %w", err)
+	}
+
+	if respErr := resp.GetError(); respErr != nil {
+		switch {
+		case respErr.GetCpNotFoundError() != nil:
+			return nil, fmt.Errorf("peer not found")
+		case respErr.GetMessage() != "":
+			return nil, fmt.Errorf("peer message error: %s", respErr.GetMessage())
+		default:
+			return nil, fmt.Errorf("peer message failed")
+		}
+	}
+
+	return resp.GetMessage(), nil
 }
 
 // kill terminates the mesh connection.

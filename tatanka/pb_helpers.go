@@ -290,14 +290,6 @@ func pbClientRelayMessageCounterpartyNotFound() *protocolsPb.ClientRelayMessageR
 	})
 }
 
-func pbClientRelayMessageCounterpartyRejected() *protocolsPb.ClientRelayMessageResponse {
-	return pbClientRelayMessageError(&protocolsPb.Error{
-		Error: &protocolsPb.Error_CpRejectedError{
-			CpRejectedError: &protocolsPb.CounterpartyRejectedError{},
-		},
-	})
-}
-
 func pbTatankaForwardRelaySuccess(message []byte) *pb.TatankaForwardRelayResponse {
 	return &pb.TatankaForwardRelayResponse{
 		Response: &pb.TatankaForwardRelayResponse_Success{
@@ -310,14 +302,6 @@ func pbTatankaForwardRelayClientNotFound() *pb.TatankaForwardRelayResponse {
 	return &pb.TatankaForwardRelayResponse{
 		Response: &pb.TatankaForwardRelayResponse_ClientNotFound_{
 			ClientNotFound: &pb.TatankaForwardRelayResponse_ClientNotFound{},
-		},
-	}
-}
-
-func pbTatankaForwardRelayClientRejected() *pb.TatankaForwardRelayResponse {
-	return &pb.TatankaForwardRelayResponse{
-		Response: &pb.TatankaForwardRelayResponse_ClientRejected_{
-			ClientRejected: &pb.TatankaForwardRelayResponse_ClientRejected{},
 		},
 	}
 }

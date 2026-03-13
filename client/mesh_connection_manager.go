@@ -20,6 +20,7 @@ const (
 )
 
 type meshConn interface {
+	relayMessage(ctx context.Context, peerID peer.ID, message []byte) ([]byte, error)
 	broadcast(ctx context.Context, topic string, data []byte) error
 	subscribe(ctx context.Context, topic string) error
 	unsubscribe(ctx context.Context, topic string) error

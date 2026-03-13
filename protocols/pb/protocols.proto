@@ -30,12 +30,6 @@ message UnauthorizedError {
 message CounterpartyNotFoundError {
 }
 
-// CounterpartyRejectedError is returned during a client initiate relay request
-// to indicate that the relay was unable to be setup because the counterparty
-// rejected the relay request.
-message CounterpartyRejectedError {
-}
-
 // PostBondError is a type containing specific error information for the
 // PostBonds protocol.
 message PostBondError {
@@ -48,7 +42,6 @@ message Error {
     PostBondError post_bond_error = 2;
     string message = 3;
     CounterpartyNotFoundError cp_not_found_error = 4;
-    CounterpartyRejectedError cp_rejected_error = 5;
   }
 }
 
