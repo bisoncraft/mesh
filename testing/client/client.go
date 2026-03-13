@@ -14,14 +14,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/decred/slog"
-	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/cors"
-	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/bisoncraft/mesh/bond"
 	tmc "github.com/bisoncraft/mesh/client"
 	"github.com/bisoncraft/mesh/protocols"
 	protocolsPb "github.com/bisoncraft/mesh/protocols/pb"
+	"github.com/decred/slog"
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/cors"
+	"github.com/libp2p/go-libp2p/core/crypto"
 	"google.golang.org/protobuf/proto"
 )
 

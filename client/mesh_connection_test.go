@@ -198,6 +198,7 @@ func (h *meshConnHarness) setupDefaultHandlers(t *testing.T) {
 		if err := codec.WriteLengthPrefixedMessage(s, resp); err != nil {
 			t.Fatalf("Failed to send push stream ack: %v", err)
 		}
+		// Store stream after response is written to avoid race with client side
 		h.tatankaPushStream.Store(&s)
 	})
 
@@ -283,7 +284,15 @@ func TestMeshConnection_PushMessages(t *testing.T) {
 		Data:  []byte("hello from tatanka"),
 	}
 
-	s := h.getTatankaPushStream()
+	// Wait for push stream to be stored on tatanka side (async handler execution)
+	var s network.Stream
+	deadline := time.Now().Add(2 * time.Second)
+	for s == nil && time.Now().Before(deadline) {
+		s = h.getTatankaPushStream()
+		if s == nil {
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
 	if s == nil {
 		t.Fatal("tatanka push stream not established")
 	}

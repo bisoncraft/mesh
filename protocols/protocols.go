@@ -41,3 +41,13 @@ var (
 	// FeeRateTopicPrefix is the prefix for fee rate topics.
 	FeeRateTopicPrefix = "fee_rate."
 )
+
+// PriceTopic returns the mesh topic string for price updates of ticker.
+func PriceTopic(ticker string) string {
+	return PriceTopicPrefix + ticker
+}
+
+// FeeRateTopic returns the mesh topic string for fee rate updates of network.
+func FeeRateTopic(network string) string {
+	return FeeRateTopicPrefix + network
+}

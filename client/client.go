@@ -6,12 +6,12 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/bisoncraft/mesh/bond"
 	"github.com/decred/slog"
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
-	"github.com/bisoncraft/mesh/bond"
 
 	protocolsPb "github.com/bisoncraft/mesh/protocols/pb"
 	ma "github.com/multiformats/go-multiaddr"
@@ -135,22 +135,19 @@ func (c *Client) Subscribe(ctx context.Context, topic string, handlerFunc TopicH
 		return errors.New("handler function cannot be nil")
 	}
 
-	mc, err := c.primaryMeshConnection()
-	if err != nil {
-		return err
-	}
-
 	if !c.topicRegistry.register(topic, handlerFunc) {
 		return ErrRedundantSubscription
 	}
 
+	mc, err := c.primaryMeshConnection()
+	if err != nil {
+		// No active connection; registration is stored and will be synced on reconnect.
+		return nil
+	}
+
 	err = mc.subscribe(ctx, topic)
 	if err != nil {
-		// Unregister the topic if subscription fails.
-		if !c.topicRegistry.unregister(topic) {
-			c.log.Warnf("Failed to unregister topic %s", topic)
-		}
-
+		// Subscribe errors do not unregister the topic, will be retried on reconnect.
 		return err
 	}
 
@@ -163,29 +160,29 @@ func (c *Client) Unsubscribe(ctx context.Context, topic string) error {
 		return errEmptyTopic
 	}
 
+	// Fetch the handler for the topic before unregistering.
+	_, err := c.topicRegistry.fetchHandler(topic)
+	if err != nil {
+		return ErrRedundantUnsubscription
+	}
+
 	mc, err := c.primaryMeshConnection()
 	if err != nil {
-		return err
-	}
+		// No active connection; remove from registry.
+		if !c.topicRegistry.unregister(topic) {
+			return ErrRedundantUnsubscription
+		}
 
-	// Fetch the handler for the topic before unregistering.
-	topicHandler, err := c.topicRegistry.fetchHandler(topic)
-	if err != nil {
-		return ErrRedundantUnsubscription
-	}
-
-	if !c.topicRegistry.unregister(topic) {
-		return ErrRedundantUnsubscription
+		return nil
 	}
 
 	err = mc.unsubscribe(ctx, topic)
 	if err != nil {
-		// Re-register the topic if unsubscription fails.
-		if !c.topicRegistry.register(topic, topicHandler) {
-			c.log.Warnf("Failed to re-register topic %s", topic)
-		}
+		return fmt.Errorf("failed to unsubscribe %s: %w", topic, err)
+	}
 
-		return err
+	if !c.topicRegistry.unregister(topic) {
+		return ErrRedundantUnsubscription
 	}
 
 	return nil
@@ -232,6 +229,22 @@ func (c *Client) PostBond(ctx context.Context) error {
 // AddBond adds the provided bond parameters to the client.
 func (c *Client) AddBond(params []*bond.BondParams) {
 	c.bondInfo.AddBonds(params, time.Now())
+}
+
+// ConnectionStateFeed returns a channel that delivers connection state changes.
+// The channel is closed when ctx is cancelled. Multiple callers can subscribe independently.
+func (c *Client) ConnectionStateFeed(ctx context.Context) (<-chan bool, error) {
+	if c.connManager == nil {
+		return nil, errNoMeshConnection
+	}
+
+	ch, id := c.connManager.subscribeToConnectionState()
+	go func() {
+		<-ctx.Done()
+		c.connManager.unsubscribeFromConnectionState(id)
+	}()
+
+	return ch, nil
 }
 
 // parseBootstrapAddrs parses a list of multiaddr strings into peer.AddrInfo.

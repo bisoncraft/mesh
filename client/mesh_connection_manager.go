@@ -49,6 +49,10 @@ type meshConnectionManager struct {
 
 	nodesMtx   sync.RWMutex
 	knownNodes []peer.ID
+
+	subsMtx   sync.Mutex
+	subs      map[int64]chan bool
+	nextSubID int64
 }
 
 // meshConnectionManagerConfig holds the configuration for creating a meshConnectionManager.
@@ -64,6 +68,7 @@ func newMeshConnectionManager(cfg *meshConnectionManagerConfig) *meshConnectionM
 		host:        cfg.host,
 		log:         cfg.log,
 		connFactory: cfg.connFactory,
+		subs:        make(map[int64]chan bool),
 	}
 
 	for _, peer := range cfg.bootstrapPeers {
@@ -86,9 +91,53 @@ func (m *meshConnectionManager) primaryConnection() (meshConn, error) {
 func (m *meshConnectionManager) setPrimaryConnection(mc meshConn) {
 	if mc == nil {
 		m.primaryConn.Store(nil)
-		return
+	} else {
+		m.primaryConn.Store(&meshConnHolder{mc: mc})
 	}
-	m.primaryConn.Store(&meshConnHolder{mc: mc})
+
+	// Broadcast state change to all subscribers
+	connected := mc != nil
+	m.subsMtx.Lock()
+	for _, ch := range m.subs {
+		select {
+		case ch <- connected:
+		default:
+			// Channel buffer is full with a stale value. Drain it and send the latest
+			// state, ensuring the newest value is always available in the buffer.
+			select {
+			case <-ch:
+			default:
+			}
+			ch <- connected
+		}
+	}
+	m.subsMtx.Unlock()
+}
+
+// subscribeToConnectionState registers a new subscriber and returns a channel for state updates
+// along with a subscription ID. The initial state is immediately sent on the channel.
+func (m *meshConnectionManager) subscribeToConnectionState() (chan bool, int64) {
+	ch := make(chan bool, 1)
+
+	m.subsMtx.Lock()
+	id := m.nextSubID
+	m.nextSubID++
+	m.subs[id] = ch
+	ch <- m.primaryConn.Load() != nil // send initial state while holding lock
+	m.subsMtx.Unlock()
+
+	return ch, id
+}
+
+// unsubscribeFromConnectionState removes a subscriber from the registry and closes its channel.
+func (m *meshConnectionManager) unsubscribeFromConnectionState(id int64) {
+	m.subsMtx.Lock()
+	ch, ok := m.subs[id]
+	if ok {
+		delete(m.subs, id)
+		close(ch)
+	}
+	m.subsMtx.Unlock()
 }
 
 // connectResult holds the result of a connection attempt.
@@ -214,10 +263,9 @@ func (m *meshConnectionManager) run(ctx context.Context) {
 	backoff := baseReconnectDelay
 
 	attemptConnect := func() {
-		conn, errCh, ok := m.connectToAvailableNode(ctx)
+		_, errCh, ok := m.connectToAvailableNode(ctx)
 		if ok {
 			backoff = baseReconnectDelay
-			m.setPrimaryConnection(conn)
 			runErrCh = errCh
 		} else {
 			reconnectTimer.Reset(backoff)
