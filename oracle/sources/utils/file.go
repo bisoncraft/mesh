@@ -1,10 +1,10 @@
-package tatanka
+package utils
 
 import "os"
 
-// atomicWriteFile writes data to a file atomically by writing to a temporary
+// AtomicWriteFile writes data to a file atomically by writing to a temporary
 // file first and then renaming it to the target path.
-func atomicWriteFile(path string, data []byte) error {
+func AtomicWriteFile(path string, data []byte) error {
 	tmpPath := path + ".tmp"
 	if err := os.WriteFile(tmpPath, data, 0600); err != nil {
 		return err

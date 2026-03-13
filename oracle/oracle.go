@@ -5,12 +5,13 @@ import (
 	"fmt"
 	"math/big"
 	"net/http"
+	"path/filepath"
 	"sync"
 	"time"
 
-	"github.com/decred/slog"
 	"github.com/bisoncraft/mesh/oracle/sources"
 	"github.com/bisoncraft/mesh/oracle/sources/providers"
+	"github.com/decred/slog"
 )
 
 // Ticker is the upper-case symbol used to indicate an asset.
@@ -71,6 +72,19 @@ type Config struct {
 	// BlockcypherToken is the token used to fetch data from the Blockcypher API.
 	BlockcypherToken string
 
+	// CoinGeckoKey is the API key used to fetch data from the CoinGecko API.
+	CoinGeckoKey string
+
+	// CoinGeckoPlan is the CoinGecko plan tier: "demo" or "pro".
+	CoinGeckoPlan string
+
+	// CoinGeckoDemoLimit is the monthly credit limit for CoinGecko demo tier.
+	// Defaults to 9800 if not set.
+	CoinGeckoDemoLimit int64
+
+	// DataDir is the directory for persistent data files (e.g. quota tracking).
+	DataDir string
+
 	// HTTPClient is the HTTP client used to fetch data from the sources.
 	// If nil, http.DefaultClient is used.
 	HTTPClient HTTPClient
@@ -92,6 +106,12 @@ func (cfg *Config) verify() error {
 	}
 	if cfg.NodeID == "" {
 		return fmt.Errorf("node ID is required")
+	}
+	if cfg.CoinGeckoKey != "" && cfg.CoinGeckoPlan != "demo" && cfg.CoinGeckoPlan != "pro" {
+		return fmt.Errorf("coingeckoplan must be 'demo' or 'pro' when coingeckokey is set")
+	}
+	if cfg.CoinGeckoDemoLimit < 0 {
+		return fmt.Errorf("coingeckodemolimit must be non-negative")
 	}
 	return nil
 }
@@ -159,6 +179,15 @@ func New(cfg *Config) (*Oracle, error) {
 			APIKey:     cfg.TatumKey,
 		})
 		allSources = append(allSources, tatumSources.All()...)
+	}
+
+	if cfg.CoinGeckoKey != "" {
+		quotaFile := filepath.Join(cfg.DataDir, "coingecko_quota.json")
+		cgSource, err := providers.NewCoinGeckoSource(httpClient, cfg.Log, cfg.CoinGeckoKey, cfg.CoinGeckoPlan == "pro", quotaFile, cfg.CoinGeckoDemoLimit)
+		if err != nil {
+			return nil, fmt.Errorf("create coingecko source: %w", err)
+		}
+		allSources = append(allSources, cgSource)
 	}
 
 	quotaManager := newQuotaManager(&quotaManagerConfig{

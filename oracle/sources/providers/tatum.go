@@ -14,9 +14,13 @@ import (
 )
 
 const (
-	tatumCreditsPerRequest = 10 // Each fee estimation call costs 10 credits.
-	tatumReconcileInterval = 10 * time.Minute
+	tatumName              = "tatum"
 	tatumMinPeriod         = 10 * time.Second // Real-time fee data, 3 req/sec rate limit.
+	tatumReconcileInterval = 10 * time.Minute
+	tatumCreditsPerRequest = 10 // Each fee estimation call costs 10 credits.
+	tatumBitcoinName       = "tatum.btc"
+	tatumLitecoinName      = "tatum.ltc"
+	tatumDogecoinName      = "tatum.doge"
 )
 
 // TatumConfig configures the Tatum source group.
@@ -43,7 +47,7 @@ func (ts *TatumSources) All() []sources.Source {
 // NewTatumSources creates a Tatum source group with a shared quota tracker.
 func NewTatumSources(cfg TatumConfig) *TatumSources {
 	tracker := utils.NewQuotaTracker(&utils.QuotaTrackerConfig{
-		Name:              "tatum",
+		Name:              tatumName,
 		FetchQuota:        tatumQuotaFetcher(cfg.HTTPClient, cfg.APIKey),
 		ReconcileInterval: tatumReconcileInterval,
 		Log:               cfg.Log,
@@ -63,18 +67,17 @@ func NewTatumSources(cfg TatumConfig) *TatumSources {
 			return parse(resp.Body)
 		}
 		return utils.NewTrackedSource(utils.TrackedSourceConfig{
-			Name:              name,
-			MinPeriod:         tatumMinPeriod,
-			FetchRates:        fetchRates,
-			Tracker:           tracker,
-			CreditsPerRequest: tatumCreditsPerRequest,
+			Name:       name,
+			MinPeriod:  tatumMinPeriod,
+			FetchRates: fetchRates,
+			Tracker:    tracker,
 		})
 	}
 
 	return &TatumSources{
-		Bitcoin:  mkSource("BTC", "BTC", "tatum.btc"),
-		Litecoin: mkSource("LTC", "LTC", "tatum.ltc"),
-		Dogecoin: mkSource("DOGE", "DOGE", "tatum.doge"),
+		Bitcoin:  mkSource("BTC", "BTC", tatumBitcoinName),
+		Litecoin: mkSource("LTC", "LTC", tatumLitecoinName),
+		Dogecoin: mkSource("DOGE", "DOGE", tatumDogecoinName),
 		pool:     tracker,
 	}
 }
@@ -103,8 +106,8 @@ func tatumQuotaFetcher(client utils.HTTPClient, apiKey string) func(ctx context.
 		nextMonth := time.Date(now.Year(), now.Month()+1, 1, 0, 0, 0, 0, time.UTC)
 
 		return &sources.QuotaStatus{
-			FetchesRemaining: max(result.Limit-result.Used, 0),
-			FetchesLimit:     result.Limit,
+			FetchesRemaining: max(result.Limit-result.Used, 0) / tatumCreditsPerRequest,
+			FetchesLimit: result.Limit / tatumCreditsPerRequest,
 			ResetTime:        nextMonth,
 		}, nil
 	}

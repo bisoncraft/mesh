@@ -8,9 +8,15 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/decred/slog"
 	"github.com/bisoncraft/mesh/oracle/sources"
 	"github.com/bisoncraft/mesh/oracle/sources/utils"
+	"github.com/decred/slog"
+)
+
+const (
+	blockcypherLitecoinName      = "ltc.blockcypher"
+	blockcypherMinPeriod         = 36 * time.Second
+	blockcypherCreditsPerRequest = 1
 )
 
 // NewBlockcypherLitecoinSource creates a BlockCypher Litecoin fee rate source.
@@ -31,18 +37,17 @@ func NewBlockcypherLitecoinSource(httpClient utils.HTTPClient, log slog.Logger, 
 	}
 
 	tracker := utils.NewQuotaTracker(&utils.QuotaTrackerConfig{
-		Name:              "blockcypher",
+		Name:              blockcypherLitecoinName,
 		FetchQuota:        blockcypherQuotaFetcher(httpClient, token),
 		ReconcileInterval: 30 * time.Second,
 		Log:               log,
 	})
 	return utils.NewTrackedSource(utils.TrackedSourceConfig{
-		Name:              "ltc.blockcypher",
-		Weight:            0.25,
-		MinPeriod:         36 * time.Second,
-		FetchRates:        fetchRates,
-		Tracker:           tracker,
-		CreditsPerRequest: 1,
+		Name:       blockcypherLitecoinName,
+		Weight:     0.25,
+		MinPeriod:  blockcypherMinPeriod,
+		FetchRates: fetchRates,
+		Tracker:    tracker,
 	})
 }
 
@@ -81,8 +86,8 @@ func blockcypherQuotaFetcher(client utils.HTTPClient, token string) func(ctx con
 		resetTime := now.Truncate(time.Hour).Add(time.Hour)
 
 		return &sources.QuotaStatus{
-			FetchesRemaining: max(limit-used, 0),
-			FetchesLimit:     limit,
+			FetchesRemaining: max(limit-used, 0) / blockcypherCreditsPerRequest,
+			FetchesLimit:     limit / blockcypherCreditsPerRequest,
 			ResetTime:        resetTime,
 		}, nil
 	}

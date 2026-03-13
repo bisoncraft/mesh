@@ -69,9 +69,12 @@ type Config struct {
 	ForceWhitelist bool
 
 	// Oracle Configuration
-	CMCKey           string
-	TatumKey         string
-	BlockcypherToken string
+	CMCKey             string
+	TatumKey           string
+	BlockcypherToken   string
+	CoinGeckoKey       string
+	CoinGeckoPlan      string
+	CoinGeckoDemoLimit int64
 
 	// NATMapping uses UPnP to discover the public IP and map the listen port
 	// automatically. For nodes behind a consumer router.
@@ -396,6 +399,10 @@ func (t *TatankaNode) initOracle() error {
 			t.adminNotify.BroadcastOracleUpdate("oracle_update", update)
 		},
 		PublishQuotaHeartbeat: t.gossipSub.publishQuotaHeartbeat,
+		CoinGeckoKey:          t.config.CoinGeckoKey,
+		CoinGeckoPlan:         t.config.CoinGeckoPlan,
+		CoinGeckoDemoLimit:    t.config.CoinGeckoDemoLimit,
+		DataDir:               t.config.DataDir,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create oracle: %v", err)
