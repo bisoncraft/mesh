@@ -27,8 +27,9 @@ const (
 	// expireMainKey is the time before the main key is removed from the cache
 	// where it should not be used as main key. This is used to prevent not
 	// being able to decrypt messages during key rotation.
-	expireMainKey = 10 * time.Minute
-	keyGCInterval = 5 * time.Minute
+	expireMainKey  = 10 * time.Minute
+	keyGCInterval  = 5 * time.Minute
+	peerInfoPrefix = "tatanka-p2p-v1"
 )
 
 // keyID is a unique identifier for an encryption key.
@@ -248,9 +249,10 @@ func getSharedKey(privKey *ecdh.PrivateKey, cpPubKeyB []byte, ourPeerID, cpPeerI
 
 func peerInfo(a, b peer.ID) []byte {
 	if a < b {
-		return []byte("tatanka-p2p-v1|" + string(a) + "|" + string(b))
+		return []byte(peerInfoPrefix + "|" + string(a) + "|" + string(b))
+	} else {
+		return []byte(peerInfoPrefix + "|" + string(b) + "|" + string(a))
 	}
-	return []byte("tatanka-p2p-v1|" + string(b) + "|" + string(a))
 }
 
 func (em *encryptionManagerImpl) performKeyHandshake(ctx context.Context, cpPeerID peer.ID) (shared []byte, id keyID, err error) {

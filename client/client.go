@@ -344,17 +344,8 @@ func (c *Client) signedHandshakeResponse(nonce, ourPubKey []byte, err error) ([]
 	return b, nil
 }
 
-// HandlePeerMessage registers a handler for incoming TatankaRelayMessage requests.
-func (c *Client) HandlePeerMessage(handler func([]byte) ([]byte, error)) error {
-	if handler == nil {
-		return fmt.Errorf("handler cannot be nil")
-	}
-
-	if c.host == nil {
-		return fmt.Errorf("client host not initialized")
-	}
-
-	c.host.SetStreamHandler(protocols.TatankaRelayMessageProtocol, func(s network.Stream) {
+func (c *Client) peerMessageHandler(handler func([]byte) ([]byte, error)) network.StreamHandler {
+	return func(s network.Stream) {
 		defer func() { _ = s.Close() }()
 
 		req := &protocolsPb.TatankaRelayMessageRequest{}
@@ -439,7 +430,20 @@ func (c *Client) HandlePeerMessage(handler func([]byte) ([]byte, error)) error {
 		default:
 			sendResponse(pbClientResponseMessage(pbMessageResponseError("unknown client request type")))
 		}
-	})
+	}
+}
+
+// HandlePeerMessage registers a handler for incoming TatankaRelayMessage requests.
+func (c *Client) HandlePeerMessage(handler func([]byte) ([]byte, error)) error {
+	if handler == nil {
+		return fmt.Errorf("handler cannot be nil")
+	}
+
+	if c.host == nil {
+		return fmt.Errorf("client host not initialized")
+	}
+
+	c.host.SetStreamHandler(protocols.TatankaRelayMessageProtocol, c.peerMessageHandler(handler))
 
 	return nil
 }
