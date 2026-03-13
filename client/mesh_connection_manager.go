@@ -104,7 +104,10 @@ func (m *meshConnectionManager) setPrimaryConnection(mc meshConn) {
 		default:
 			// Channel buffer is full with a stale value. Drain it and send the latest
 			// state, ensuring the newest value is always available in the buffer.
-			<-ch
+			select {
+			case <-ch:
+			default:
+			}
 			ch <- connected
 		}
 	}
