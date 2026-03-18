@@ -17,7 +17,7 @@ func TestTopicRegistry(t *testing.T) {
 	}
 
 	if err := tr.register([]string{pingTopic}, pingHandler); err != nil {
-		t.Fatalf("Unexpected error registering topic: %v", err)
+		t.Fatalf("Expected ping topic to be registered: %v", err)
 	}
 
 	// Ensure the registry returns an error when fetching the handler for an unknown topic.

@@ -174,7 +174,7 @@ func NewTatankaNode(config *Config, opts ...Option) (*TatankaNode, error) {
 		clientConnectionManager: newClientConnectionManager(config.Logger),
 		subTrie:                 subtrie.New(),
 		bondVerifier:            newBondVerifier(),
-		bondStorage:             newMemoryBondStorage(time.Now),
+		bondStorage:             newMemoryBondStorage(),
 		readyCh:                 make(chan struct{}),
 	}
 
@@ -687,12 +687,12 @@ func (t *TatankaNode) setupStreamHandlers() {
 	t.setStreamHandler(protocols.PostBondsProtocol, t.handlePostBonds, requireNoPermission)
 	t.setStreamHandler(protocols.ClientSubscribeProtocol, t.handleClientSubscribe, requireNoPermission)
 	t.setStreamHandler(protocols.ClientUnsubscribeProtocol, t.handleClientUnsubscribe, requireNoPermission)
+	t.setStreamHandler(protocols.SearchTopicsProtocol, t.handleSearchTopics, requireNoPermission)
 	t.setStreamHandler(forwardRelayProtocol, t.handleForwardRelay, t.isWhitelistPeer)
 	t.setStreamHandler(protocols.ClientPublishProtocol, t.handleClientPublish, t.requireBonds)
-	t.setStreamHandler(protocols.ClientPushProtocol, t.handleClientPush, t.requireBonds)
+	t.setStreamHandler(protocols.ClientPushProtocol, t.handleClientPush, requireNoPermission)
 	t.setStreamHandler(protocols.ClientRelayMessageProtocol, t.handleClientRelayMessage, t.requireBonds)
 	t.setStreamHandler(protocols.AvailableMeshNodesProtocol, t.handleAvailableMeshNodes, t.requireBonds)
-	t.setStreamHandler(protocols.SearchTopicsProtocol, t.handleSearchTopics, t.requireBonds)
 	t.setStreamHandler(discoveryProtocol, t.handleDiscovery, t.isWhitelistPeer)
 	t.setStreamHandler(whitelistProtocol, t.handleWhitelist, t.isWhitelistPeer)
 	t.setStreamHandler(quotaHandshakeProtocol, t.handleQuotaHandshake, t.isWhitelistPeer)

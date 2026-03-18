@@ -6,17 +6,17 @@ import (
 )
 
 func TestBondInfo(t *testing.T) {
-	mockTime := time.Now()
-	bond1 := &BondParams{ID: "bond1", Strength: 20, Expiry: mockTime.Add(time.Hour)}
-	bond2 := &BondParams{ID: "bond2", Strength: 20, Expiry: mockTime.Add(time.Hour * 3)}
+	now := time.Now()
+	bond1 := &BondParams{ID: "bond1", Strength: 20, Expiry: now.Add(time.Hour)}
+	bond2 := &BondParams{ID: "bond2", Strength: 20, Expiry: now.Add(time.Hour * 3)}
 
 	// Ensure a bond info can add bonds.
 	bInfo := NewBondInfo()
-	bInfo.AddBonds([]*BondParams{bond1}, mockTime)
+	bInfo.AddBonds([]*BondParams{bond1})
 	initialStrength := bInfo.BondStrength()
 
 	// Ensure adding bonds updates the cumulative bond strength.
-	bInfo.AddBonds([]*BondParams{bond2}, mockTime)
+	bInfo.AddBonds([]*BondParams{bond2})
 	updatedStrength := bInfo.BondStrength()
 
 	if updatedStrength-initialStrength != bond2.Strength {

@@ -198,7 +198,6 @@ func TestSubscribe(t *testing.T) {
 		// Subscribe to another topic when meshConn returns an error.
 		wantErr := errors.New("subscribe failed")
 		mc.subscribeErr = wantErr
-
 		err = c.Subscribe(ctx, []string{"topic-2"}, func(topic string, event TopicEvent) {})
 		if err == nil {
 			t.Fatalf("expected error, got nil")

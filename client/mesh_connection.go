@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"sync"
-	"time"
 
 	"github.com/bisoncraft/mesh/bond"
 	"github.com/bisoncraft/mesh/codec"
@@ -153,7 +152,7 @@ func (m *meshConnection) unsubscribe(ctx context.Context, topics []string) error
 	}
 	defer func() { _ = s.Close() }()
 
-	req := &protocolsPb.SubscribeRequest{Topics: topics}
+	req := &protocolsPb.UnsubscribeRequest{Topics: topics}
 	if err := codec.WriteLengthPrefixedMessage(s, req); err != nil {
 		return fmt.Errorf("failed to write unsubscribe request: %w", err)
 	}
@@ -197,8 +196,9 @@ func (m *meshConnection) postBondsInternal(ctx context.Context, req *protocolsPb
 			if idx >= len(req.Bonds) {
 				return fmt.Errorf("invalid bond index %d in post bond error", bondErr.InvalidBondIndex)
 			}
-			invalidBond := string(req.Bonds[idx].BondID)
-			m.log.Infof("%s rejected bond %s at request index %d", hostID, invalidBond, idx)
+			invalidBondID := string(req.Bonds[idx].BondID)
+			m.log.Infof("%s rejected bond %s at request index %d", hostID, invalidBondID, idx)
+			m.bondInfo.RemoveBond(invalidBondID)
 			return errInvalidBondIndex
 
 		case *protocolsPb.Error_Message:
@@ -265,7 +265,7 @@ func (m *meshConnection) addBonds(ctx context.Context, bonds []*bond.BondParams)
 		return fmt.Errorf("failed to post bonds: %w", err)
 	}
 
-	m.bondInfo.AddBonds(bonds, time.Now())
+	m.bondInfo.AddBonds(bonds)
 
 	return nil
 }

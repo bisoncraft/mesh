@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/bisoncraft/mesh/bond"
 	protocolsPb "github.com/bisoncraft/mesh/protocols/pb"
@@ -83,11 +82,8 @@ func NewClient(cfg *Config) (*Client, error) {
 	}
 
 	bi := bond.NewBondInfo()
-	bi.AddBonds(cfg.Bonds, time.Now())
+	bi.AddBonds(cfg.Bonds)
 	c.bondInfo = bi
-
-	// Add a placeholder bond to validate client. Remove once bond pipeline is fully implemented.
-	c.bondInfo.AddBonds([]*bond.BondParams{}, time.Now())
 
 	if c.cfg.Host == "" {
 		c.cfg.Host = defaultHost

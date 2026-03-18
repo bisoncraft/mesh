@@ -160,7 +160,7 @@ func newMeshConnHarness(t *testing.T, topics []string) *meshConnHarness {
 		ID:       "test-bond",
 		Expiry:   time.Now().Add(6 * time.Hour),
 		Strength: bond.MinRequiredBondStrength,
-	}}, time.Now())
+	}})
 
 	h.meshConn = newMeshConnection(
 		h.clientHost,

@@ -2,6 +2,7 @@ package bond
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -37,7 +38,7 @@ func NewBondInfo() *BondInfo {
 }
 
 // AddBond adds a bond to the client bond info, maintaining sorted order.
-func (bi *BondInfo) AddBonds(bonds []*BondParams, now time.Time) {
+func (bi *BondInfo) AddBonds(bonds []*BondParams) {
 	bi.mtx.Lock()
 	defer bi.mtx.Unlock()
 
@@ -45,6 +46,8 @@ func (bi *BondInfo) AddBonds(bonds []*BondParams, now time.Time) {
 	for _, bond := range bi.bondParams {
 		existing[bond.ID] = struct{}{}
 	}
+
+	now := time.Now()
 
 	// Make sure none of bonds are already stored, and that none of the new
 	// bonds are duplicates.
@@ -90,6 +93,19 @@ func (bi *BondInfo) BondStrength() (s uint32) {
 		s += bond.Strength
 	}
 	return s
+}
+
+// RemoveBond removes a bond with the specified bond ID.
+func (bi *BondInfo) RemoveBond(bondID string) {
+	bi.mtx.Lock()
+	defer bi.mtx.Unlock()
+
+	idx := slices.IndexFunc(bi.bondParams, func(bp *BondParams) bool {
+		return bp.ID == bondID
+	})
+	if idx != -1 {
+		bi.bondParams = append(bi.bondParams[:idx], bi.bondParams[idx+1:]...)
+	}
 }
 
 // PostBondReqFromBondInfo converts the provided bond info into a post bond request.

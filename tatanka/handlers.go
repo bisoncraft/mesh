@@ -94,7 +94,7 @@ func (t *TatankaNode) handleClientSubscribe(s network.Stream) {
 		}
 	}
 
-	if err := codec.WriteLengthPrefixedMessage(s, pbResponseSuccess()); err != nil {
+	if err := codec.WriteLengthPrefixedMessage(s, &protocolsPb.Success{}); err != nil {
 		t.log.Errorf("Failed to write success response for subscribe: %v", err)
 	}
 }
@@ -105,6 +105,11 @@ func (t *TatankaNode) handleClientUnsubscribe(s network.Stream) {
 
 	client := s.Conn().RemotePeer()
 	unsubMsg := &protocolsPb.UnsubscribeRequest{}
+	if err := codec.ReadLengthPrefixedMessage(s, unsubMsg); err != nil {
+		t.log.Debugf("Failed to read/unmarshal unsubscribe message from client %s: %v.", client.ShortString(), err)
+		// TODO: client sent invalid message, remove client?
+		return
+	}
 
 	unsubscribed := t.subTrie.UnsubscribePeer(client, unsubMsg.Topics)
 	for _, topic := range unsubscribed {
@@ -114,7 +119,7 @@ func (t *TatankaNode) handleClientUnsubscribe(s network.Stream) {
 		}
 		t.publishClientSubscriptionEvent(client, topic, false)
 	}
-	if err := codec.WriteLengthPrefixedMessage(s, pbResponseSuccess()); err != nil {
+	if err := codec.WriteLengthPrefixedMessage(s, &protocolsPb.Success{}); err != nil {
 		t.log.Errorf("Failed to write success response for unsubscribe: %v", err)
 	}
 }
