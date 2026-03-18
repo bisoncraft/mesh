@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	// MinRequiredBondStrength is the minimum required bond strength for a client.
+	// MinRequiredBondStrength is the minimum required bond strength for a valid bond..
 	MinRequiredBondStrength = 1
 )
 
@@ -107,28 +107,31 @@ func (bi *BondInfo) ClearExpiredBonds(now time.Time) {
 
 // RemoveBondAtIndex removes the bond at the provided index.
 func (cbi *BondInfo) RemoveBondAtIndex(index uint32) error {
-	cbi.mtx.RLock()
-	bondSize := len(cbi.bondParams)
-	cbi.mtx.RUnlock()
+	cbi.mtx.Lock()
+	defer cbi.mtx.Unlock()
 
-	if bondSize == 0 {
+	if len(cbi.bondParams) == 0 {
 		// No bond to remove
 		return nil
 	}
 
-	if index > uint32(bondSize)-1 {
-		return fmt.Errorf("index %d exceeds max bonds index range %d", index, bondSize-1)
+	if index >= uint32(len(cbi.bondParams)) {
+		return fmt.Errorf("index %d exceeds max bonds index range %d", index, len(cbi.bondParams)-1)
 	}
 
-	cbi.mtx.Lock()
+	removedBond := cbi.bondParams[index]
 	cbi.bondParams = append(cbi.bondParams[:index], cbi.bondParams[index+1:]...)
-	cbi.mtx.Unlock()
+	delete(cbi.storedBonds, removedBond.ID)
+	cbi.totalStrength.Add(-removedBond.Strength)
 
 	return nil
 }
 
 // PostBondReqFromBondInfo converts the provided bond info into a post bond request.
 func PostBondReqFromBondInfo(info *BondInfo) (*protocolsPb.PostBondRequest, error) {
+	info.mtx.RLock()
+	defer info.mtx.RUnlock()
+
 	if len(info.bondParams) == 0 {
 		return nil, fmt.Errorf("no bonds provided")
 	}
