@@ -353,72 +353,7 @@ func (sm *SubTrie) RemovePeer(peerID peer.ID) {
 	delete(sm.peerTries, peerID)
 }
 
-// SearchTopics takes a list of namespaced topics and returns a list of all topics
-// that are an exact match or a child of one of the topics in the input list, without duplicates.
-func (sm *SubTrie) SearchTopics(topics []string) []string {
-	sm.mtx.RLock()
-	defer sm.mtx.RUnlock()
-
-	// Grab only the root of hierarchical topics with matching non-zero root.
-	topicFilters := make([]string, 0, len(topics))
-nexttopic:
-	for _, topic := range topics {
-		if topic == "" {
-			continue
-		}
-		for i, filteredTopic := range topicFilters {
-			parts, fParts := strings.Split(topic, ":"), strings.Split(filteredTopic, ":")
-			matchParts := make([]string, 0, 1)
-			for j := 0; j < len(parts) && j < len(fParts); j++ {
-				if parts[j] == fParts[j] {
-					matchParts = append(matchParts, parts[j])
-				} else {
-					break
-				}
-			}
-			if len(matchParts) >= min(len(parts), len(fParts)) {
-				// Either a duplicate or a shared root.
-				topicFilters[i] = strings.Join(matchParts, ":")
-				continue nexttopic
-			}
-		}
-		// no matching root
-		topicFilters = append(topicFilters, topic)
-	}
-
-	results := make([]string, 0, len(topics))
-
-nextfilter:
-	for _, filter := range topicFilters {
-		parts := strings.Split(filter, ":")
-		root := sm.globalTrie
-		rootParts := make([]string, 0, len(parts))
-		for _, part := range parts {
-			if child, exists := root.children[part]; exists {
-				rootParts = append(rootParts, part)
-				root = child
-			} else {
-				continue nextfilter
-			}
-		}
-		rootTopic := strings.Join(rootParts, ":")
-		if rootTopic == "" && filter != "" {
-			// filter is not a prefix of any topic
-			continue
-		}
-
-		walkTrie(root, rootTopic, func(topic string, _ *trie) {
-			if topic == "" { // Don't include the global root
-				return
-			}
-			results = append(results, topic)
-		})
-	}
-
-	return results
-}
-
-func (sm *SubTrie) SearchTopics2(filters []string) []string {
+func (sm *SubTrie) SearchTopics(filters []string) []string {
 	sm.mtx.RLock()
 	defer sm.mtx.RUnlock()
 
