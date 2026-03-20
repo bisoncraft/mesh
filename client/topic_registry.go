@@ -17,32 +17,42 @@ func newTopicRegistry() *topicRegistry {
 	}
 }
 
-// register tracks the provided topic and its corresponding handler.
-// Returns true if registration succeeded, false if the topic was already registered.
-func (t *topicRegistry) register(topic string, handlerFunc TopicHandler) bool {
+// register tracks the provided topic and its corresponding handler. Returns
+// ErrRedundantSubscription if the topic is already registered.
+func (t *topicRegistry) register(topics []string, handlerFunc TopicHandler) error {
 	t.mtx.Lock()
 	defer t.mtx.Unlock()
 
-	if _, exists := t.topics[topic]; exists {
-		return false
+	for _, topic := range topics {
+		if _, exists := t.topics[topic]; exists {
+			return fmt.Errorf("%w: '%s'", ErrRedundantSubscription, topic)
+		}
 	}
 
-	t.topics[topic] = handlerFunc
-	return true
+	for _, topic := range topics {
+		t.topics[topic] = handlerFunc
+	}
+
+	return nil
 }
 
-// unregister removes the provided topic from the registry.
-// Returns true if the topic was unregistered, false if it was not registered.
-func (t *topicRegistry) unregister(topic string) bool {
+// unregister removes the provided topic from the registry. Returns
+// ErrRedundantUnsubscription if the topic is not registered.
+func (t *topicRegistry) unregister(topics []string) error {
 	t.mtx.Lock()
 	defer t.mtx.Unlock()
 
-	if _, exists := t.topics[topic]; !exists {
-		return false
+	for _, topic := range topics {
+		if _, exists := t.topics[topic]; !exists {
+			return fmt.Errorf("%w: '%s'", ErrRedundantUnsubscription, topic)
+		}
 	}
 
-	delete(t.topics, topic)
-	return true
+	for _, topic := range topics {
+		delete(t.topics, topic)
+	}
+
+	return nil
 }
 
 // fetchHandler returns the handler associated with the provided topic or an error if there is none.

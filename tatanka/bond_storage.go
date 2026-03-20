@@ -2,10 +2,9 @@ package tatanka
 
 import (
 	"sync"
-	"time"
 
-	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/bisoncraft/mesh/bond"
+	"github.com/libp2p/go-libp2p/core/peer"
 )
 
 type bondStorage interface {
@@ -20,15 +19,13 @@ type bondStorage interface {
 type memoryBondStorage struct {
 	mtx     sync.RWMutex
 	clients map[peer.ID]*bond.BondInfo
-	timeNow func() time.Time
 }
 
 // newMemoryBondStorage creates a new memory bond storage with the given function
 // to get the current time so that it can be mocked in tests.
-func newMemoryBondStorage(timeNow func() time.Time) *memoryBondStorage {
+func newMemoryBondStorage() *memoryBondStorage {
 	return &memoryBondStorage{
 		clients: make(map[peer.ID]*bond.BondInfo),
-		timeNow: timeNow,
 	}
 }
 
@@ -42,9 +39,7 @@ func (bs *memoryBondStorage) addBonds(peerID peer.ID, bonds []*bond.BondParams) 
 	}
 	bs.mtx.Unlock()
 
-	now := bs.timeNow()
-	clientInfo.ClearExpiredBonds(now)
-	clientInfo.AddBonds(bonds, now)
+	clientInfo.AddBonds(bonds)
 
 	return clientInfo.BondStrength()
 }
@@ -59,6 +54,5 @@ func (bs *memoryBondStorage) bondStrength(peerID peer.ID) uint32 {
 	}
 	bs.mtx.RUnlock()
 
-	clientInfo.ClearExpiredBonds(bs.timeNow())
 	return clientInfo.BondStrength()
 }

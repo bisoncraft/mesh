@@ -12,12 +12,12 @@ func TestTopicRegistry(t *testing.T) {
 	pingTopic := "ping"
 
 	pingHandlerSignals := make(chan struct{}, 1)
-	pingHandler := func(_ TopicEvent) {
+	pingHandler := func(_ string, ev TopicEvent) {
 		pingHandlerSignals <- struct{}{}
 	}
 
-	if !tr.register(pingTopic, pingHandler) {
-		t.Fatalf("Expected ping topic to be registered")
+	if err := tr.register([]string{pingTopic}, pingHandler); err != nil {
+		t.Fatalf("Expected ping topic to be registered: %v", err)
 	}
 
 	// Ensure the registry returns an error when fetching the handler for an unknown topic.
@@ -32,7 +32,7 @@ func TestTopicRegistry(t *testing.T) {
 		t.Fatalf("Unexpected error fetching topic handler: %v", err)
 	}
 
-	handleFunc(TopicEvent{})
+	handleFunc(pingTopic, TopicEvent{})
 
 	select {
 	case <-pingHandlerSignals:
@@ -47,7 +47,7 @@ func TestTopicRegistry(t *testing.T) {
 	}
 
 	// Ensure the registry can unregister a topic.
-	if !tr.unregister(pingTopic) {
-		t.Fatalf("Expected ping topic to be unregistered")
+	if err := tr.unregister([]string{pingTopic}); err != nil {
+		t.Fatalf("Unexpected error unregistering topic: %v", err)
 	}
 }

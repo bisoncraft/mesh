@@ -13,16 +13,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bisoncraft/mesh/bond"
+	"github.com/bisoncraft/mesh/codec"
+	"github.com/bisoncraft/mesh/protocols"
+	protocolsPb "github.com/bisoncraft/mesh/protocols/pb"
 	"github.com/decred/slog"
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
-	"github.com/bisoncraft/mesh/bond"
-	"github.com/bisoncraft/mesh/codec"
-	"github.com/bisoncraft/mesh/protocols"
-	protocolsPb "github.com/bisoncraft/mesh/protocols/pb"
 	ma "github.com/multiformats/go-multiaddr"
 	"google.golang.org/protobuf/proto"
 )
@@ -160,7 +160,7 @@ func newMeshConnHarness(t *testing.T, topics []string) *meshConnHarness {
 		ID:       "test-bond",
 		Expiry:   time.Now().Add(6 * time.Hour),
 		Strength: bond.MinRequiredBondStrength,
-	}}, time.Now())
+	}})
 
 	h.meshConn = newMeshConnection(
 		h.clientHost,
@@ -218,6 +218,21 @@ func (h *meshConnHarness) setupDefaultHandlers(t *testing.T) {
 			t.Fatalf("Subscribe read error: %v", err)
 		}
 		h.subscribeReceived <- &msg
+		if err := codec.WriteLengthPrefixedMessage(s, &protocolsPb.Response{Response: &protocolsPb.Response_Success{Success: &protocolsPb.Success{}}}); err != nil {
+			t.Fatalf("Subscribe write error: %v", err)
+		}
+	})
+
+	h.tatankaHost.SetStreamHandler(protocols.ClientUnsubscribeProtocol, func(s network.Stream) {
+		defer s.Close()
+		var msg protocolsPb.SubscribeRequest
+		if err := codec.ReadLengthPrefixedMessage(s, &msg); err != nil {
+			t.Fatalf("Unsubscribe read error: %v", err)
+		}
+		h.subscribeReceived <- &msg
+		if err := codec.WriteLengthPrefixedMessage(s, &protocolsPb.Response{Response: &protocolsPb.Response_Success{Success: &protocolsPb.Success{}}}); err != nil {
+			t.Fatalf("Unsubscribe write error: %v", err)
+		}
 	})
 
 	h.tatankaHost.SetStreamHandler(protocols.PostBondsProtocol, func(s network.Stream) {
@@ -315,13 +330,13 @@ func TestMeshConnection_Subscribe(t *testing.T) {
 	defer h.cleanup()
 
 	topic := "test-topic"
-	if err := h.meshConn.subscribe(h.ctx, topic); err != nil {
+	if err := h.meshConn.subscribe(h.ctx, []string{topic}); err != nil {
 		t.Fatalf("subscribe failed: %v", err)
 	}
 
 	sub := receiveWithTimeout(t, h.subscribeReceived, 2*time.Second)
 
-	if sub.Topic != topic || !sub.Subscribe {
+	if sub.Topics[0] != topic {
 		t.Errorf("unexpected subscribe request: %+v", sub)
 	}
 }
@@ -331,13 +346,13 @@ func TestMeshConnection_Unsubscribe(t *testing.T) {
 	defer h.cleanup()
 
 	topic := "test-topic"
-	if err := h.meshConn.unsubscribe(h.ctx, topic); err != nil {
+	if err := h.meshConn.unsubscribe(h.ctx, []string{topic}); err != nil {
 		t.Fatalf("unsubscribe failed: %v", err)
 	}
 
 	sub := receiveWithTimeout(t, h.subscribeReceived, 2*time.Second)
 
-	if sub.Topic != topic || sub.Subscribe {
+	if sub.Topics[0] != topic {
 		t.Errorf("unexpected unsubscribe request: %+v", sub)
 	}
 }
@@ -529,7 +544,7 @@ func TestMeshConnection_PostBondWithRetries(t *testing.T) {
 	}
 
 	// First attempt should fail with error message
-	err = h.meshConn.postBondInternal(h.ctx, bondReq)
+	err = h.meshConn.postBondsInternal(h.ctx, bondReq)
 	if err == nil {
 		t.Fatal("Expected a post bond error")
 	}
@@ -540,7 +555,7 @@ func TestMeshConnection_PostBondWithRetries(t *testing.T) {
 	}
 
 	// Second attempt should fail with invalid bond index
-	err = h.meshConn.postBondInternal(h.ctx, bondReq)
+	err = h.meshConn.postBondsInternal(h.ctx, bondReq)
 	if err == nil {
 		t.Fatal("Expected a post bond error")
 	}
@@ -551,7 +566,7 @@ func TestMeshConnection_PostBondWithRetries(t *testing.T) {
 	_ = receiveWithTimeout(t, h.postBondReceived, 2*time.Second)
 
 	// Third attempt should succeed
-	err = h.meshConn.postBondInternal(h.ctx, bondReq)
+	err = h.meshConn.postBondsInternal(h.ctx, bondReq)
 	if err != nil {
 		t.Fatalf("Expected a successful post bond attempt, got %v", err)
 	}
