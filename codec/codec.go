@@ -130,7 +130,8 @@ func WriteBytes(s network.Stream, data []byte, timeout ...time.Duration) error {
 }
 
 // isDeadlineNotSupportedError returns true if the error is due to the stream
-// not supporting deadlines.
+// not supporting deadlines. The mock stream in libp2p tests returns this error,
+// but the real yamux implementation always supports deadlines and never fails.
 func isDeadlineNotSupportedError(err error) bool {
 	return strings.Contains(err.Error(), "deadline not supported")
 }
